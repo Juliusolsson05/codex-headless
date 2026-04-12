@@ -1,0 +1,26 @@
+{
+  "name": "codex-headless",
+  "version": "0.1.0",
+  "description": "Programmatically control OpenAI Codex through a headless terminal — structured JSON events, automated commands, async streaming API",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "test": "tsx src/testing/verify.ts",
+    "replay": "tsx src/testing/replay.ts"
+  },
+  "dependencies": {
+    "@xterm/headless": "^5.5.0",
+    "chokidar": "^5.0.0"
+  },
+  "peerDependencies": {
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "tsx": "^4.21.0"
+  },
+  "license": "MIT"
+}
