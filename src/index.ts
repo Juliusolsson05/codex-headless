@@ -4,6 +4,20 @@
 // differences (different screen parser, different transcript format, different
 // command set) live in the parsers and transcript modules.
 
+// --- Main API ---
+export {
+  CodexHeadless,
+  type CodexHeadlessOptions,
+  type CodexHeadlessEvents,
+  type CodexHeadlessEvent,
+  type CodexActivityEvent,
+  type CodexIdleEvent,
+  type CodexScreenEvent,
+  type CodexRolloutEntryEvent,
+  type CodexTrustDialogEvent,
+  type CodexExitEvent,
+} from './CodexHeadless.js'
+
 // --- Terminal (shared primitive, identical to claude-code-headless) ---
 export {
   HeadlessTerminal,
