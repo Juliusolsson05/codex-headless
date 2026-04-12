@@ -8,6 +8,7 @@ import {
   HeadlessTerminal,
   type ScreenSnapshot,
 } from './terminal/HeadlessTerminal.js'
+import { tailSessionFile } from './transcript/JsonlTailer.js'
 import {
   detectCodexActivity,
   extractCodexAssistantInProgress,
@@ -269,76 +270,29 @@ export class CodexHeadless extends EventEmitter {
   // --- Rollout file tailing ---
 
   /**
-   * Tail a single rollout JSONL file. Each line is parsed as a
-   * CodexRolloutLine and emitted as 'rollout-entry'. The first
-   * session_meta entry is captured for getSessionMeta().
+   * Tail a single rollout JSONL file using the proven poll-based
+   * JsonlTailer (same implementation Claude uses). Each line is
+   * parsed and emitted as 'rollout-entry'. The first session_meta
+   * entry is captured for getSessionMeta().
    */
   private tailFile(filePath: string): () => Promise<void> {
-    // Poll-based tailer — same pattern as Claude's JsonlTailer.
-    // We import the shared tailSessionFile utility.
-    const { statSync, createReadStream, watchFile, unwatchFile } = require('fs')
-    let offset = 0
-    let buffer = ''
-    let closed = false
-    let reading = false
-    let pendingRead = false
-
-    const readNew = () => {
-      if (closed) return
-      if (reading) { pendingRead = true; return }
-      reading = true
-
-      let size: number
-      try { size = statSync(filePath).size } catch { reading = false; return }
-      if (size <= offset) { reading = false; return }
-
-      const stream = createReadStream(filePath, {
-        start: offset, encoding: 'utf8',
-      })
-      let chunk = ''
-      stream.on('data', (d: string) => { chunk += d })
-      stream.on('end', () => {
-        offset += Buffer.byteLength(chunk, 'utf8')
-        buffer += chunk
-        const lines = buffer.split('\n')
-        buffer = lines.pop() ?? ''
-        for (const line of lines) {
-          if (!line.trim()) continue
-          try {
-            const entry = JSON.parse(line) as CodexRolloutLine
-            // Capture session meta
-            if (isCodexSessionMeta(entry) && !this.sessionMeta) {
-              this.sessionMeta = entry.payload as CodexSessionMeta
-            }
-            this.emit('rollout-entry', entry, filePath)
-            this.emit('event', {
-              type: 'rollout_entry', ts: Date.now(), line: entry, file: filePath,
-            })
-          } catch (err) {
-            this.emit('rollout-error', err instanceof Error ? err : new Error(String(err)))
-          }
+    return tailSessionFile(
+      filePath,
+      (entry) => {
+        const line = entry as unknown as CodexRolloutLine
+        // Capture session meta from the first entry that has it.
+        if (isCodexSessionMeta(line) && !this.sessionMeta) {
+          this.sessionMeta = line.payload as CodexSessionMeta
         }
-        reading = false
-        if (pendingRead) { pendingRead = false; readNew() }
-      })
-      stream.on('error', (err: Error) => {
+        this.emit('rollout-entry', line, filePath)
+        this.emit('event', {
+          type: 'rollout_entry', ts: Date.now(), line, file: filePath,
+        })
+      },
+      (err) => {
         this.emit('rollout-error', err)
-        reading = false
-      })
-    }
-
-    // Initial read + poll
-    readNew()
-    watchFile(filePath, { interval: 100, persistent: true }, (curr: { size: number; mtimeMs: number }, prev: { size: number; mtimeMs: number }) => {
-      if (closed) return
-      if (curr.size <= prev.size && curr.mtimeMs === prev.mtimeMs) return
-      readNew()
-    })
-
-    return async () => {
-      closed = true
-      unwatchFile(filePath)
-    }
+      },
+    )
   }
 
   /**
