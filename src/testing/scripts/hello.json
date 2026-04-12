@@ -1,0 +1,7 @@
+{
+  "steps": [
+    { "type": "wait", "ms": 5000 },
+    { "type": "send", "data": "say hi in three words\r" },
+    { "type": "wait", "ms": 18000 }
+  ]
+}

@@ -9,10 +9,14 @@
   "scripts": {
     "build": "tsc",
     "test": "tsx src/testing/verify.ts",
-    "replay": "tsx src/testing/replay.ts"
+    "record": "tsx src/testing/record.ts",
+    "replay": "tsx src/testing/replay.ts",
+    "debugger": "electron src/debugger/main.mjs"
   },
   "dependencies": {
     "@xterm/headless": "^5.5.0",
+    "@xterm/xterm": "^6.0.0",
+    "@xterm/addon-fit": "^0.11.0",
     "chokidar": "^5.0.0"
   },
   "peerDependencies": {
@@ -20,7 +24,8 @@
   },
   "devDependencies": {
     "typescript": "^5.5.0",
-    "tsx": "^4.21.0"
+    "tsx": "^4.21.0",
+    "electron": "^31.0.0"
   },
   "license": "MIT"
 }
