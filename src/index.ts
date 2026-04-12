@@ -17,12 +17,25 @@ export {
 export {
   extractCodexStreamingText,
   extractCodexAssistantInProgress,
+  detectCodexActivity,
+  isCodexChromeLine,
+  isCodexDividerLine,
+  isCodexPromptLine,
+  isCodexUserPromptLine,
+  isCodexStatusLine,
+  isCodexIntermediateChromeLine,
 } from './parsers/ScreenParser.js'
 
 export {
   diffLines,
   type DiffLine,
 } from './parsers/LineDiff.js'
+
+export {
+  detectCodexTrustDialog,
+  CODEX_TRUST_DIALOG_ACCEPT_KEYS,
+  type CodexTrustDialogState,
+} from './parsers/TrustDialogParser.js'
 
 // --- Transcript (codex-specific) ---
 export * from './transcript/TranscriptTypes.js'
