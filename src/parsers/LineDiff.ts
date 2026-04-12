@@ -1,4 +1,4 @@
-// Line-level diff used by Feed's Edit / MultiEdit rendering.
+// Line-level diff used for Edit / MultiEdit rendering in downstream UIs.
 //
 // This is a deliberately minimal implementation — no third-party diff lib,
 // no character-level precision, no word-level highlighting. For the Edit
@@ -7,9 +7,7 @@
 // needs is "which lines went away, which lines came in, which lines
 // stayed" — not a structural semantic diff.
 //
-// Lives under src/core/parsers/ so it's importable from the renderer,
-// main, AND the testbench, same as streamingScreen.ts. Pure function, no
-// Node, no DOM.
+// Pure function, no Node, no DOM. Importable from any downstream context.
 //
 // Algorithm: standard Longest Common Subsequence (LCS) with an O(m×n)
 // dynamic-programming table. For a 500-line file pair that's 250k cells

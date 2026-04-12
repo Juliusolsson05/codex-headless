@@ -17,8 +17,8 @@
 // because the on-disk format is large and we only render a subset.
 // Use the type guards at runtime; don't trust the discriminator alone.
 //
-// Lives under src/core/types/ so main, renderer, and testbench can all
-// import. Pure types + guards — no runtime, no Node, no DOM.
+// Pure types + guards — no runtime, no Node, no DOM. Importable from
+// any downstream context.
 
 /**
  * One line of a codex rollout JSONL file. The envelope carries a

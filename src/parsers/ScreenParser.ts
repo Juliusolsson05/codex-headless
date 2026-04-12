@@ -1,7 +1,7 @@
-// Codex TUI chrome stripper — counterpart to
-// src/core/parsers/claude/streamingScreen.ts.
+// Codex TUI chrome stripper — counterpart to claude-code-headless's
+// ScreenParser.
 //
-// Codex's TUI markers (confirmed from testbench recordings):
+// Codex's TUI markers (confirmed from recorded sessions):
 //   › (U+203A) — user prompt prefix
 //   • (U+2022) — assistant text + tool call prefix
 //   │ └        — tool output sub-items (box drawing)
@@ -13,7 +13,7 @@
 // (status row, dividers, empty prompt), then walk backward for the
 // last assistant marker to extract the in-progress response.
 //
-// Pure: no Node, no DOM, no IO. Importable from main, renderer, testbench.
+// Pure: no Node, no DOM, no IO. Importable from any downstream context.
 
 const BOX_CHARS_RE = /[╭╮╰╯─│┌┐└┘├┤┬┴┼━┃═║]/g
 
@@ -91,8 +91,7 @@ const CODEX_SPINNER_RE = /^\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s/
 // hint. Without filtering this, extractCodexAssistantInProgress walks
 // backward and lands on "• Working (3s • esc to interrupt)" instead
 // of the real response — showing "Working (3s...)" as the streaming
-// card content. Confirmed from testbench recording
-// 2026-04-12T07-45-34-280Z, snap 8.
+// card content. Confirmed from recorded session fixture (snap 8).
 const CODEX_WORKING_RE = new RegExp(
   String.raw`^\s*(?:\*{1,3})?${CODEX_ASSISTANT_MARKER}(?:\*{1,3})?\s+Working\s*\(`,
 )
@@ -179,7 +178,7 @@ export function extractCodexAssistantInProgress(screen: string): string {
   // Fallback: if filtering removed ALL `•` lines (the only `•` on
   // screen was the Working spinner), check the UNFILTERED lines for
   // the Working status and return a clean "working..." indicator
-  // so the streaming card shows progress instead of "thinking..."
+  // so the consumer shows progress instead of "thinking..."
   // forever. This is the exact bug: during a long tool execution
   // the Working spinner is the ONLY `•` on screen, our filter
   // removes it, and the extractor returns '' → "thinking..." for
@@ -187,7 +186,7 @@ export function extractCodexAssistantInProgress(screen: string): string {
   //
   // Confirmed from debug log: snap 31 had only
   // `• Working (0s • esc to interrupt)` as a `•` line; filter
-  // removed it; lastMarkerIdx = -1; streaming card showed
+  // removed it; lastMarkerIdx = -1; consumer showed
   // "thinking..." until snap 43 when `• Hello.` appeared.
   if (lastMarkerIdx === -1) {
     // Check if there's a Working line in the unfiltered text.
