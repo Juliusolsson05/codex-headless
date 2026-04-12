@@ -51,6 +51,17 @@ export {
   type CodexTrustDialogState,
 } from './parsers/TrustDialogParser.js'
 
+// --- Session directory + listing ---
+export {
+  getCodexHome,
+  getCodexSessionsDir,
+} from './transcript/ProjectDir.js'
+
+export {
+  listCodexSessions,
+  type CodexSessionInfo,
+} from './transcript/SessionList.js'
+
 // --- Transcript (codex-specific) ---
 export {
   // Rollout envelope
