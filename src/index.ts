@@ -38,4 +38,45 @@ export {
 } from './parsers/TrustDialogParser.js'
 
 // --- Transcript (codex-specific) ---
-export * from './transcript/TranscriptTypes.js'
+export {
+  // Rollout envelope
+  type CodexRolloutLine,
+  // RolloutItem variants
+  type CodexSessionMeta,
+  type CodexTurnContext,
+  type CodexCompactedItem,
+  // ResponseItem variants
+  type CodexResponseItem,
+  type CodexMessageItem,
+  type CodexContentItem,
+  type CodexFunctionCallItem,
+  type CodexFunctionCallOutputItem,
+  type CodexLocalShellCallItem,
+  type CodexReasoningItem,
+  type CodexCustomToolCallItem,
+  type CodexCustomToolCallOutputItem,
+  type CodexWebSearchCallItem,
+  type CodexOtherItem,
+  // EventMsg variants
+  type CodexEventMsg,
+  type CodexTurnStartedEvent,
+  type CodexTurnCompleteEvent,
+  type CodexUserMessageEvent,
+  type CodexAgentMessageEvent,
+  type CodexAgentMessageDeltaEvent,
+  type CodexTokenCountEvent,
+  type CodexExecCommandBeginEvent,
+  type CodexExecCommandEndEvent,
+  type CodexExecCommandOutputDeltaEvent,
+  type CodexExecApprovalRequestEvent,
+  type CodexMcpToolCallBeginEvent,
+  type CodexMcpToolCallEndEvent,
+  type CodexErrorEvent,
+  // Type guards + helpers
+  isCodexConversationEntry,
+  isCodexResponseItem,
+  isCodexEventMsg,
+  isCodexSessionMeta,
+  extractCodexMessageText,
+  parseCodexFunctionArgs,
+} from './transcript/TranscriptTypes.js'

@@ -216,10 +216,16 @@ function spawnSession() {
         const streaming = extractStreaming(screen)
         const assistant = extractAssistant(screen)
         const hasTrustDialog = isTrustDialog(screen)
-        const hasWorking = CODEX_WORKING_RE.test(screen)
-        const hasSpinner = CODEX_SPINNER_RE.test(screen)
-        const hasAssistantMarker = CODEX_ASSISTANT_MARKER_RE.test(screen)
-        const hasPrompt = CODEX_PROMPT_RE.test(screen)
+
+        // State detection: test each regex against individual lines,
+        // not the full screen string. The regexes use ^ anchors which
+        // only match start-of-string, not start-of-line, so testing
+        // against the whole screen always returns false.
+        const screenLines = screen.split('\n')
+        const hasWorking = screenLines.some(l => /[•◦]\s+Working\s*\(/.test(l))
+        const hasSpinner = screenLines.some(l => CODEX_SPINNER_RE.test(l))
+        const hasAssistantMarker = screenLines.some(l => CODEX_ASSISTANT_MARKER_RE.test(l))
+        const hasPrompt = screenLines.some(l => CODEX_PROMPT_RE.test(l))
 
         // Auto-accept trust dialog
         if (hasTrustDialog && !trustAccepted) {
