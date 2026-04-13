@@ -29,6 +29,8 @@ export {
 
 // --- Parsers (codex-specific) ---
 export {
+  type CodexWorkingState,
+  detectCodexWorkingState,
   extractCodexStreamingText,
   extractCodexAssistantInProgress,
   detectCodexActivity,

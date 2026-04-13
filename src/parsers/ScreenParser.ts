@@ -194,11 +194,49 @@ function isResumePicker(screen: string): boolean {
 // Detect whether Codex is actively working from the screen buffer.
 // Returns a status string when working, null when idle.
 
-/** Working line regex — extracts timing. */
-const CODEX_WORKING_RE = /[•◦]\s+Working\s*\((\d+(?:m\s+\d+)?)s/
+export type CodexWorkingState = {
+  active: boolean
+  statusText?: string
+  elapsedText?: string
+}
+
+/** Bottom working row: "• Working (10s • esc to interrupt)" + suffixes. */
+const CODEX_WORKING_ROW_RE =
+  /^\s*[•◦]\s+Working\s+\(([^)]*?)\s+•\s+esc to interrupt\)(?:\s+·\s+.*)?\s*$/
+
+const CODEX_WORKING_ELAPSED_RE = /^(.+?s)\b/
 
 /** Booting MCP regex. */
-const CODEX_BOOTING_RE = /[•◦]\s+Booting\s+MCP\s+server:\s+(\S+)/
+const CODEX_BOOTING_RE = /^\s*[•◦]\s+Booting\s+MCP\s+server:\s+(\S+).*$/
+
+export function detectCodexWorkingState(screen: string): CodexWorkingState {
+  if (!screen) return { active: false }
+  const lines = screen.split('\n')
+  const start = Math.max(0, lines.length - 12)
+
+  for (let i = lines.length - 1; i >= start; i--) {
+    const line = lines[i] ?? ''
+    const working = CODEX_WORKING_ROW_RE.exec(line)
+    if (working) {
+      const elapsed = CODEX_WORKING_ELAPSED_RE.exec(working[1]?.trim() ?? '')
+      return {
+        active: true,
+        statusText: 'Working',
+        elapsedText: elapsed?.[1]?.trim(),
+      }
+    }
+
+    const boot = CODEX_BOOTING_RE.exec(line)
+    if (boot) {
+      return {
+        active: true,
+        statusText: `Booting MCP server: ${boot[1]}`,
+      }
+    }
+  }
+
+  return { active: false }
+}
 
 /**
  * Detect Codex's activity state from the plain-text screen buffer.
@@ -207,32 +245,15 @@ const CODEX_BOOTING_RE = /[•◦]\s+Booting\s+MCP\s+server:\s+(\S+)/
  * Returns a short status string when working, or null when idle.
  */
 export function detectCodexActivity(screen: string): string | null {
-  if (!screen) return null
-  const lines = screen.split('\n')
-
-  const start = Math.max(0, lines.length - 15)
-  for (let i = lines.length - 1; i >= start; i--) {
-    const line = lines[i] ?? ''
-
-    // Primary: "• Working (Ns • esc to interrupt)"
-    const workMatch = CODEX_WORKING_RE.exec(line)
-    if (workMatch) {
-      return `working… ${workMatch[1]}s`
-    }
-
-    // Secondary: "• Booting MCP server: name (...)"
-    const bootMatch = CODEX_BOOTING_RE.exec(line)
-    if (bootMatch) {
-      return `booting ${bootMatch[1]}…`
-    }
-
-    // Braille spinner (rare — usually accompanied by Working)
-    if (CODEX_SPINNER_RE.test(line)) {
-      return 'working…'
-    }
+  const state = detectCodexWorkingState(screen)
+  if (!state.active) return null
+  if (state.statusText === 'Working') {
+    return state.elapsedText ? `working… ${state.elapsedText}` : 'working…'
   }
-
-  return null
+  if (state.statusText) {
+    return `${state.statusText.toLowerCase()}…`
+  }
+  return 'working…'
 }
 
 // --- Streaming text extraction ---
