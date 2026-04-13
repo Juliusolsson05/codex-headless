@@ -149,12 +149,19 @@ export class CodexHeadless extends EventEmitter {
         }
       }
 
-      // Trust dialog detection
+      // Trust dialog detection — emit on EVERY transition so consumers
+      // can track open + dismiss. The previous implementation only fired
+      // on hidden→visible, which meant the renderer's modal had no way
+      // to learn the dialog had closed (after the user accepted/rejected,
+      // or after Codex auto-dismissed) and would stick on screen.
       const trust = detectCodexTrustDialog(snap.plain)
       if (trust.visible !== this.lastTrustVisible) {
         this.lastTrustVisible = trust.visible
+        this.emit('trust-dialog', trust)
         if (trust.visible) {
-          this.emit('trust-dialog', trust)
+          // Only the rich event variant (with accept/reject callbacks)
+          // makes sense when the dialog is actually visible. The simple
+          // 'trust-dialog' event above carries the full state either way.
           this.emit('event', {
             type: 'trust_dialog',
             ts: Date.now(),
@@ -186,12 +193,32 @@ export class CodexHeadless extends EventEmitter {
     const sessionsDir = getCodexSessionsDir()
 
     if (this.resumeThreadId) {
+      // First try: locate the existing rollout file by thread id. The
+      // common case for `codex resume <id>` — file already exists from
+      // the original session and Codex appends to it on reopen.
       const rolloutPath = await this.findRolloutByThreadId(
         sessionsDir,
         this.resumeThreadId,
       )
       if (rolloutPath) {
         this.stopRolloutTail = this.tailFile(rolloutPath)
+      } else {
+        // Fallback: lookup missed (rare — usually a date-tree race or a
+        // resume where Codex actually forks a NEW rollout file). The
+        // previous behavior was to silently attach the terminal with no
+        // tail at all, so the resumed pane received zero transcript
+        // events. Now we surface the lookup miss as a non-fatal error
+        // and fall back to the new-file watcher — if Codex creates a
+        // new rollout (fork case) we'll catch it; if not, the consumer
+        // at least knows lookup failed and can retry / surface a
+        // diagnostic instead of staring at an inert pane.
+        this.emit(
+          'rollout-error',
+          new Error(
+            `Codex resume: rollout file for thread ${this.resumeThreadId} not found under ${sessionsDir}; falling back to new-file watcher`,
+          ),
+        )
+        this.stopRolloutTail = await this.tailNewRolloutFile(sessionsDir)
       }
     } else {
       this.stopRolloutTail = await this.tailNewRolloutFile(sessionsDir)
