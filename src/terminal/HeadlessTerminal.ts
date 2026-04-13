@@ -15,6 +15,41 @@ type TerminalInstance = InstanceType<typeof Terminal>
 //
 // This is the foundation primitive both claude-code-headless and
 // codex-headless build on.
+//
+// --- Lifecycle ---------------------------------------------------------------
+//
+// The constructor is INERT. It builds the headless xterm but does NOT
+// subscribe to PTY events. The consumer is expected to call attach()
+// after any other state that depends on PTY events (transcript tailers,
+// log captures, recorders) has been wired up. Without this split, the
+// PTY started emitting bytes as soon as `new HeadlessTerminal(...)`
+// returned, which made the "tailer attached before terminal starts
+// processing PTY data" invariant a polite fiction. Now it's enforceable:
+// the terminal mirror does nothing until you call attach().
+//
+// --- write() race fix --------------------------------------------------------
+//
+// xterm's term.write() is async — the documented contract says the
+// optional callback fires once the data has been fully parsed into the
+// buffer. A naive implementation that calls term.write(data) and then
+// schedules a snapshot on a setTimeout will race: the snapshot can fire
+// before the buffer reflects the bytes we just wrote. Our previous
+// implementation had this bug, and the testing/replay.ts script papered
+// over it with a 50ms sleep. Now we explicitly use the callback as the
+// signal to schedule a flush, so each snapshot is guaranteed to reflect
+// every PTY byte that was already written.
+//
+// --- Viewport vs. full buffer ------------------------------------------------
+//
+// "Current screen" parsers (slash picker, trust dialog, activity,
+// streaming text, in-progress assistant) all want the visible viewport
+// only — what the user is looking at right now. Iterating buf.length
+// includes 10k rows of scrollback, which means stale prompts, stale
+// pickers, and stale assistant text from earlier turns leak into the
+// "current state" parsers. snapshotPlain / snapshotMarkdown now scan
+// the viewport region only (viewportY .. viewportY + term.rows). The
+// scrollback is still kept in the xterm buffer for users who want to
+// scroll back in the consumer UI; it just isn't fed to the parsers.
 
 export type HeadlessTerminalOptions = {
   /** The PTY instance to attach to. Consumer owns its lifecycle. */
@@ -37,7 +72,7 @@ export type ScreenSnapshot = {
 export type HeadlessTerminalEvents = {
   /** Raw PTY bytes received. Use for recording/fidelity. */
   'pty-data': [string]
-  /** Throttled dual-snapshot of the terminal buffer. */
+  /** Throttled dual-snapshot of the terminal viewport. */
   screen: [ScreenSnapshot]
   /** PTY child exited. */
   exit: [{ exitCode: number; signal?: number }]
@@ -76,8 +111,17 @@ function emphasisMarker(bold: boolean, italic: boolean): string {
  * hits the terminal, `**bold**` is gone — replaced by SGR bold
  * attributes on each cell. translateToString drops those attributes.
  * This function reads them back and re-emits markdown markers.
+ *
+ * Iterates the viewport only by default (the visible rows). Pass
+ * `{ fullBuffer: true }` to walk the entire scrollback — useful for
+ * recording / replay tooling that wants the complete history, but
+ * NOT for "current screen" parsers which would otherwise pick up
+ * stale formatting from earlier turns.
  */
-export function terminalToMarkdown(term: TerminalInstance): string {
+export function terminalToMarkdown(
+  term: TerminalInstance,
+  opts: { fullBuffer?: boolean } = {},
+): string {
   const buf = term.buffer.active
   const out: string[] = []
 
@@ -85,7 +129,10 @@ export function terminalToMarkdown(term: TerminalInstance): string {
     | { isBold(): number; isItalic(): number; getChars(): string }
     | undefined
 
-  for (let y = 0; y < buf.length; y++) {
+  const start = opts.fullBuffer ? 0 : buf.viewportY
+  const end = opts.fullBuffer ? buf.length : Math.min(buf.length, buf.viewportY + term.rows)
+
+  for (let y = start; y < end; y++) {
     const line = buf.getLine(y)
     if (!line) {
       out.push('')
@@ -128,8 +175,20 @@ export class HeadlessTerminal extends EventEmitter {
   private readonly term: TerminalInstance
   private flushTimer: ReturnType<typeof setTimeout> | null = null
   private flushPending = false
+  // Accumulates PTY bytes whose write callback hasn't fired yet. We
+  // could have multiple parses in flight after rapid PTY chunks; we
+  // only schedule a flush once the *latest* write completes, so we
+  // don't snapshot a half-parsed buffer. See attach() for the use.
+  private pendingWrites = 0
   private exited = false
+  private attached = false
   private readonly snapshotIntervalMs: number
+  // Stored disposables for the PTY listeners we wire in attach(). node-pty's
+  // onData / onExit return objects with .dispose() — if we drop them on the
+  // floor (as the previous implementation did) the listeners survive every
+  // dispose() call and accumulate over the process lifetime.
+  private ptyDataDisposable: { dispose: () => void } | null = null
+  private ptyExitDisposable: { dispose: () => void } | null = null
 
   constructor(options: HeadlessTerminalOptions) {
     super()
@@ -145,15 +204,43 @@ export class HeadlessTerminal extends EventEmitter {
       allowProposedApi: true,
       scrollback: 10000,
     })
+    // NOTE: no PTY subscription here. Consumers must call attach()
+    // after they've wired up everything that depends on PTY data
+    // (transcript tailers, recorders). See file header.
+  }
 
-    // Wire PTY output → headless terminal + events
-    this.pty.onData((data: string) => {
+  /**
+   * Subscribe to PTY events and start mirroring data into the headless
+   * terminal. Idempotent — calling attach() twice is a no-op.
+   *
+   * Why this isn't done in the constructor: PTY data starts flowing
+   * immediately once we subscribe. If a consumer needs to attach a
+   * transcript tailer first (so it sees the very first JSONL entries
+   * an agent emits), they need the freedom to wire that up before
+   * the mirror activates.
+   */
+  attach(): void {
+    if (this.attached) return
+    this.attached = true
+
+    this.ptyDataDisposable = this.pty.onData((data: string) => {
       this.emit('pty-data', data)
-      this.term.write(data)
-      this.scheduleFlush()
+      // term.write is async — the callback fires once the bytes have
+      // been parsed into the buffer. Schedule the flush from inside
+      // the callback so snapshots always reflect already-parsed bytes.
+      this.pendingWrites++
+      this.term.write(data, () => {
+        this.pendingWrites--
+        // Only schedule when there are no more pending parses.
+        // Otherwise rapid PTY chunks would each schedule a flush
+        // and we'd snapshot mid-parse. The throttle inside
+        // scheduleFlush() coalesces multiple completions into one
+        // snapshot per snapshotIntervalMs window.
+        if (this.pendingWrites === 0) this.scheduleFlush()
+      })
     })
 
-    this.pty.onExit(({ exitCode, signal }) => {
+    this.ptyExitDisposable = this.pty.onExit(({ exitCode, signal }) => {
       this.exited = true
       this.emit('exit', { exitCode, signal })
       this.cleanup()
@@ -175,8 +262,33 @@ export class HeadlessTerminal extends EventEmitter {
     }
   }
 
-  /** Capture the current visible buffer as plain text. */
+  /**
+   * Capture the current visible viewport as plain text. Iterates only
+   * `term.rows` lines starting at `buffer.viewportY` — scrollback is
+   * intentionally excluded, see file header for the why.
+   */
   snapshotPlain(): string {
+    const buf = this.term.buffer.active
+    const start = buf.viewportY
+    const end = Math.min(buf.length, buf.viewportY + this.term.rows)
+    const lines: string[] = []
+    for (let i = start; i < end; i++) {
+      const line = buf.getLine(i)
+      lines.push(line ? line.translateToString(true) : '')
+    }
+    while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+    return lines.join('\n')
+  }
+
+  /** Capture the viewport with bold/italic reconstructed as markdown. */
+  snapshotMarkdown(): string {
+    return terminalToMarkdown(this.term)
+  }
+
+  /** Capture the entire xterm buffer (scrollback + viewport) as plain
+   *  text. Use for recording / archival; not for "current screen"
+   *  parsers — they should call snapshotPlain() instead. */
+  snapshotFullBuffer(): string {
     const buf = this.term.buffer.active
     const lines: string[] = []
     for (let i = 0; i < buf.length; i++) {
@@ -185,11 +297,6 @@ export class HeadlessTerminal extends EventEmitter {
     }
     while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
     return lines.join('\n')
-  }
-
-  /** Capture the buffer with bold/italic reconstructed as markdown. */
-  snapshotMarkdown(): string {
-    return terminalToMarkdown(this.term)
   }
 
   /**
@@ -232,5 +339,16 @@ export class HeadlessTerminal extends EventEmitter {
       this.flushTimer = null
     }
     this.flushPending = false
+    // Tear down PTY listeners. node-pty disposables are idempotent —
+    // calling dispose() after the PTY has already exited is safe.
+    if (this.ptyDataDisposable) {
+      try { this.ptyDataDisposable.dispose() } catch { /* idempotent */ }
+      this.ptyDataDisposable = null
+    }
+    if (this.ptyExitDisposable) {
+      try { this.ptyExitDisposable.dispose() } catch { /* idempotent */ }
+      this.ptyExitDisposable = null
+    }
+    this.attached = false
   }
 }

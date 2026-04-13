@@ -197,6 +197,11 @@ export class CodexHeadless extends EventEmitter {
       this.stopRolloutTail = await this.tailNewRolloutFile(sessionsDir)
     }
 
+    // Tailer is wired — let PTY data flow into the headless terminal
+    // mirror. See HeadlessTerminal file header for why this is split
+    // out of the constructor.
+    this.terminal.attach()
+
     return { sessionsDir }
   }
 
