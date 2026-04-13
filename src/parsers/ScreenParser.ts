@@ -173,6 +173,10 @@ function isTrustDialogVisible(screen: string): boolean {
   return TRUST_DIALOG_MARKERS.every(m => screen.includes(m))
 }
 
+// Approval detection lives in ApprovalParser.ts — import for the
+// streaming text suppression check.
+import { isApprovalOverlayVisible } from './ApprovalParser.js'
+
 // --- Resume picker detection ---
 
 const RESUME_PICKER_MARKERS = [
@@ -242,6 +246,7 @@ export function extractCodexStreamingText(screen: string): string {
   if (!screen) return ''
   if (isTrustDialogVisible(screen)) return ''
   if (isResumePicker(screen)) return ''
+  if (isApprovalOverlayVisible(screen)) return ''
 
   const lines = screen.split('\n')
 

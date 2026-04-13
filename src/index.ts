@@ -41,6 +41,12 @@ export {
 } from './parsers/ScreenParser.js'
 
 export {
+  detectCodexApproval,
+  isApprovalOverlayVisible,
+  type ScreenApproval,
+} from './parsers/ApprovalParser.js'
+
+export {
   diffLines,
   type DiffLine,
 } from './parsers/LineDiff.js'
