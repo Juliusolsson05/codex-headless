@@ -63,10 +63,26 @@ export type HeadlessTerminalOptions = {
 }
 
 export type ScreenSnapshot = {
-  /** Plain text from translateToString. Source of truth for parsers. */
+  /** Visible viewport as plain text. Source of truth for "current
+   *  screen" parsers (trust dialog, slash picker, activity spinner,
+   *  compaction banner, resume prompt). Anything that asks "what is
+   *  CC showing right now?" reads this. */
   plain: string
-  /** Same screen with bold/italic reconstructed as markdown syntax. */
+  /** Viewport with bold/italic reconstructed as markdown syntax.
+   *  Same row range as `plain`. */
   markdown: string
+  /** A wider window (default last ~200 rows including scrollback)
+   *  intended for content extractors that must walk past the visible
+   *  area — most importantly extractAssistantInProgress, which
+   *  scans bottom-up for the `⏺` marker. CC's streaming responses
+   *  often grow taller than the viewport, scrolling the opening
+   *  marker into scrollback; without this wider snapshot the
+   *  streaming card stayed blank for long replies. Parsers should
+   *  prefer `plain` unless they specifically need history. */
+  recent: string
+  /** Same wider window with markdown emphasis reconstructed. Mirror
+   *  of `recent` for renderers that want the bold/italic preserved. */
+  recentMarkdown: string
 }
 
 export type HeadlessTerminalEvents = {
@@ -120,7 +136,7 @@ function emphasisMarker(bold: boolean, italic: boolean): string {
  */
 export function terminalToMarkdown(
   term: TerminalInstance,
-  opts: { fullBuffer?: boolean } = {},
+  opts: { fullBuffer?: boolean; recentRows?: number } = {},
 ): string {
   const buf = term.buffer.active
   const out: string[] = []
@@ -129,8 +145,20 @@ export function terminalToMarkdown(
     | { isBold(): number; isItalic(): number; getChars(): string }
     | undefined
 
-  const start = opts.fullBuffer ? 0 : buf.viewportY
-  const end = opts.fullBuffer ? buf.length : Math.min(buf.length, buf.viewportY + term.rows)
+  // Three windowing modes:
+  //   - fullBuffer: walk every row including all scrollback.
+  //   - recentRows: walk the last N rows from the bottom of the
+  //     buffer. Used for streaming extraction where we need history
+  //     past the visible viewport but not all the way back.
+  //   - default: viewport-only (current visible rows).
+  const start = opts.fullBuffer
+    ? 0
+    : opts.recentRows !== undefined
+      ? Math.max(0, buf.length - opts.recentRows)
+      : buf.viewportY
+  const end = opts.fullBuffer || opts.recentRows !== undefined
+    ? buf.length
+    : Math.min(buf.length, buf.viewportY + term.rows)
 
   for (let y = start; y < end; y++) {
     const line = buf.getLine(y)
@@ -285,6 +313,31 @@ export class HeadlessTerminal extends EventEmitter {
     return terminalToMarkdown(this.term)
   }
 
+  /**
+   * Capture the last `rows` lines of the buffer (viewport + recent
+   * scrollback). Default 200 — enough to cover Claude responses that
+   * scroll the opening `⏺` marker out of the visible viewport, while
+   * staying small enough to keep parser walks cheap. Streaming
+   * extractors call this; "current screen" parsers stick with
+   * snapshotPlain().
+   */
+  snapshotRecent(rows = 200): string {
+    const buf = this.term.buffer.active
+    const start = Math.max(0, buf.length - rows)
+    const lines: string[] = []
+    for (let i = start; i < buf.length; i++) {
+      const line = buf.getLine(i)
+      lines.push(line ? line.translateToString(true) : '')
+    }
+    while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+    return lines.join('\n')
+  }
+
+  /** Markdown-reconstructed counterpart of snapshotRecent. */
+  snapshotRecentMarkdown(rows = 200): string {
+    return terminalToMarkdown(this.term, { recentRows: rows })
+  }
+
   /** Capture the entire xterm buffer (scrollback + viewport) as plain
    *  text. Use for recording / archival; not for "current screen"
    *  parsers — they should call snapshotPlain() instead. */
@@ -329,6 +382,8 @@ export class HeadlessTerminal extends EventEmitter {
       this.emit('screen', {
         plain: this.snapshotPlain(),
         markdown: this.snapshotMarkdown(),
+        recent: this.snapshotRecent(),
+        recentMarkdown: this.snapshotRecentMarkdown(),
       })
     }, this.snapshotIntervalMs)
   }
