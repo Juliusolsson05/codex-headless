@@ -125,6 +125,15 @@ const CODEX_ESC_HINT_RE = /esc to interrupt/
 // like "• Ran git status" do NOT have the esc hint — only the Working
 // spinner does. But they ARE chrome that should be filtered from the
 // assistant text extraction.
+// NOTE — keep this list tight. The regex filters any `• <verb>` line
+// out of the assistant-text window, so anything we add here becomes a
+// blacklisted sentence opener. Bare English verbs like "Read ",
+// "Wrote ", "Created ", "Deleted ", "Listed ", "Searched " are common
+// prose starters ("• Read the README and then…", "• Created a helper
+// that…"), and including them silently ate streaming assistant blocks
+// — the card stayed blank during long replies even though the text
+// was on screen. Only list verbs that Codex's TUI actually emits as
+// tool-call chrome in recordings under codex-headless/recordings/*.
 const CODEX_TOOL_CALL_VERBS = [
   'Ran ',
   'Explored',
@@ -136,12 +145,6 @@ const CODEX_TOOL_CALL_VERBS = [
   'Updated Plan',
   'Finished waiting',
   'Booting MCP',
-  'Created ',
-  'Deleted ',
-  'Wrote ',
-  'Read ',
-  'Listed ',
-  'Searched ',
 ]
 
 // Build a regex that matches "• <verb>" for any of the known verbs.

@@ -115,6 +115,13 @@ export class CodexHeadless extends EventEmitter {
   private readonly resumeThreadId: string | null
   private stopRolloutTail: (() => Promise<void>) | null = null
   private lastActivity: string | null = null
+  // See ClaudeCodeHeadless.idleDebounceTimer for the rationale —
+  // briefly empty bottom-working-row snapshots between TUI redraws
+  // would otherwise make the activity pip flicker green/dark every
+  // turn. Codex's Working row is more stable than CC's rotating
+  // spinner, but the same gap exists during tool-call animations, so
+  // we apply the same 2500ms idle debounce for consistency.
+  private idleDebounceTimer: ReturnType<typeof setTimeout> | null = null
   private lastTrustVisible = false
   private sessionMeta: CodexSessionMeta | null = null
 
@@ -136,16 +143,31 @@ export class CodexHeadless extends EventEmitter {
       this.emit('screen', snap)
       this.emit('event', { type: 'screen', ts: Date.now(), ...snap })
 
-      // Activity detection
+      // Activity detection — active fires immediately, idle is
+      // debounced to absorb transient frames where the bottom Working
+      // row is missing from the snapshot (tool-output animation
+      // cycles, header swaps, etc.).
       const activity = detectCodexActivity(snap.plain)
       if (activity !== this.lastActivity) {
-        this.lastActivity = activity
         if (activity) {
+          if (this.idleDebounceTimer) {
+            clearTimeout(this.idleDebounceTimer)
+            this.idleDebounceTimer = null
+          }
+          this.lastActivity = activity
           this.emit('activity', activity)
           this.emit('event', { type: 'activity', ts: Date.now(), status: activity })
         } else {
-          this.emit('idle')
-          this.emit('event', { type: 'idle', ts: Date.now() })
+          if (this.idleDebounceTimer) clearTimeout(this.idleDebounceTimer)
+          this.idleDebounceTimer = setTimeout(() => {
+            this.idleDebounceTimer = null
+            // Re-check from current screen — if Codex restarted working
+            // during the debounce, do not flip to idle.
+            if (detectCodexActivity(this.terminal.snapshotPlain())) return
+            this.lastActivity = null
+            this.emit('idle')
+            this.emit('event', { type: 'idle', ts: Date.now() })
+          }, 2500)
         }
       }
 
