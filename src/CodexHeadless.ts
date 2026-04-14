@@ -110,6 +110,7 @@ const CODEX_ROLLOUT_RE =
   /^rollout-(.+)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i
 
 export class CodexHeadless extends EventEmitter {
+  private static readonly RESUME_BOOTSTRAP_TAIL_LINES = 200
   private readonly terminal: HeadlessTerminal
   private readonly cwd: string
   private readonly resumeThreadId: string | null
@@ -346,6 +347,9 @@ export class CodexHeadless extends EventEmitter {
       (err) => {
         this.emit('rollout-error', err)
       },
+      this.resumeThreadId
+        ? { bootstrapTailLines: CodexHeadless.RESUME_BOOTSTRAP_TAIL_LINES }
+        : undefined,
     )
   }
 

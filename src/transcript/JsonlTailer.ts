@@ -1,5 +1,13 @@
 import { watch } from 'chokidar'
-import { createReadStream, statSync, unwatchFile, watchFile } from 'fs'
+import {
+  closeSync,
+  createReadStream,
+  openSync,
+  readSync,
+  statSync,
+  unwatchFile,
+  watchFile,
+} from 'fs'
 import { mkdir, readdir } from 'fs/promises'
 import { basename } from 'path'
 
@@ -51,6 +59,7 @@ class FileTailer<T> {
   // starts to show up as "typing feels sluggish" when submit →
   // feed-update takes noticeable wall time.
   private static readonly POLL_INTERVAL_MS = 100
+  private static readonly BOOTSTRAP_TAIL_BYTES = 512 * 1024
   private reading = false
   private pendingRead = false
 
@@ -58,12 +67,20 @@ class FileTailer<T> {
     private readonly filePath: string,
     private readonly onEntry: (entry: T) => void,
     private readonly onError?: (err: Error) => void,
+    options?: {
+      bootstrapTailLines?: number
+    },
   ) {
-    // Read whatever is already in the file synchronously on
-    // construct — CC often writes several entries before the watcher
-    // would tick. This gives us a clean baseline offset before the
-    // poll loop starts.
-    this.readNew()
+    const bootstrapTailLines = options?.bootstrapTailLines ?? 0
+    if (bootstrapTailLines > 0) {
+      this.bootstrapTail(bootstrapTailLines)
+    } else {
+      // Read whatever is already in the file synchronously on
+      // construct — CC often writes several entries before the watcher
+      // would tick. This gives us a clean baseline offset before the
+      // poll loop starts.
+      this.readNew()
+    }
 
     watchFile(
       filePath,
@@ -80,6 +97,66 @@ class FileTailer<T> {
         this.readNew()
       },
     )
+  }
+
+  private bootstrapTail(maxLines: number): void {
+    if (this.closed || maxLines <= 0) return
+
+    let stat: ReturnType<typeof statSync>
+    try {
+      stat = statSync(this.filePath)
+    } catch {
+      return
+    }
+    if (stat.size <= 0) {
+      this.offset = 0
+      return
+    }
+
+    const bytesToRead = Math.min(FileTailer.BOOTSTRAP_TAIL_BYTES, stat.size)
+    const start = Math.max(0, stat.size - bytesToRead)
+    const buf = Buffer.alloc(bytesToRead)
+
+    let fd: number | null = null
+    try {
+      fd = openSync(this.filePath, 'r')
+      readSync(fd, buf, 0, bytesToRead, start)
+    } catch (err) {
+      this.onError?.(err as Error)
+      if (fd !== null) {
+        try { closeSync(fd) } catch { /* best-effort */ }
+      }
+      return
+    }
+    try {
+      closeSync(fd)
+    } catch {
+      // best-effort close
+    }
+
+    let text = buf.toString('utf8')
+    if (start > 0) {
+      const firstNewline = text.indexOf('\n')
+      text = firstNewline === -1 ? '' : text.slice(firstNewline + 1)
+    }
+
+    const lines = text
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
+
+    const recent = lines.slice(-maxLines)
+    for (const line of recent) {
+      try {
+        const obj = JSON.parse(line) as T
+        this.onEntry(obj)
+      } catch (err) {
+        this.onError?.(err as Error)
+      }
+    }
+
+    this.offset = stat.size
+    this.buffer = ''
   }
 
   private readNew(): void {
@@ -235,8 +312,11 @@ export function tailSessionFile(
   filePath: string,
   onEntry: (entry: JsonlEntry) => void,
   onError?: (err: Error) => void,
+  options?: {
+    bootstrapTailLines?: number
+  },
 ): () => Promise<void> {
-  const tailer = new FileTailer<JsonlEntry>(filePath, onEntry, onError)
+  const tailer = new FileTailer<JsonlEntry>(filePath, onEntry, onError, options)
   return async () => {
     await tailer.close()
   }
