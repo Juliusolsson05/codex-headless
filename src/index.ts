@@ -113,3 +113,47 @@ export {
   extractCodexMessageText,
   parseCodexFunctionArgs,
 } from './transcript/TranscriptTypes.js'
+
+// --- Channels (three-channel truth model) ---
+//
+// Subscribe to `codex.semantic`, `codex.screen`, and `codex.committed`
+// on a CodexHeadless instance for the split surface. The `semantic`
+// channel is authoritative-by-default — it is sourced from Codex's
+// rollout `event_msg` deltas when available, and falls back to screen
+// parsing only during the narrow window before the rollout file has
+// caught up. Existing flat events (`screen`, `activity`, …) still
+// fire for backwards compatibility.
+export {
+  SemanticChannel as CodexSemanticChannel,
+  type SemanticChannelEvents as CodexSemanticChannelEvents,
+} from './channels/SemanticChannel.js'
+export {
+  ScreenChannel as CodexScreenChannel,
+  type ScreenChannelEvents as CodexScreenChannelEvents,
+} from './channels/ScreenChannel.js'
+export {
+  CommittedChannel as CodexCommittedChannel,
+  type CommittedChannelEvents as CodexCommittedChannelEvents,
+} from './channels/CommittedChannel.js'
+export type {
+  SemanticSource as CodexSemanticSource,
+  SemanticConfidence as CodexSemanticConfidence,
+  SemanticEvent as CodexSemanticEvent,
+  SemanticTurnStartedEvent as CodexSemanticTurnStartedEvent,
+  SemanticTurnDeltaEvent as CodexSemanticTurnDeltaEvent,
+  SemanticTurnCompletedEvent as CodexSemanticTurnCompletedEvent,
+  SemanticSourceChangedEvent as CodexSemanticSourceChangedEvent,
+  SemanticToolStartedEvent as CodexSemanticToolStartedEvent,
+  SemanticToolOutputDeltaEvent as CodexSemanticToolOutputDeltaEvent,
+  SemanticToolCompletedEvent as CodexSemanticToolCompletedEvent,
+  ScreenEvent as CodexChannelScreenEvent,
+  ScreenSnapshotEvent as CodexScreenSnapshotEvent,
+  ScreenActivityEvent as CodexScreenActivityEvent,
+  ScreenTrustDialogEvent as CodexChannelTrustDialogEvent,
+  ScreenApprovalEvent as CodexScreenApprovalEvent,
+  CommittedEvent as CodexCommittedEvent,
+  CommittedTurnEvent as CodexCommittedTurnEvent,
+  CommittedResponseItemEvent as CodexCommittedResponseItemEvent,
+  CommittedSessionMetaEvent as CodexCommittedSessionMetaEvent,
+  CommittedRolloutLineEvent as CodexCommittedRolloutLineEvent,
+} from './channels/types.js'

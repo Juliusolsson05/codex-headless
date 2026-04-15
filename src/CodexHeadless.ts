@@ -23,9 +23,34 @@ import {
   type CodexSessionMeta,
   type CodexResponseItem,
   type CodexEventMsg,
+  type CodexTurnStartedEvent,
+  type CodexTurnCompleteEvent,
+  type CodexAgentMessageEvent,
+  type CodexAgentMessageDeltaEvent,
+  type CodexExecCommandBeginEvent,
+  type CodexExecCommandEndEvent,
+  type CodexExecCommandOutputDeltaEvent,
+  type CodexMcpToolCallBeginEvent,
+  type CodexMcpToolCallEndEvent,
+  type CodexMessageItem,
   isCodexSessionMeta,
+  isCodexResponseItem,
+  isCodexEventMsg,
+  extractCodexMessageText,
 } from './transcript/TranscriptTypes.js'
 import { getCodexSessionsDir } from './transcript/ProjectDir.js'
+
+// Three-channel truth surface. The semantic channel consumes the
+// rollout delta stream (agent_message_delta / turn lifecycle / tool
+// begin+end) directly and is the preferred source for JIT markdown
+// rendering. The screen channel carries TUI visibility state (trust
+// dialog, approval overlay, activity). The committed channel reflects
+// durable rollout entries. See src/channels/types.ts for the full
+// rationale; the split fixes the historical problem of semantic and
+// visual truth being braided together in one event stream.
+import { CommittedChannel } from './channels/CommittedChannel.js'
+import { ScreenChannel } from './channels/ScreenChannel.js'
+import { SemanticChannel } from './channels/SemanticChannel.js'
 
 // CodexHeadless — programmatic control of OpenAI Codex.
 //
@@ -126,6 +151,36 @@ export class CodexHeadless extends EventEmitter {
   private lastTrustVisible = false
   private sessionMeta: CodexSessionMeta | null = null
 
+  // --- Three-channel truth surface ---------------------------------------
+  //
+  // These run IN ADDITION TO the legacy flat event surface so existing
+  // cc-shell consumers keep working. See src/channels/types.ts for the
+  // rationale behind splitting semantic / screen / committed into three
+  // separate streams.
+  readonly semantic = new SemanticChannel()
+  readonly screen = new ScreenChannel()
+  readonly committed = new CommittedChannel()
+
+  /** Active semantic turn id. For Codex this is usually the rollout's
+   *  `turn_id` once we've seen a `task_started` / `turn_started`
+   *  event. If the TUI reports activity before the rollout file has
+   *  any event for this turn (rare — file creation race), we fall
+   *  back to a synthetic `live-<ts>` id and promote to the real id
+   *  when the first rollout event arrives. */
+  private liveSemanticTurnId: string | null = null
+  /** Whether the live semantic turn is currently screen-sourced. Used
+   *  to decide whether a screen snapshot should publish a fallback
+   *  delta (only when no higher-trust source is driving the turn). */
+  private semanticSource: 'rollout' | 'screen' | null = null
+  /** Last text we emitted from the screen fallback extractor. Used to
+   *  suppress duplicate screen-sourced deltas. */
+  private lastScreenSemanticText = ''
+  /** Accumulated text for the in-flight assistant turn when rollout
+   *  deltas are the source. Rebuilt by appending `agent_message_delta`
+   *  payloads; used as `fullText` on the semantic delta events so late
+   *  subscribers can skip to the current state. */
+  private rolloutAssistantText = ''
+
   constructor(options: CodexHeadlessOptions) {
     super()
     this.cwd = options.cwd
@@ -144,6 +199,12 @@ export class CodexHeadless extends EventEmitter {
       this.emit('screen', snap)
       this.emit('event', { type: 'screen', ts: Date.now(), ...snap })
 
+      // Screen channel — mirror-of-terminal cadence. Semantic deltas
+      // derived from screen are gated on "no higher-trust source
+      // active", so we still want to publish every snapshot here for
+      // consumers that mirror the PTY.
+      this.screen.publishSnapshot({ plain: snap.plain, markdown: snap.markdown })
+
       // Activity detection — active fires immediately, idle is
       // debounced to absorb transient frames where the bottom Working
       // row is missing from the snapshot (tool-output animation
@@ -158,6 +219,23 @@ export class CodexHeadless extends EventEmitter {
           this.lastActivity = activity
           this.emit('activity', activity)
           this.emit('event', { type: 'activity', ts: Date.now(), status: activity })
+          this.screen.publishActivity({ active: true, status: activity })
+
+          // Semantic fallback: open a screen-sourced turn ONLY if the
+          // rollout stream hasn't already opened one. The moment
+          // rollout deltas arrive they'll take over via
+          // `source_changed`, which is the whole point of the tag.
+          if (!this.liveSemanticTurnId) {
+            this.liveSemanticTurnId = `live-${Date.now()}`
+            this.semanticSource = 'screen'
+            this.lastScreenSemanticText = ''
+            this.semantic.startTurn({
+              turnId: this.liveSemanticTurnId,
+              role: 'assistant',
+              source: 'screen',
+              confidence: 'fallback',
+            })
+          }
         } else {
           if (this.idleDebounceTimer) clearTimeout(this.idleDebounceTimer)
           this.idleDebounceTimer = setTimeout(() => {
@@ -168,7 +246,47 @@ export class CodexHeadless extends EventEmitter {
             this.lastActivity = null
             this.emit('idle')
             this.emit('event', { type: 'idle', ts: Date.now() })
+            this.screen.publishActivity({ active: false, status: null })
+
+            // If the live semantic turn was screen-sourced, seal it
+            // now. Rollout-sourced turns are sealed by
+            // `task_complete` / `turn_complete`, not by the idle
+            // debounce — we don't want the TUI missing a frame to
+            // accidentally close a turn the rollout still has deltas
+            // for.
+            if (this.liveSemanticTurnId && this.semanticSource === 'screen') {
+              this.semantic.finishTurn({
+                turnId: this.liveSemanticTurnId,
+                fullText: this.lastScreenSemanticText || undefined,
+                source: 'screen',
+                confidence: 'fallback',
+              })
+              this.resetLiveTurn()
+            }
           }, 2500)
+        }
+      }
+
+      // Screen-sourced semantic fallback. Run the extractor only when
+      // no higher-trust source is driving the live turn. This is
+      // belt-and-braces for the narrow window between "TUI started
+      // drawing assistant text" and "rollout emitted the first
+      // agent_message_delta for this turn".
+      if (this.liveSemanticTurnId && this.semanticSource === 'screen') {
+        const text = extractCodexAssistantInProgress(snap.plain)
+        if (text && text !== this.lastScreenSemanticText) {
+          const delta = text.startsWith(this.lastScreenSemanticText)
+            ? text.slice(this.lastScreenSemanticText.length)
+            : undefined
+          this.lastScreenSemanticText = text
+          this.semantic.applyDelta({
+            turnId: this.liveSemanticTurnId,
+            fullText: text,
+            textDelta: delta,
+            markdownText: extractCodexAssistantInProgress(snap.markdown) || undefined,
+            source: 'screen',
+            confidence: 'fallback',
+          })
         }
       }
 
@@ -181,6 +299,7 @@ export class CodexHeadless extends EventEmitter {
       if (trust.visible !== this.lastTrustVisible) {
         this.lastTrustVisible = trust.visible
         this.emit('trust-dialog', trust)
+        this.screen.publishTrustDialog(trust)
         if (trust.visible) {
           // Only the rich event variant (with accept/reject callbacks)
           // makes sense when the dialog is actually visible. The simple
@@ -343,14 +462,275 @@ export class CodexHeadless extends EventEmitter {
         this.emit('event', {
           type: 'rollout_entry', ts: Date.now(), line, file: filePath,
         })
+
+        // Committed channel — everything written to the rollout file
+        // is durable by construction. The channel decides which
+        // entries also emit a `turn_committed` / `session_meta` etc.
+        this.committed.publishLine(line, filePath)
+
+        // Semantic channel — feed rollout deltas + lifecycle events
+        // as the authoritative live source.
+        this.ingestRolloutIntoSemantic(line)
       },
       (err) => {
         this.emit('rollout-error', err)
+        this.committed.publishError(err)
       },
       this.resumeThreadId
         ? { bootstrapTailLines: CodexHeadless.RESUME_BOOTSTRAP_TAIL_LINES }
         : undefined,
     )
+  }
+
+  // --- Rollout → semantic translation -----------------------------------
+  //
+  // Codex's rollout stream is the primary live semantic source. This
+  // helper maps rollout `event_msg` deltas and tool lifecycle events
+  // onto the SemanticChannel's normalized shape. It also consumes
+  // `response_item` messages as a belt-and-braces fallback: if a
+  // session somehow produces a committed assistant message without a
+  // preceding `agent_message_delta` (some server variants collapse
+  // short replies), the message text still lands on the semantic
+  // channel with `confidence: 'medium'` so consumers see it.
+  private ingestRolloutIntoSemantic(line: CodexRolloutLine): void {
+    if (isCodexEventMsg(line)) {
+      // The event union includes a CodexGenericEvent catch-all, which
+      // makes TS narrow to `{ type: string; [k: string]: unknown }`
+      // inside the switch and loses the specific payload fields. We
+      // re-cast in each branch via `evt as <SpecificEvent>` to get the
+      // typed fields back. Using a single `as any` at the top would
+      // hide bugs; per-branch casts keep each branch auditable.
+      const evt = line.payload as CodexEventMsg
+
+      switch (evt.type) {
+        case 'task_started':
+        case 'turn_started': {
+          const e = evt as CodexTurnStartedEvent
+          // Promote or open the live turn with the real rollout id.
+          // If a screen-sourced turn was already open, replace it —
+          // we seal the screen turn explicitly so its consumer sees
+          // a clean `turn_completed` event before the rollout one
+          // starts, which is simpler than mutating turnId in place.
+          if (
+            this.liveSemanticTurnId &&
+            this.semanticSource === 'screen'
+          ) {
+            this.semantic.finishTurn({
+              turnId: this.liveSemanticTurnId,
+              fullText: this.lastScreenSemanticText || undefined,
+              source: 'screen',
+              confidence: 'fallback',
+            })
+          }
+          this.liveSemanticTurnId = e.turn_id
+          this.semanticSource = 'rollout'
+          this.rolloutAssistantText = ''
+          this.lastScreenSemanticText = ''
+          this.semantic.startTurn({
+            turnId: e.turn_id,
+            role: 'assistant',
+            source: 'rollout',
+            confidence: 'high',
+          })
+          return
+        }
+
+        case 'agent_message_delta': {
+          const e = evt as CodexAgentMessageDeltaEvent
+          if (!e.delta) return
+          // Codex does not embed the turn_id on delta events (only on
+          // task_started / task_complete), so we infer it from the
+          // currently-open turn. If none is open we open a rollout-
+          // sourced one on the fly — better than dropping the delta.
+          const turnId = this.liveSemanticTurnId ?? `rollout-${Date.now()}`
+          if (!this.liveSemanticTurnId) {
+            this.liveSemanticTurnId = turnId
+            this.semanticSource = 'rollout'
+            this.rolloutAssistantText = ''
+          }
+          this.rolloutAssistantText += e.delta
+          this.semanticSource = 'rollout'
+          this.semantic.applyDelta({
+            turnId,
+            textDelta: e.delta,
+            fullText: this.rolloutAssistantText,
+            source: 'rollout',
+            confidence: 'high',
+          })
+          return
+        }
+
+        case 'agent_message': {
+          const e = evt as CodexAgentMessageEvent
+          // Final snapshot of assistant text for the turn. Some Codex
+          // variants emit this INSTEAD OF a trailing delta, so we use
+          // it to ensure the fullText matches the committed form.
+          if (!this.liveSemanticTurnId) return
+          const fullText = e.message ?? this.rolloutAssistantText
+          this.rolloutAssistantText = fullText
+          this.semantic.applyDelta({
+            turnId: this.liveSemanticTurnId,
+            fullText,
+            source: 'rollout',
+            confidence: 'high',
+          })
+          return
+        }
+
+        case 'task_complete':
+        case 'turn_complete': {
+          if (!this.liveSemanticTurnId) return
+          this.semantic.finishTurn({
+            turnId: this.liveSemanticTurnId,
+            fullText: this.rolloutAssistantText || undefined,
+            source: 'rollout',
+            confidence: 'high',
+          })
+          this.resetLiveTurn()
+          return
+        }
+
+        case 'exec_command_begin': {
+          const e = evt as CodexExecCommandBeginEvent
+          const label = e.command?.join(' ')
+          this.semantic.toolStarted({
+            callId: e.call_id ?? `exec-${Date.now()}`,
+            tool: 'exec',
+            label,
+            source: 'rollout',
+          })
+          return
+        }
+
+        case 'exec_command_output_delta': {
+          const e = evt as CodexExecCommandOutputDeltaEvent
+          if (!e.delta || !e.call_id) return
+          this.semantic.toolOutputDelta({
+            callId: e.call_id,
+            textDelta: e.delta,
+            source: 'rollout',
+          })
+          return
+        }
+
+        case 'exec_command_end': {
+          const e = evt as CodexExecCommandEndEvent
+          this.semantic.toolCompleted({
+            callId: e.call_id ?? `exec-${Date.now()}`,
+            exitCode: e.exit_code,
+            source: 'rollout',
+          })
+          return
+        }
+
+        case 'mcp_tool_call_begin': {
+          const e = evt as CodexMcpToolCallBeginEvent
+          const label =
+            e.server_name && e.tool_name
+              ? `${e.server_name}.${e.tool_name}`
+              : e.tool_name
+          this.semantic.toolStarted({
+            callId: e.call_id ?? `mcp-${Date.now()}`,
+            tool: 'mcp',
+            label,
+            source: 'rollout',
+          })
+          return
+        }
+
+        case 'mcp_tool_call_end': {
+          const e = evt as CodexMcpToolCallEndEvent
+          this.semantic.toolCompleted({
+            callId: e.call_id ?? `mcp-${Date.now()}`,
+            source: 'rollout',
+          })
+          return
+        }
+
+        default:
+          // Unknown / unhandled event types (token_count, error, user
+          // message echoes, approval requests, …) are not relevant to
+          // the semantic channel. Approval requests surface on the
+          // screen channel instead because they are UI overlays, not
+          // model output.
+          return
+      }
+    }
+
+    if (isCodexResponseItem(line)) {
+      const item = line.payload as CodexResponseItem
+      // Fallback: a committed assistant message arrived, possibly
+      // without a preceding `agent_message_delta` / `agent_message`.
+      //
+      // WHY we no longer gate this on `this.liveSemanticTurnId`:
+      //   The earlier guard made the fallback unreachable in the
+      //   exact shape it was supposed to cover. Short replies that
+      //   skip deltas usually also skip `task_started`, so no live
+      //   turn is ever opened — the guard filtered out every case
+      //   the block existed for. Instead we synthesise a rollout
+      //   turn id on the fly (same pattern as `agent_message_delta`)
+      //   and seal it immediately after the snapshot so downstream
+      //   consumers see a complete turn boundary.
+      if (
+        item.type === 'message' &&
+        (item as CodexMessageItem).role === 'assistant'
+      ) {
+        const text = extractCodexMessageText(item as CodexMessageItem)
+        if (!text) return
+        if (this.liveSemanticTurnId) {
+          if (text === this.rolloutAssistantText) return
+          this.rolloutAssistantText = text
+          this.semantic.applyDelta({
+            turnId: this.liveSemanticTurnId,
+            fullText: text,
+            source: 'rollout',
+            confidence: 'medium',
+          })
+          return
+        }
+
+        // No live turn — open, publish, seal.
+        const turnId = `rollout-${Date.now()}`
+        this.liveSemanticTurnId = turnId
+        this.semanticSource = 'rollout'
+        this.rolloutAssistantText = text
+        this.semantic.startTurn({
+          turnId,
+          role: 'assistant',
+          source: 'rollout',
+          confidence: 'medium',
+        })
+        this.semantic.applyDelta({
+          turnId,
+          fullText: text,
+          source: 'rollout',
+          confidence: 'medium',
+        })
+        this.semantic.finishTurn({
+          turnId,
+          fullText: text,
+          source: 'rollout',
+          confidence: 'medium',
+        })
+        this.resetLiveTurn()
+      }
+    }
+  }
+
+  // WHY a helper:
+  //   Live-turn tracking spans four fields (liveSemanticTurnId,
+  //   semanticSource, rolloutAssistantText, lastScreenSemanticText)
+  //   and they all have to clear together when a turn seals.
+  //   Inline resets were starting to drift — one seal site cleared
+  //   three fields, another cleared two — which made subtle bugs
+  //   where a later turn inherited a prior turn's screen text.
+  //   Funnelling every "turn is over" path through this method
+  //   prevents the next branch from silently diverging.
+  private resetLiveTurn(): void {
+    this.liveSemanticTurnId = null
+    this.semanticSource = null
+    this.rolloutAssistantText = ''
+    this.lastScreenSemanticText = ''
   }
 
   /**
