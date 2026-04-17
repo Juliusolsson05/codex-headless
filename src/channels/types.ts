@@ -137,6 +137,82 @@ export type SemanticToolCompletedEvent = {
   ts: number
 }
 
+// ---------------------------------------------------------------------------
+// Flow attribution diagnostics (proxy-sourced only).
+// ---------------------------------------------------------------------------
+//
+// The rollout source has no notion of "flows" — it's a single ordered
+// append-only file, so there is nothing to attribute. The proxy source
+// DOES: every HTTP request to /responses opens a distinct flow, and
+// retries or overlapping compaction requests can produce multiple
+// concurrent flows on the same path. The adapter surfaces its
+// selection decisions here so the UI can explain "we're rendering
+// flow X" / "we dropped flow Y because Z" without each consumer
+// having to reverse-engineer it from request/response events.
+//
+// These mirror Claude's SemanticFlowSelectedEvent/SemanticFlowIgnoredEvent
+// one-to-one — same shape so a shared reducer in cc-shell can fold
+// either provider's diagnostics into the same ProxyDebugPanel state.
+// Before these existed, the cc-shell adapter had to cast
+// `headless.semantic as { emit }` to smuggle raw `flow_selected`
+// events through the untyped `event` channel — a hack that leaked
+// publisher details into the adapter and blocked further type-safety
+// tightening. Typed publishers close the loop.
+
+export type SemanticFlowSelectedEvent = {
+  type: 'flow_selected'
+  turnId: string | null
+  flowId: string
+  /** Freeform diagnostic reason — usually method+path of the picked
+   *  request ("POST /v1/responses"). Not machine-parsed. */
+  reason: string
+  source: SemanticSource
+  confidence: SemanticConfidence
+  ts: number
+}
+
+export type SemanticFlowIgnoredEvent = {
+  type: 'flow_ignored'
+  flowId: string
+  /** Why this flow was excluded — e.g. "non-POST", "path does not
+   *  match /responses", "concurrent flow already active". Freeform. */
+  reason: string
+  source: SemanticSource
+  confidence: SemanticConfidence
+  ts: number
+}
+
+// ---------------------------------------------------------------------------
+// Usage accounting.
+// ---------------------------------------------------------------------------
+//
+// Published on turn completion when the upstream response carried a
+// `usage` block. We pass the payload through as a flat map of
+// numbers/strings — nested upstream shapes (e.g. `input_tokens_details`)
+// are flattened with `parent.child` keys so the downstream cost
+// calculator can read them without knowing the specific Responses API
+// shape. Intentionally mirrors Claude's SemanticUsageEvent so a
+// shared cost model can consume either.
+//
+// Why not a stricter typed shape: Codex's Responses API usage fields
+// are still evolving (new cache tiers, new service_tier hints); a
+// loose Record keeps us forward-compatible instead of dropping fields
+// the parser doesn't know about yet. Strictness belongs in the cost
+// calculator, not at the wire boundary.
+
+export type SemanticUsageEvent = {
+  type: 'usage_updated'
+  turnId: string
+  usage: Record<string, number | string | undefined>
+  /** Optional cost estimate in USD if a calculator was provided. The
+   *  adapter does not populate this today — reserved for future
+   *  consumer-layer enrichment. */
+  costUSD?: number
+  source: SemanticSource
+  confidence: SemanticConfidence
+  ts: number
+}
+
 export type SemanticEvent =
   | SemanticTurnStartedEvent
   | SemanticTurnDeltaEvent
@@ -145,6 +221,9 @@ export type SemanticEvent =
   | SemanticToolStartedEvent
   | SemanticToolOutputDeltaEvent
   | SemanticToolCompletedEvent
+  | SemanticFlowSelectedEvent
+  | SemanticFlowIgnoredEvent
+  | SemanticUsageEvent
 
 // ---------------------------------------------------------------------------
 // Screen channel.

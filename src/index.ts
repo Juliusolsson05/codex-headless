@@ -156,4 +156,43 @@ export type {
   CommittedResponseItemEvent as CodexCommittedResponseItemEvent,
   CommittedSessionMetaEvent as CodexCommittedSessionMetaEvent,
   CommittedRolloutLineEvent as CodexCommittedRolloutLineEvent,
+  // Proxy-sourced diagnostic + accounting events. Declared in
+  // channels/types.js so a consumer subscribing to the semantic
+  // channel sees them in the same discriminated union as the rest
+  // of the stream. `flow_*` events only fire when a proxy is wired
+  // in (rollout has no flow attribution); `usage_updated` fires
+  // from either source when the data is available.
+  SemanticFlowSelectedEvent as CodexSemanticFlowSelectedEvent,
+  SemanticFlowIgnoredEvent as CodexSemanticFlowIgnoredEvent,
+  SemanticUsageEvent as CodexSemanticUsageEvent,
 } from './channels/types.js'
+
+// --- Proxy live-streaming adapter ---
+//
+// `ResponsesProxy` is a plain HTTP server that Codex's `openai_base_url`
+// config override can point at; it forwards every inbound /v1/* request
+// to the real upstream (api.openai.com or chatgpt.com/backend-api/codex
+// depending on auth mode) and re-emits decrypted SSE bytes as events.
+//
+// `CodexResponsesAdapter` consumes those events, parses OpenAI Responses
+// API SSE frames, and publishes to `CodexHeadless.semantic` with
+// `source: 'proxy'`. When both proxy and rollout fire for the same turn,
+// SemanticChannel's source_changed event signals the handoff.
+//
+// Consumers who only want rollout/screen observation do not need to
+// instantiate either of these — CodexHeadless stays functional with
+// `source: 'rollout'` / `source: 'screen'` alone. The proxy surface
+// is additive.
+//
+// Mirrors the claude-code-headless export block at
+// claude-code-headless/src/index.ts:187 (ClaudeProxyAdapter + ProxyServer).
+export {
+  ResponsesProxy,
+  type CodexResponsesProxyInfo,
+  type CodexResponsesProxyEvents,
+  type CodexAuthMode,
+} from './proxy/responsesProxy.js'
+
+export {
+  CodexResponsesAdapter,
+} from './proxy/CodexResponsesAdapter.js'

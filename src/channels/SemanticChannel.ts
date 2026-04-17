@@ -2,6 +2,8 @@ import { EventEmitter } from 'events'
 
 import type {
   SemanticEvent,
+  SemanticFlowIgnoredEvent,
+  SemanticFlowSelectedEvent,
   SemanticSource,
   SemanticSourceChangedEvent,
   SemanticToolCompletedEvent,
@@ -10,6 +12,7 @@ import type {
   SemanticTurnCompletedEvent,
   SemanticTurnDeltaEvent,
   SemanticTurnStartedEvent,
+  SemanticUsageEvent,
 } from './types.js'
 
 // Codex SemanticChannel — the "what Codex is producing right now"
@@ -34,6 +37,9 @@ export type SemanticChannelEvents = {
   tool_started: [SemanticToolStartedEvent]
   tool_output_delta: [SemanticToolOutputDeltaEvent]
   tool_completed: [SemanticToolCompletedEvent]
+  flow_selected: [SemanticFlowSelectedEvent]
+  flow_ignored: [SemanticFlowIgnoredEvent]
+  usage_updated: [SemanticUsageEvent]
 }
 
 export interface SemanticChannel {
@@ -247,6 +253,77 @@ export class SemanticChannel extends EventEmitter {
       ts: Date.now(),
     }
     this.emit('tool_completed', ev)
+    this.emit('event', ev)
+  }
+
+  // --- Flow attribution diagnostics ---------------------------------------
+  //
+  // These are a first-class publisher surface so the proxy adapter
+  // doesn't have to smuggle events through a typed-as-unknown cast on
+  // `.emit('event', …)`. Before they existed the cc-shell adapter had
+  // a `publishRawEvent` helper that did exactly that — see the old
+  // `src/providers/codex/runtime/codexResponsesAdapter.ts:155`. Typed
+  // methods keep the publisher contract visible and let future
+  // consumers subscribe by name (`'flow_selected'`) instead of
+  // filtering on the catch-all `event` stream.
+
+  publishFlowSelected(params: {
+    flowId: string
+    turnId: string | null
+    reason: string
+    source: SemanticSource
+    confidence?: SemanticFlowSelectedEvent['confidence']
+  }): void {
+    const ev: SemanticFlowSelectedEvent = {
+      type: 'flow_selected',
+      flowId: params.flowId,
+      turnId: params.turnId,
+      reason: params.reason,
+      source: params.source,
+      confidence: params.confidence ?? 'high',
+      ts: Date.now(),
+    }
+    this.emit('flow_selected', ev)
+    this.emit('event', ev)
+  }
+
+  publishFlowIgnored(params: {
+    flowId: string
+    reason: string
+    source: SemanticSource
+    confidence?: SemanticFlowIgnoredEvent['confidence']
+  }): void {
+    const ev: SemanticFlowIgnoredEvent = {
+      type: 'flow_ignored',
+      flowId: params.flowId,
+      reason: params.reason,
+      source: params.source,
+      confidence: params.confidence ?? 'high',
+      ts: Date.now(),
+    }
+    this.emit('flow_ignored', ev)
+    this.emit('event', ev)
+  }
+
+  // --- Usage accounting ---------------------------------------------------
+
+  publishUsageUpdated(params: {
+    turnId: string
+    usage: Record<string, number | string | undefined>
+    costUSD?: number
+    source: SemanticSource
+    confidence?: SemanticUsageEvent['confidence']
+  }): void {
+    const ev: SemanticUsageEvent = {
+      type: 'usage_updated',
+      turnId: params.turnId,
+      usage: params.usage,
+      costUSD: params.costUSD,
+      source: params.source,
+      confidence: params.confidence ?? 'high',
+      ts: Date.now(),
+    }
+    this.emit('usage_updated', ev)
     this.emit('event', ev)
   }
 }

@@ -3,3 +3,4 @@ dist/
 *.tsbuildinfo
 recordings/
 temp-writes/
+.proxy-testing/

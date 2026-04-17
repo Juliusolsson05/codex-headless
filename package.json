@@ -11,7 +11,10 @@
     "test": "tsx src/testing/verify.ts",
     "record": "tsx src/testing/record.ts",
     "replay": "tsx src/testing/replay.ts",
-    "debugger": "electron src/debugger/main.mjs"
+    "debugger": "electron src/debugger/main.mjs",
+    "proxy-test": "tsx src/testing/proxy-testing/run.ts",
+    "proxy-exec": "tsx src/testing/proxy-testing/exec.ts",
+    "proxy-smoke": "tsx src/testing/proxy-testing/smoke.ts"
   },
   "dependencies": {
     "@xterm/headless": "^5.5.0",
@@ -25,7 +28,9 @@
   "devDependencies": {
     "typescript": "^5.5.0",
     "tsx": "^4.21.0",
-    "electron": "^31.0.0"
+    "electron": "^31.0.0",
+    "@types/node": "^20.0.0",
+    "undici-types": "^6.21.0"
   },
   "license": "MIT"
 }
