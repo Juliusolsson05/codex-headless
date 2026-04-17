@@ -1,17 +1,25 @@
 import { EventEmitter } from 'events'
 
 import type {
+  SemanticApiErrorEvent,
+  SemanticBlockCompletedEvent,
+  SemanticBlockKind,
+  SemanticBlockStartedEvent,
   SemanticEvent,
   SemanticFlowIgnoredEvent,
   SemanticFlowSelectedEvent,
   SemanticSource,
   SemanticSourceChangedEvent,
+  SemanticStreamErrorEvent,
+  SemanticTextDeltaEvent,
+  SemanticThinkingDeltaEvent,
   SemanticToolCompletedEvent,
   SemanticToolOutputDeltaEvent,
   SemanticToolStartedEvent,
   SemanticTurnCompletedEvent,
   SemanticTurnDeltaEvent,
   SemanticTurnStartedEvent,
+  SemanticTurnStoppedEvent,
   SemanticUsageEvent,
 } from './types.js'
 
@@ -37,6 +45,13 @@ export type SemanticChannelEvents = {
   tool_started: [SemanticToolStartedEvent]
   tool_output_delta: [SemanticToolOutputDeltaEvent]
   tool_completed: [SemanticToolCompletedEvent]
+  block_started: [SemanticBlockStartedEvent]
+  text_delta: [SemanticTextDeltaEvent]
+  thinking_delta: [SemanticThinkingDeltaEvent]
+  block_completed: [SemanticBlockCompletedEvent]
+  turn_stopped: [SemanticTurnStoppedEvent]
+  stream_error: [SemanticStreamErrorEvent]
+  api_error: [SemanticApiErrorEvent]
   flow_selected: [SemanticFlowSelectedEvent]
   flow_ignored: [SemanticFlowIgnoredEvent]
   usage_updated: [SemanticUsageEvent]
@@ -324,6 +339,219 @@ export class SemanticChannel extends EventEmitter {
       ts: Date.now(),
     }
     this.emit('usage_updated', ev)
+    this.emit('event', ev)
+  }
+
+  // --- Block-level publishers (Responses API alignment) ------------------
+  //
+  // These fire per ResponseItem — one block_started / optional deltas /
+  // one block_completed per output_item on the wire. The proxy adapter
+  // owns the translation; consumers just subscribe by name. See
+  // channels/types.ts Block-level section for the design rationale and
+  // the rollout-path source_changed reconciliation story.
+
+  publishBlockStarted(params: {
+    turnId: string
+    blockIndex: number
+    itemId?: string
+    kind: SemanticBlockKind
+    toolName?: string
+    callId?: string
+    messagePhase?: 'commentary' | 'final_answer'
+    status?: string
+    source: SemanticSource
+    confidence?: SemanticBlockStartedEvent['confidence']
+  }): void {
+    const ev: SemanticBlockStartedEvent = {
+      type: 'block_started',
+      turnId: params.turnId,
+      blockIndex: params.blockIndex,
+      itemId: params.itemId,
+      kind: params.kind,
+      toolName: params.toolName,
+      callId: params.callId,
+      messagePhase: params.messagePhase,
+      status: params.status,
+      source: params.source,
+      confidence: params.confidence ?? 'high',
+      ts: Date.now(),
+    }
+    this.emit('block_started', ev)
+    this.emit('event', ev)
+  }
+
+  publishTextDelta(params: {
+    turnId: string
+    blockIndex: number
+    itemId?: string
+    textDelta: string
+    textSoFar: string
+    source: SemanticSource
+    confidence?: SemanticTextDeltaEvent['confidence']
+  }): void {
+    const ev: SemanticTextDeltaEvent = {
+      type: 'text_delta',
+      turnId: params.turnId,
+      blockIndex: params.blockIndex,
+      itemId: params.itemId,
+      textDelta: params.textDelta,
+      textSoFar: params.textSoFar,
+      source: params.source,
+      confidence: params.confidence ?? 'high',
+      ts: Date.now(),
+    }
+    this.emit('text_delta', ev)
+    this.emit('event', ev)
+  }
+
+  publishThinkingDelta(params: {
+    turnId: string
+    blockIndex: number
+    itemId?: string
+    track: 'summary' | 'full'
+    thinkingDelta: string
+    thinkingSoFar: string
+    index: number
+    source: SemanticSource
+    confidence?: SemanticThinkingDeltaEvent['confidence']
+  }): void {
+    const ev: SemanticThinkingDeltaEvent = {
+      type: 'thinking_delta',
+      turnId: params.turnId,
+      blockIndex: params.blockIndex,
+      itemId: params.itemId,
+      track: params.track,
+      thinkingDelta: params.thinkingDelta,
+      thinkingSoFar: params.thinkingSoFar,
+      index: params.index,
+      source: params.source,
+      confidence: params.confidence ?? 'high',
+      ts: Date.now(),
+    }
+    this.emit('thinking_delta', ev)
+    this.emit('event', ev)
+  }
+
+  publishBlockCompleted(params: {
+    turnId: string
+    blockIndex: number
+    itemId?: string
+    kind: SemanticBlockKind
+    text?: string
+    reasoningSummary?: string
+    reasoningText?: string
+    toolName?: string
+    callId?: string
+    argumentsJson?: string
+    parsedArguments?: Record<string, unknown>
+    parseError?: string
+    output?: unknown
+    webSearchAction?: SemanticBlockCompletedEvent['webSearchAction']
+    imageGeneration?: SemanticBlockCompletedEvent['imageGeneration']
+    localShellCall?: SemanticBlockCompletedEvent['localShellCall']
+    status?: string
+    raw?: Record<string, unknown>
+    source: SemanticSource
+    confidence?: SemanticBlockCompletedEvent['confidence']
+  }): void {
+    const ev: SemanticBlockCompletedEvent = {
+      type: 'block_completed',
+      turnId: params.turnId,
+      blockIndex: params.blockIndex,
+      itemId: params.itemId,
+      kind: params.kind,
+      text: params.text,
+      reasoningSummary: params.reasoningSummary,
+      reasoningText: params.reasoningText,
+      toolName: params.toolName,
+      callId: params.callId,
+      argumentsJson: params.argumentsJson,
+      parsedArguments: params.parsedArguments,
+      parseError: params.parseError,
+      output: params.output,
+      webSearchAction: params.webSearchAction,
+      imageGeneration: params.imageGeneration,
+      localShellCall: params.localShellCall,
+      status: params.status,
+      raw: params.raw,
+      source: params.source,
+      confidence: params.confidence ?? 'high',
+      ts: Date.now(),
+    }
+    this.emit('block_completed', ev)
+    this.emit('event', ev)
+  }
+
+  // --- Turn-lifecycle + error publishers ---------------------------------
+
+  publishTurnStopped(params: {
+    turnId: string
+    stopReason: string | null
+    isRefusal?: boolean
+    source: SemanticSource
+    confidence?: SemanticTurnStoppedEvent['confidence']
+  }): void {
+    const ev: SemanticTurnStoppedEvent = {
+      type: 'turn_stopped',
+      turnId: params.turnId,
+      stopReason: params.stopReason,
+      // Default: the `refusal` string is the conventional content-policy
+      // refusal signal in recent OpenAI API shapes. Conservative fallback
+      // keeps the flag tied to the stop reason without additional input.
+      isRefusal: params.isRefusal ?? params.stopReason === 'refusal',
+      source: params.source,
+      confidence: params.confidence ?? 'high',
+      ts: Date.now(),
+    }
+    this.emit('turn_stopped', ev)
+    this.emit('event', ev)
+  }
+
+  publishStreamError(params: {
+    turnId: string | null
+    errorType: string
+    message: string
+    source: SemanticSource
+    confidence?: SemanticStreamErrorEvent['confidence']
+  }): void {
+    const ev: SemanticStreamErrorEvent = {
+      type: 'stream_error',
+      turnId: params.turnId,
+      errorType: params.errorType,
+      message: params.message,
+      source: params.source,
+      // Stream errors come from the adapter's own parser, so they're
+      // authoritative about what we SAW — but soft-failed. Keep the
+      // confidence honest by defaulting to medium, not high.
+      confidence: params.confidence ?? 'medium',
+      ts: Date.now(),
+    }
+    this.emit('stream_error', ev)
+    this.emit('event', ev)
+  }
+
+  publishApiError(params: {
+    turnId: string | null
+    errorType: SemanticApiErrorEvent['errorType']
+    message: string
+    retryAfterMs?: number
+    status?: number
+    source: SemanticSource
+    confidence?: SemanticApiErrorEvent['confidence']
+  }): void {
+    const ev: SemanticApiErrorEvent = {
+      type: 'api_error',
+      turnId: params.turnId,
+      errorType: params.errorType,
+      message: params.message,
+      retryAfterMs: params.retryAfterMs,
+      status: params.status,
+      isOverloaded: params.errorType === 'server_overloaded',
+      source: params.source,
+      confidence: params.confidence ?? 'high',
+      ts: Date.now(),
+    }
+    this.emit('api_error', ev)
     this.emit('event', ev)
   }
 }

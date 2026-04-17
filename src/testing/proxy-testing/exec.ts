@@ -169,6 +169,77 @@ async function main(): Promise<void> {
     )
   })
 
+  // Block-level events (output_item.added/done + per-block text/thinking).
+  // These are the high-fidelity signals the adapter now emits for every
+  // ResponseItem variant — tool calls, reasoning blocks, web searches,
+  // image generation, etc. Without these the proxy just looked like
+  // "text streams in, then turn ends" — all structure was hidden.
+  headless.semantic.on('block_started', ev => {
+    const extras: string[] = []
+    if (ev.toolName) extras.push(`tool=${ev.toolName}`)
+    if (ev.callId) extras.push(`call=${ev.callId}`)
+    if (ev.messagePhase) extras.push(`phase=${ev.messagePhase}`)
+    if (ev.status) extras.push(`status=${ev.status}`)
+    process.stderr.write(
+      `[semantic] block_started kind=${ev.kind} idx=${ev.blockIndex} item=${ev.itemId ?? '?'}` +
+        (extras.length ? ' ' + extras.join(' ') : '') +
+        '\n',
+    )
+  })
+  headless.semantic.on('text_delta', ev => {
+    const preview = ev.textDelta.slice(0, 40).replace(/\n/g, '\\n')
+    process.stderr.write(
+      `[semantic] text_delta idx=${ev.blockIndex} +${ev.textDelta.length}ch "${preview}"\n`,
+    )
+  })
+  headless.semantic.on('thinking_delta', ev => {
+    const preview = ev.thinkingDelta.slice(0, 40).replace(/\n/g, '\\n')
+    process.stderr.write(
+      `[semantic] thinking_delta track=${ev.track} idx=${ev.blockIndex}/${ev.index} ` +
+        `+${ev.thinkingDelta.length}ch "${preview}"\n`,
+    )
+  })
+  headless.semantic.on('block_completed', ev => {
+    const extras: string[] = []
+    if (ev.toolName) extras.push(`tool=${ev.toolName}`)
+    if (ev.callId) extras.push(`call=${ev.callId}`)
+    if (ev.text) extras.push(`text=${ev.text.length}ch`)
+    if (ev.reasoningSummary) extras.push(`summary=${ev.reasoningSummary.length}ch`)
+    if (ev.reasoningText) extras.push(`reasoning=${ev.reasoningText.length}ch`)
+    if (ev.argumentsJson) extras.push(`args=${ev.argumentsJson.length}b`)
+    if (ev.webSearchAction) extras.push(`search=${ev.webSearchAction.kind}`)
+    if (ev.imageGeneration) extras.push(`image=${ev.imageGeneration.status}`)
+    if (ev.localShellCall) extras.push(`shell=${ev.localShellCall.command.join(' ').slice(0, 40)}`)
+    if (ev.parseError) extras.push(`parseErr=${ev.parseError.slice(0, 30)}`)
+    if (ev.status) extras.push(`status=${ev.status}`)
+    process.stderr.write(
+      `[semantic] block_completed kind=${ev.kind} idx=${ev.blockIndex} item=${ev.itemId ?? '?'}` +
+        (extras.length ? ' ' + extras.join(' ') : '') +
+        '\n',
+    )
+  })
+  headless.semantic.on('turn_stopped', ev => {
+    process.stderr.write(
+      `[semantic] turn_stopped reason=${ev.stopReason ?? '(none)'} refusal=${ev.isRefusal}\n`,
+    )
+  })
+  headless.semantic.on('stream_error', ev => {
+    process.stderr.write(
+      `[semantic] stream_error ${ev.errorType}: ${ev.message}\n`,
+    )
+  })
+  headless.semantic.on('api_error', ev => {
+    const extras: string[] = []
+    if (ev.retryAfterMs) extras.push(`retryAfter=${ev.retryAfterMs}ms`)
+    if (ev.status) extras.push(`status=${ev.status}`)
+    if (ev.isOverloaded) extras.push('OVERLOADED')
+    process.stderr.write(
+      `[semantic] api_error ${ev.errorType}: ${ev.message}` +
+        (extras.length ? ' ' + extras.join(' ') : '') +
+        '\n',
+    )
+  })
+
   // --- Spawn codex exec -------------------------------------------------
   // We add --skip-git-repo-check so the harness works in cwds that
   // aren't git repos (the codex-headless repo is, but we don't want a

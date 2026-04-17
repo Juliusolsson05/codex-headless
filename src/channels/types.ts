@@ -138,6 +138,312 @@ export type SemanticToolCompletedEvent = {
 }
 
 // ---------------------------------------------------------------------------
+// Block-level semantic events (Responses API alignment).
+// ---------------------------------------------------------------------------
+//
+// Codex's rollout stream aggregates items after the fact — a single
+// rollout line carries the whole `agent_message` or `exec_command_end`
+// payload. The wire-level /responses SSE, by contrast, is block-
+// structured: one response contains N output items (see
+// `response.output_item.added` / `.done`), each of which is one
+// concrete variant from ResponseItem — Message, Reasoning, FunctionCall,
+// WebSearchCall, ImageGenerationCall, LocalShellCall, etc. All thirteen
+// variants are documented in codex-rs/protocol/src/models.rs:188-341.
+//
+// WHY block-level events exist on THIS channel (not just on the rollout
+// path): a consumer listening only to `turn_delta.fullText` gets one
+// flat string for the turn, which loses the interleaving of "text,
+// then function call, then more text, then image generation" that the
+// Codex TUI actually renders. Block events preserve that structure so
+// a proxy-driven renderer can show tool cards, image cards, and
+// reasoning segments in the order Codex emitted them — without waiting
+// for rollout to catch up.
+//
+// WHY these look a lot like Claude's block events: deliberate parallel.
+// The naming (`block_started` / `text_delta` / `block_completed`)
+// matches claude-code-headless's channels/types.ts so a consumer that
+// already subscribes to Claude's block lifecycle can reuse the same
+// handler shape for Codex with only a kind-mapping change. See
+// claude-code-headless/src/channels/types.ts:190-327 for the sibling
+// definitions.
+//
+// Index semantics: `blockIndex` comes from the `output_index` field
+// on Responses SSE (or the position in `response.output` for replay).
+// Stable within a turn; paired across `block_started` → any
+// per-kind deltas → `block_completed`.
+
+export type SemanticBlockRef = {
+  turnId: string
+  /** Upstream `output_index` field — stable within a turn, used to
+   *  correlate `block_started` / delta / `block_completed` for the
+   *  same block and to preserve ordering across interleaved items. */
+  blockIndex: number
+  /** The upstream item id (e.g. `rs_…`, `msg_…`, `fc_…`). Preserved so
+   *  consumers can match SSE events against rollout entries that carry
+   *  the same id. Optional because early frames sometimes arrive before
+   *  the id is known (`response.created` with no items yet). */
+  itemId?: string
+}
+
+/** Every ResponseItem variant the /responses SSE can carry. Mirrors
+ *  the Rust enum at codex-rs/protocol/src/models.rs:188-341 one-to-one,
+ *  plus an `other` catch-all so a new variant added upstream doesn't
+ *  silently vanish from the consumer's view. Kept as a discriminated
+ *  union of string literals (not a class hierarchy) so the renderer
+ *  can do a simple switch without a runtime instanceof check. */
+export type SemanticBlockKind =
+  | 'message'
+  | 'reasoning'
+  | 'function_call'
+  | 'function_call_output'
+  | 'custom_tool_call'
+  | 'custom_tool_call_output'
+  | 'tool_search_call'
+  | 'tool_search_output'
+  | 'local_shell_call'
+  | 'web_search_call'
+  | 'image_generation_call'
+  | 'compaction'
+  | 'ghost_snapshot'
+  | 'other'
+
+/** Fires at `response.output_item.added`. Carries enough metadata for
+ *  the renderer to mount a skeleton card — the concrete contents arrive
+ *  later via kind-specific deltas (text / thinking) or at
+ *  `block_completed`. The skeleton-on-added pattern matches what
+ *  Claude's adapter does and keeps the UI from looking stuck while a
+ *  long tool call streams. */
+export type SemanticBlockStartedEvent = SemanticBlockRef & {
+  type: 'block_started'
+  kind: SemanticBlockKind
+  /** For function / custom tool calls: the tool name. */
+  toolName?: string
+  /** For tool / function variants: the upstream `call_id` — pairs the
+   *  call against its later `*_output` block, since the output arrives
+   *  as a SEPARATE output_item with only the call_id in common. */
+  callId?: string
+  /** For Message blocks: `"commentary"` or `"final_answer"` when the
+   *  model declared one. See codex-rs/protocol/src/models.rs:176-184.
+   *  Legacy/older models may omit it — treat `undefined` as "unknown". */
+  messagePhase?: 'commentary' | 'final_answer'
+  /** Initial status when present (e.g. `"in_progress"` on a tool call
+   *  that hasn't completed yet). */
+  status?: string
+  source: SemanticSource
+  confidence: SemanticConfidence
+  ts: number
+}
+
+/** Per-block text delta. Fires from `response.output_text.delta`, which
+ *  Codex delivers keyed to the currently open Message block's item.
+ *  `textSoFar` is a running accumulator so late subscribers can catch
+ *  up without replaying every delta — same contract Claude uses. */
+export type SemanticTextDeltaEvent = SemanticBlockRef & {
+  type: 'text_delta'
+  textDelta: string
+  textSoFar: string
+  source: SemanticSource
+  confidence: SemanticConfidence
+  ts: number
+}
+
+/** Thinking delta for a `reasoning` block. Fires from
+ *  `response.reasoning_text.delta` (the detailed reasoning) AND
+ *  `response.reasoning_summary_text.delta` (the shorter summary). The
+ *  `track` field distinguishes them so a consumer can collapse
+ *  summaries separately from full reasoning. Both tracks accumulate
+ *  independently.
+ *
+ *  The old adapter parsed these and threw them away with a comment
+ *  arguing rollout would render them eventually. That's only true if
+ *  the user is fine with a several-second gap during a thinking pause.
+ *  Publishing them live is a clearer UX; the rollout reconciler can
+ *  emit `source_changed` when it catches up (the channel already does
+ *  this for text). */
+export type SemanticThinkingDeltaEvent = SemanticBlockRef & {
+  type: 'thinking_delta'
+  /** Which reasoning track the delta is on. `'summary'` comes from
+   *  reasoning_summary_text.delta; `'full'` from reasoning_text.delta. */
+  track: 'summary' | 'full'
+  thinkingDelta: string
+  thinkingSoFar: string
+  /** Index within the reasoning item for this track. `summary_index`
+   *  for summary tracks, `content_index` for full tracks — both come
+   *  directly off the SSE event so a renderer that wants to keep
+   *  independent summaries in order can do so. */
+  index: number
+  source: SemanticSource
+  confidence: SemanticConfidence
+  ts: number
+}
+
+/** Fires at `response.output_item.done`. Carries the final, fully
+ *  typed ResponseItem. This is the authoritative "this block is
+ *  settled" signal — every structural item (tool calls, web searches,
+ *  image generations, compactions, ghost snapshots) lands here. The
+ *  renderer should prefer this over deltas when it needs the canonical
+ *  state, because deltas may arrive out-of-order during retries.
+ *
+ *  WHY we carry `raw` in addition to typed fields: the ResponseItem
+ *  enum is growing (`WebSearchAction` added new variants in recent
+ *  codex-rs releases). A future upstream addition wouldn't be visible
+ *  through the typed fields until we update this file, but `raw` keeps
+ *  the full payload available to app code that wants to poke at new
+ *  fields without waiting for a package bump. */
+export type SemanticBlockCompletedEvent = SemanticBlockRef & {
+  type: 'block_completed'
+  kind: SemanticBlockKind
+  /** For `message`: the flattened text content across all output_text
+   *  ContentItems in the final message. */
+  text?: string
+  /** For `reasoning`: the final summary text (joined across all
+   *  SummaryText entries) and full reasoning text when present. */
+  reasoningSummary?: string
+  reasoningText?: string
+  /** For tool variants: tool name + call id. */
+  toolName?: string
+  callId?: string
+  /** For function_call: the final arguments JSON string (raw — may be
+   *  invalid JSON, same as Claude's contract). `parsed` is our best
+   *  effort JSON.parse; `parseError` is set if it failed so the
+   *  renderer can show an error state instead of a half-rendered
+   *  tool call. */
+  argumentsJson?: string
+  parsedArguments?: Record<string, unknown>
+  parseError?: string
+  /** For function_call_output / custom_tool_call_output: the output
+   *  payload as-is. May be a string or a structured content array
+   *  depending on `FunctionCallOutputPayload` on the Rust side. */
+  output?: unknown
+  /** For web_search_call: the action variant (Search/OpenPage/FindInPage)
+   *  plus its query/url. We keep it as a typed object so the renderer
+   *  doesn't have to reparse raw. */
+  webSearchAction?: {
+    kind: 'search' | 'open_page' | 'find_in_page' | 'other'
+    query?: string
+    queries?: string[]
+    url?: string
+    pattern?: string
+  }
+  /** For image_generation_call: the generated payload. `result` is
+   *  base64-encoded by default; consumers that want to save or display
+   *  it need to decode. */
+  imageGeneration?: {
+    status: string
+    revisedPrompt?: string
+    result: string
+  }
+  /** For local_shell_call: the exec action details (command, cwd, env,
+   *  user, timeout). Mirrors LocalShellExecAction on the Rust side. */
+  localShellCall?: {
+    status: string
+    command: string[]
+    workingDirectory?: string
+    timeoutMs?: number
+    env?: Record<string, string>
+    user?: string
+  }
+  /** Final upstream status if the item carried one (tool calls often
+   *  do; messages usually don't). */
+  status?: string
+  /** Full raw upstream payload, kept for future-proofing when a new
+   *  ResponseItem variant ships before we add typed fields. */
+  raw?: Record<string, unknown>
+  source: SemanticSource
+  confidence: SemanticConfidence
+  ts: number
+}
+
+// ---------------------------------------------------------------------------
+// Turn-lifecycle events beyond start / delta / completed.
+// ---------------------------------------------------------------------------
+
+/** Fires when the turn ended with information the caller needs beyond
+ *  "it's done": an incomplete-reason from `response.incomplete` (e.g.
+ *  `max_output_tokens`, `content_filter`) or a classified error from
+ *  `response.failed`. For error cases, `apiError` holds the
+ *  classified shape (see SemanticApiErrorEvent).
+ *
+ *  Why `stopReason` is a string and not a union: codex-rs's
+ *  incomplete_details.reason is freeform string (responses.rs:311);
+ *  upstream can add new reasons without schema changes, and we don't
+ *  want a package bump every time they do. Common values at time of
+ *  writing: `max_output_tokens`, `content_filter`, `max_tokens`. */
+export type SemanticTurnStoppedEvent = {
+  type: 'turn_stopped'
+  turnId: string
+  stopReason: string | null
+  /** Convenience flag when stopReason indicates a content-policy
+   *  refusal. Saves the renderer from hardcoding the value. */
+  isRefusal: boolean
+  source: SemanticSource
+  confidence: SemanticConfidence
+  ts: number
+}
+
+// ---------------------------------------------------------------------------
+// Error events.
+// ---------------------------------------------------------------------------
+//
+// Mirrors Claude's two-tier split: stream errors are soft (the SSE had
+// a hiccup but more bytes may follow), api errors are hard (the request
+// failed, show the error card).
+
+/** Soft streaming-defensive error. Fires when the adapter's own SSE
+ *  parser hits a malformed frame — invalid JSON, missing fields, or
+ *  an unexpected event shape. The turn continues if possible; the
+ *  consumer can show a diagnostic badge without tearing down the
+ *  card. */
+export type SemanticStreamErrorEvent = {
+  type: 'stream_error'
+  turnId: string | null
+  /** Machine-readable tag so the renderer can branch. Values:
+   *  `json_parse_error`, `unexpected_frame_shape`, `missing_required_field`. */
+  errorType: string
+  message: string
+  source: SemanticSource
+  confidence: SemanticConfidence
+  ts: number
+}
+
+/** Hard API-level failure. Port of codex-rs's ApiError classification
+ *  from codex-api/src/error.rs:14-32. The `errorType` values are
+ *  stable identifiers suitable for UI branching — NOT human-readable
+ *  messages. Use `message` for display text.
+ *
+ *  Classification mirrors responses.rs:280-298 exactly so rendering
+ *  behaviour stays consistent between the proxy path and whatever
+ *  else might reconstruct an error later. */
+export type SemanticApiErrorEvent = {
+  type: 'api_error'
+  turnId: string | null
+  /** One of: `context_window_exceeded`, `quota_exceeded`,
+   *  `usage_not_included`, `server_overloaded`, `invalid_request`,
+   *  `retryable`, or `stream` for the generic fallback. Matches the
+   *  ApiError variants in codex-api/src/error.rs. */
+  errorType:
+    | 'context_window_exceeded'
+    | 'quota_exceeded'
+    | 'usage_not_included'
+    | 'server_overloaded'
+    | 'invalid_request'
+    | 'retryable'
+    | 'stream'
+  message: string
+  /** For `retryable`: the server-suggested delay in milliseconds if
+   *  present on the upstream error. Parsed from the `Retry-After`-style
+   *  hint via try_parse_retry_after on the Rust side. */
+  retryAfterMs?: number
+  /** HTTP status when available (upstream transport errors). */
+  status?: number
+  /** Convenience flag: `errorType === 'server_overloaded'`. */
+  isOverloaded?: boolean
+  source: SemanticSource
+  confidence: SemanticConfidence
+  ts: number
+}
+
+// ---------------------------------------------------------------------------
 // Flow attribution diagnostics (proxy-sourced only).
 // ---------------------------------------------------------------------------
 //
@@ -221,6 +527,13 @@ export type SemanticEvent =
   | SemanticToolStartedEvent
   | SemanticToolOutputDeltaEvent
   | SemanticToolCompletedEvent
+  | SemanticBlockStartedEvent
+  | SemanticTextDeltaEvent
+  | SemanticThinkingDeltaEvent
+  | SemanticBlockCompletedEvent
+  | SemanticTurnStoppedEvent
+  | SemanticStreamErrorEvent
+  | SemanticApiErrorEvent
   | SemanticFlowSelectedEvent
   | SemanticFlowIgnoredEvent
   | SemanticUsageEvent
