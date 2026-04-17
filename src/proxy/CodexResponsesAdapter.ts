@@ -156,6 +156,28 @@ type FlowState = {
   turnOpened: boolean
   // Last observed `obfuscation` nonce — noisy, only for debug logs.
   lastObfuscation: string | null
+  // Attribution — mirrors ClaudeProxyAdapter's three-state model.
+  //
+  //   'candidate' — freshly minted on `request`. No publishing yet.
+  //                 Upgraded to 'active' or 'secondary' on first
+  //                 response-chunk.
+  //   'active'    — sole flow permitted to publish onto
+  //                 headless.semantic for this session. Exactly one
+  //                 active flow at a time; the rest are secondary.
+  //   'secondary' — concurrent flow whose bytes land while another
+  //                 flow is already active. Parsed (for bookkeeping)
+  //                 but never published. Would-be publishes are
+  //                 dropped at the handleFrame entry point.
+  //
+  // WHY this exists: before the gate was added, a retry or warmup
+  // could open a second POST /v1/responses while the first was still
+  // streaming. Both flows called startTurn on the SHARED
+  // SemanticChannel with distinct `resp_...` ids, and the channel's
+  // single-slot activeTurnId thrashed between them. The renderer
+  // then alternated between rendering one flow's blocks and the
+  // other's — the user-visible 0/1/0/1 flicker below the prompt.
+  // See docs/superpowers/plans/2026-04-17-codex-semantic-flicker-fix.md.
+  attribution: 'candidate' | 'active' | 'secondary'
 }
 
 export class CodexResponsesAdapter {
@@ -166,6 +188,11 @@ export class CodexResponsesAdapter {
   // the same path fires on every retry and we need stable keys.
   private nextFlowSeq = 1
   private attachedHandler: ((ev: Record<string, unknown>) => void) | null = null
+  // flowId of the one flow that currently owns publishing rights on
+  // headless.semantic. Null when nothing is streaming. Cleared by
+  // response-end / response-error / upstream-error for the active
+  // flow. See FlowState.attribution for the full rationale.
+  private activeFlowId: string | null = null
 
   constructor(proxy: ResponsesProxy, headless: CodexHeadless) {
     this.proxy = proxy
@@ -193,6 +220,10 @@ export class CodexResponsesAdapter {
     if (!this.attachedHandler) return
     this.proxy.off('event', this.attachedHandler)
     this.attachedHandler = null
+    // Drop any in-flight flow bookkeeping. A session restart that
+    // re-attaches a new adapter shouldn't see residual state.
+    this.flows.clear()
+    this.activeFlowId = null
   }
 
   private onProxyEvent(ev: Record<string, unknown>): void {
@@ -205,9 +236,19 @@ export class CodexResponsesAdapter {
     if (kind === 'request') {
       const req = ev as unknown as StartEvent
       if (req.method !== 'POST') return
-      // Mint a flow. Don't open a semantic turn yet — we want the
-      // real response.id from response.created, not a synthetic id
-      // that'd conflict with rollout's later task_started.
+      // Mint a flow in 'candidate' state. Don't publish anything
+      // onto the shared semantic channel yet — we need to see the
+      // first response chunk to decide whether this flow gets to be
+      // the one 'active' flow or is demoted to 'secondary' because
+      // another flow already owns the slot.
+      //
+      // WHY defer publishFlowSelected until first chunk (and not
+      // fire it at request time as the earlier implementation did):
+      // request-time attribution can't distinguish "this is the only
+      // flow" from "this is the Nth concurrent flow". The upstream
+      // may also never actually respond to a POST (cancelled warmup,
+      // timeout, auth flow), and we don't want a `flow_selected`
+      // event for a flow that never produces any bytes.
       const flowId = `proxy-${this.nextFlowSeq++}`
       this.flows.set(flowId, {
         flowId,
@@ -221,18 +262,7 @@ export class CodexResponsesAdapter {
         blocks: new Map(),
         turnOpened: false,
         lastObfuscation: null,
-      })
-      // Publish via the typed publisher. cc-shell's ProxyDebugPanel
-      // reads `runtime.semantic.flows` for its "flows seen" section,
-      // and its reducer folds `flow_selected` events into that state
-      // identically for Claude and Codex — the shape of
-      // SemanticFlowSelectedEvent is deliberately the same in both
-      // channels. Reason text mirrors the format the panel renders.
-      this.headless.semantic.publishFlowSelected({
-        flowId,
-        turnId: null,
-        reason: `${req.method} ${req.path}`,
-        source: 'proxy',
+        attribution: 'candidate',
       })
       return
     }
@@ -241,6 +271,35 @@ export class CodexResponsesAdapter {
       const chunkEv = ev as unknown as ChunkEvent
       const flow = this.findFlowByRequestId(chunkEv.requestId)
       if (!flow) return
+
+      // First-chunk attribution. Any /responses chunk is a reliable
+      // "this is live streaming" signal — request headers don't
+      // distinguish warmups or non-SSE calls from the real turn.
+      //
+      // Promotion rule: first chunker wins the slot. Concurrent flows
+      // arriving while another flow is active get marked secondary
+      // and publish flow_ignored for observability. This matches
+      // ClaudeProxyAdapter's activeStreamingFlowId pattern 1:1.
+      if (flow.attribution === 'candidate') {
+        if (this.activeFlowId === null) {
+          flow.attribution = 'active'
+          this.activeFlowId = flow.flowId
+          this.headless.semantic.publishFlowSelected({
+            flowId: flow.flowId,
+            turnId: null,
+            reason: 'first-chunk (no competing active flow)',
+            source: 'proxy',
+          })
+        } else {
+          flow.attribution = 'secondary'
+          this.headless.semantic.publishFlowIgnored({
+            flowId: flow.flowId,
+            reason: `concurrent with active flow ${this.activeFlowId}`,
+            source: 'proxy',
+          })
+        }
+      }
+
       // decoder.write holds any trailing partial multi-byte sequence
       // until the next chunk arrives — see the FlowState.decoder
       // comment for why a plain toString('utf-8') corrupts non-ASCII.
@@ -254,7 +313,16 @@ export class CodexResponsesAdapter {
       // semantic events for an entire turn because `\n\n` never
       // appears in the buffer.
       flow.buffer += flow.decoder.write(chunkEv.chunk).replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-      this.drainFrames(flow)
+      // Only the active flow feeds the semantic channel. Skip parsing
+      // entirely for secondary flows — nothing downstream would look
+      // at the parsed state, and the decode/frame/JSON.parse cost on
+      // retry bursts is real. We still write into flow.decoder above
+      // so the StringDecoder holds a consistent position if the flow
+      // were ever promoted later (defensive; today we never flip
+      // secondary → active).
+      if (flow.attribution === 'active') {
+        this.drainFrames(flow)
+      }
       return
     }
 
@@ -267,8 +335,12 @@ export class CodexResponsesAdapter {
       // streams this is empty; on truncated streams we'd rather see
       // a stray U+FFFD than silently swallow the tail.
       flow.buffer += flow.decoder.end()
-      // Best-effort flush — upstream may not send a terminator.
-      this.drainFrames(flow)
+      // Best-effort flush — upstream may not send a terminator. Skip
+      // the frame drain entirely for non-active flows (nothing reads
+      // their parsed state).
+      if (flow.attribution === 'active') {
+        this.drainFrames(flow)
+      }
       // If we got this far without seeing response.completed,
       // close the turn to avoid a dangling in-progress indicator.
       // The rollout source will correct the final text.
@@ -279,6 +351,12 @@ export class CodexResponsesAdapter {
           source: 'proxy',
           confidence: 'medium',
         })
+      }
+      // Release the active-flow slot so the NEXT flow's first chunk
+      // can promote itself. Without this, a stuck activeFlowId would
+      // starve every subsequent turn's attribution path.
+      if (this.activeFlowId === flow.flowId) {
+        this.activeFlowId = null
       }
       this.flows.delete(flow.flowId)
       return
@@ -297,6 +375,11 @@ export class CodexResponsesAdapter {
           source: 'proxy',
           confidence: 'fallback',
         })
+      }
+      // Same rationale as response-end above: release the slot so
+      // the next flow can claim it.
+      if (this.activeFlowId === flow.flowId) {
+        this.activeFlowId = null
       }
       this.flows.delete(flow.flowId)
     }

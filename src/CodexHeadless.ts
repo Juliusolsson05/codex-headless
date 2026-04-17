@@ -231,10 +231,22 @@ export class CodexHeadless extends EventEmitter {
           this.screen.publishActivity({ active: true, status: activity })
 
           // Semantic fallback: open a screen-sourced turn ONLY if the
-          // rollout stream hasn't already opened one. The moment
-          // rollout deltas arrive they'll take over via
-          // `source_changed`, which is the whole point of the tag.
-          if (!this.liveSemanticTurnId) {
+          // rollout stream hasn't already opened one AND nothing else
+          // owns the SemanticChannel's active turn.
+          //
+          // The second check is the one that fixes the Codex flicker
+          // bug: the proxy adapter publishes directly onto the shared
+          // SemanticChannel (`source_changed` / `resp_...` turn ids)
+          // WITHOUT routing through `this.liveSemanticTurnId`. So a
+          // guard based solely on our own field would open a second
+          // live turn while the proxy was already streaming one, and
+          // every 16ms snapshot below would then fight the proxy for
+          // the channel's single activeTurnId slot. See
+          // docs/superpowers/plans/2026-04-17-codex-semantic-flicker-fix.md.
+          if (
+            !this.liveSemanticTurnId &&
+            this.semantic.getActiveTurnId() === null
+          ) {
             this.liveSemanticTurnId = `live-${Date.now()}`
             this.semanticSource = 'screen'
             this.lastScreenSemanticText = ''
@@ -288,6 +300,31 @@ export class CodexHeadless extends EventEmitter {
       // belt-and-braces for the narrow window between "TUI started
       // drawing assistant text" and "rollout emitted the first
       // agent_message_delta for this turn".
+      //
+      // Defensive hand-off: if something else has taken the channel's
+      // active turn out from under us (typically the proxy adapter
+      // opening a `resp_...` turn directly on the shared channel),
+      // drop our screen-sourced bookkeeping and stop firing deltas.
+      // Pre-fix this path kept calling applyDelta(live-...) every
+      // 16ms; the channel's auto-promotion logic then ping-ponged
+      // activeTurnId between our screen id and the proxy's id, which
+      // the reducer turned into the visible 0/1/0/1 flicker below
+      // the prompt.
+      if (
+        this.liveSemanticTurnId &&
+        this.semanticSource === 'screen' &&
+        this.semantic.getActiveTurnId() !== null &&
+        this.semantic.getActiveTurnId() !== this.liveSemanticTurnId
+      ) {
+        // Someone else owns the channel. Release our shadow. Do NOT
+        // emit finishTurn for our turn — the channel already sealed
+        // it when the other source called startTurn, so emitting
+        // another finishTurn would either be a no-op (activeTurnId
+        // no longer matches) or fire a stale turn_completed. Reset
+        // only our local fields so future activity can open a fresh
+        // fallback cleanly.
+        this.resetLiveTurn()
+      }
       if (this.liveSemanticTurnId && this.semanticSource === 'screen') {
         // Use the wider `recent` window so the extractor still finds
         // the assistant block after it scrolls past the viewport.
