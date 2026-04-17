@@ -180,6 +180,15 @@ export class CodexHeadless extends EventEmitter {
    *  payloads; used as `fullText` on the semantic delta events so late
    *  subscribers can skip to the current state. */
   private rolloutAssistantText = ''
+  /** Screen-fallback baseline — the assistant block visible on the
+   *  TUI at the moment a screen-sourced turn starts. Suppresses the
+   *  first fallback delta until the extracted text actually differs
+   *  from this. Without it, the previous turn's assistant text still
+   *  sitting on screen gets published as the first delta of the new
+   *  turn and leaks into the rendered feed. Cleared by
+   *  `resetLiveTurn` on any turn end / takeover. */
+  private screenBaselineText = ''
+  private screenBaselineSatisfied = false
 
   constructor(options: CodexHeadlessOptions) {
     super()
@@ -229,6 +238,13 @@ export class CodexHeadless extends EventEmitter {
             this.liveSemanticTurnId = `live-${Date.now()}`
             this.semanticSource = 'screen'
             this.lastScreenSemanticText = ''
+            // Capture current assistant block as the baseline — until
+            // the next screen extract differs, we're looking at the
+            // PREVIOUS turn's text still on-screen. See
+            // screenBaselineText field docs.
+            this.screenBaselineText =
+              extractCodexAssistantInProgress(snap.recent) || ''
+            this.screenBaselineSatisfied = false
             this.semantic.startTurn({
               turnId: this.liveSemanticTurnId,
               role: 'assistant',
@@ -273,7 +289,21 @@ export class CodexHeadless extends EventEmitter {
       // drawing assistant text" and "rollout emitted the first
       // agent_message_delta for this turn".
       if (this.liveSemanticTurnId && this.semanticSource === 'screen') {
-        const text = extractCodexAssistantInProgress(snap.plain)
+        // Use the wider `recent` window so the extractor still finds
+        // the assistant block after it scrolls past the viewport.
+        const text = extractCodexAssistantInProgress(snap.recent)
+
+        // Baseline gate — until the text differs from the block that
+        // was on-screen when the turn started, the buffer is still
+        // showing the PREVIOUS turn's answer. Publishing it would
+        // leak that answer into the new turn's first delta.
+        if (!this.screenBaselineSatisfied) {
+          if (!text || text === this.screenBaselineText) {
+            return
+          }
+          this.screenBaselineSatisfied = true
+        }
+
         if (text && text !== this.lastScreenSemanticText) {
           const delta = text.startsWith(this.lastScreenSemanticText)
             ? text.slice(this.lastScreenSemanticText.length)
@@ -283,7 +313,7 @@ export class CodexHeadless extends EventEmitter {
             turnId: this.liveSemanticTurnId,
             fullText: text,
             textDelta: delta,
-            markdownText: extractCodexAssistantInProgress(snap.markdown) || undefined,
+            markdownText: extractCodexAssistantInProgress(snap.recentMarkdown) || undefined,
             source: 'screen',
             confidence: 'fallback',
           })
@@ -526,6 +556,10 @@ export class CodexHeadless extends EventEmitter {
           this.semanticSource = 'rollout'
           this.rolloutAssistantText = ''
           this.lastScreenSemanticText = ''
+          // Rollout has taken over; the screen baseline is
+          // obsolete.
+          this.screenBaselineText = ''
+          this.screenBaselineSatisfied = false
           this.semantic.startTurn({
             turnId: e.turn_id,
             role: 'assistant',
@@ -731,6 +765,8 @@ export class CodexHeadless extends EventEmitter {
     this.semanticSource = null
     this.rolloutAssistantText = ''
     this.lastScreenSemanticText = ''
+    this.screenBaselineText = ''
+    this.screenBaselineSatisfied = false
   }
 
   /**
