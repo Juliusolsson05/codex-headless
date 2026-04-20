@@ -56,6 +56,49 @@ export type SemanticSource = 'rollout' | 'proxy' | 'screen'
 export type SemanticConfidence = 'high' | 'medium' | 'fallback'
 
 // ---------------------------------------------------------------------------
+// Live-turn ownership model.
+// ---------------------------------------------------------------------------
+//
+// Mirrors the claude-code-headless LiveOwner* shapes — same reasoning
+// about why ownership belongs on the orchestrator and not on the
+// SemanticChannel transport. See claude-code-headless/src/channels/
+// types.ts for the full rationale; Codex's differences:
+//
+//   * `rollout` is a first-class live owner because Codex's rollout
+//     stream delivers `agent_message_delta` events that are genuinely
+//     authoritative. Claude's JSONL is not a live producer — it only
+//     lands after an assistant turn has committed — so its package
+//     does not list `rollout` (and would not list `jsonl`) here.
+//
+//   * Proxy is listed because the CodexResponsesAdapter can publish
+//     live semantics when it is active. Selection between proxy and
+//     rollout as live owner is a per-session choice made by the
+//     orchestrator.
+//
+// See docs/superpowers/plans/2026-04-18-headless-live-turn-redesign.md
+// for the full architectural rationale.
+
+export type LiveOwnerKind = 'proxy' | 'rollout' | 'screen'
+
+export interface LiveOwnerState {
+  kind: LiveOwnerKind | null
+  turnId: string | null
+  startedAt: number | null
+  status: 'idle' | 'live' | 'reconciling'
+}
+
+export interface LiveOwnerDecision {
+  accept: boolean
+  action: 'start' | 'drop' | 'promote' | 'finalize' | 'clear'
+  kind: LiveOwnerKind
+  turnId: string
+  reason: string
+  prev: LiveOwnerState
+  next: LiveOwnerState
+  ts: number
+}
+
+// ---------------------------------------------------------------------------
 // Semantic channel.
 // ---------------------------------------------------------------------------
 
@@ -489,6 +532,27 @@ export type SemanticFlowIgnoredEvent = {
 }
 
 // ---------------------------------------------------------------------------
+// Lifecycle-violation diagnostic.
+// ---------------------------------------------------------------------------
+//
+// Fires when a publisher calls into SemanticChannel with a turnId that
+// does not match the channel's current active turnId. Mirrors the
+// Claude package's `SemanticLifecycleViolationEvent` — see that file
+// for the full rationale. Kept off the `SemanticEvent` union so the
+// reducer in cc-shell doesn't have to grow a new branch.
+export type SemanticLifecycleViolationEvent = {
+  type: 'lifecycle_violation'
+  kind:
+    | 'start_while_active'
+    | 'delta_mismatched_turn'
+    | 'finish_mismatched_turn'
+  attemptedTurnId: string
+  activeTurnId: string | null
+  source: SemanticSource
+  ts: number
+}
+
+// ---------------------------------------------------------------------------
 // Usage accounting.
 // ---------------------------------------------------------------------------
 //
@@ -519,6 +583,38 @@ export type SemanticUsageEvent = {
   ts: number
 }
 
+// ---------------------------------------------------------------------------
+// Stream phase — "what is the model doing right now".
+// ---------------------------------------------------------------------------
+//
+// Parallel to claude-code-headless/src/channels/types.ts — both packages
+// expose the same vocabulary so the cc-shell renderer can drive its
+// in-feed WorkIndicator off a single field regardless of provider. See
+// the sibling types file for the WHY of each label.
+export type StreamPhase =
+  | 'idle'
+  | 'requesting'
+  | 'thinking'
+  | 'responding'
+  | 'tool-input'
+  | 'tool-use'
+  | 'awaiting-tool'
+
+/** Semantic stream phase — authoritative "what is the model doing right
+ *  now" signal, derived by the proxy adapter from Responses-API SSE
+ *  events. Mirrors the Claude-side SemanticStreamPhaseEvent shape so the
+ *  downstream renderer has one code path for both providers. */
+export type SemanticStreamPhaseEvent = {
+  type: 'stream_phase'
+  turnId: string | null
+  phase: StreamPhase
+  toolName?: string
+  toolUseId?: string
+  source: SemanticSource
+  confidence: SemanticConfidence
+  ts: number
+}
+
 export type SemanticEvent =
   | SemanticTurnStartedEvent
   | SemanticTurnDeltaEvent
@@ -537,6 +633,7 @@ export type SemanticEvent =
   | SemanticFlowSelectedEvent
   | SemanticFlowIgnoredEvent
   | SemanticUsageEvent
+  | SemanticStreamPhaseEvent
 
 // ---------------------------------------------------------------------------
 // Screen channel.

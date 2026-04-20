@@ -1,6 +1,6 @@
 import { StringDecoder } from 'string_decoder'
 import type { CodexHeadless } from '../CodexHeadless.js'
-import type { SemanticBlockKind } from '../channels/types.js'
+import type { SemanticBlockKind, StreamPhase } from '../channels/types.js'
 import type { ResponsesProxy } from './responsesProxy.js'
 
 // CodexResponsesAdapter — consumes the raw SSE chunks that
@@ -154,6 +154,14 @@ type FlowState = {
   // Whether we've emitted startTurn for this flow yet. Used to
   // avoid publishing deltas before the turn exists.
   turnOpened: boolean
+  // Tool-call items that finalised their arguments during this flow,
+  // in the order their `response.output_item.done` fired. Used at
+  // `response.completed` to pick the "next tool to run" for the
+  // `awaiting-tool` phase transition. Populated only for tool
+  // variants (function_call / custom_tool_call / local_shell_call /
+  // web_search_call / image_generation_call / tool_search_call); the
+  // `_output` kinds never land here.
+  pendingToolUses: Array<{ toolUseId: string; toolName: string }>
   // Last observed `obfuscation` nonce — noisy, only for debug logs.
   lastObfuscation: string | null
   // Attribution — mirrors ClaudeProxyAdapter's three-state model.
@@ -261,6 +269,7 @@ export class CodexResponsesAdapter {
         messageBlockIndex: null,
         blocks: new Map(),
         turnOpened: false,
+        pendingToolUses: [],
         lastObfuscation: null,
         attribution: 'candidate',
       })
@@ -290,6 +299,12 @@ export class CodexResponsesAdapter {
             reason: 'first-chunk (no competing active flow)',
             source: 'proxy',
           })
+          // First-chunk promotion → emit 'requesting'. Like the Claude
+          // adapter, we don't have a real turnId yet (arrives on the
+          // `response.created` frame); null signals "attached to the
+          // session, not a specific turn" and is upgraded once the real
+          // id lands.
+          this.publishPhase(flow, 'requesting')
         } else {
           flow.attribution = 'secondary'
           this.headless.semantic.publishFlowIgnored({
@@ -412,6 +427,26 @@ export class CodexResponsesAdapter {
     }
   }
 
+  /** Publish a stream-phase event on behalf of this flow. Suppressed
+   *  for secondary flows so a warmup / retry never flips the renderer's
+   *  phase out from under the active turn. Channel-level dedupe swallows
+   *  no-op (phase, turnId, toolUseId) repeats, so we don't re-check here. */
+  private publishPhase(
+    flow: FlowState,
+    phase: StreamPhase,
+    extras: { toolName?: string; toolUseId?: string } = {},
+  ): void {
+    if (flow.attribution !== 'active') return
+    this.headless.semantic.publishStreamPhase({
+      turnId: flow.responseId,
+      phase,
+      toolName: extras.toolName,
+      toolUseId: extras.toolUseId,
+      source: 'proxy',
+      confidence: 'high',
+    })
+  }
+
   private handleFrame(flow: FlowState, rawFrame: string): void {
     // Collect all `data:` lines (a frame can have multiple, joined
     // by newlines per the SSE spec). Drop `event:`, `id:`, `retry:`
@@ -473,6 +508,10 @@ export class CodexResponsesAdapter {
           })
           flow.turnOpened = true
         }
+        // Re-emit `requesting` now that we have a real turnId. Channel
+        // dedupe would drop a no-op repeat with the same params, but
+        // the turnId has changed from null → id so this is new info.
+        this.publishPhase(flow, 'requesting')
         return
       }
 
@@ -520,6 +559,33 @@ export class CodexResponsesAdapter {
           status,
           source: 'proxy',
         })
+
+        // Phase transition — same table as Claude's adapter, adapted
+        // to the Codex ResponseItem taxonomy. Message → responding,
+        // reasoning → thinking, any tool-call variant → tool-input.
+        // `_output` variants are skipped here because they arrive on
+        // the NEXT assistant flow as results; there's no phase change
+        // within this flow for them.
+        switch (kind) {
+          case 'message':
+            this.publishPhase(flow, 'responding')
+            break
+          case 'reasoning':
+            this.publishPhase(flow, 'thinking')
+            break
+          case 'function_call':
+          case 'custom_tool_call':
+          case 'local_shell_call':
+          case 'web_search_call':
+          case 'image_generation_call':
+          case 'tool_search_call':
+            this.publishPhase(flow, 'tool-input', {
+              toolName,
+              toolUseId: callId,
+            })
+            break
+          // Other kinds (outputs, unknown) — leave phase as-is.
+        }
         return
       }
 
@@ -660,16 +726,26 @@ export class CodexResponsesAdapter {
             const argumentsJson =
               typeof item.arguments === 'string' ? (item.arguments as string) : ''
             const parsedArgs = tryParseObject(argumentsJson)
+            const toolName =
+              typeof item.name === 'string' ? (item.name as string) : undefined
+            const callId =
+              typeof item.call_id === 'string' ? (item.call_id as string) : undefined
             this.headless.semantic.publishBlockCompleted({
               ...base,
-              toolName:
-                typeof item.name === 'string' ? (item.name as string) : undefined,
-              callId:
-                typeof item.call_id === 'string' ? (item.call_id as string) : undefined,
+              toolName,
+              callId,
               argumentsJson,
               parsedArguments: parsedArgs.value,
               parseError: parsedArgs.error,
             })
+            // Record the pending tool so response.completed can flip
+            // the phase to `awaiting-tool` with this tool as the hint.
+            if (callId) {
+              flow.pendingToolUses.push({
+                toolUseId: callId,
+                toolName: toolName ?? '',
+              })
+            }
             return
           }
           case 'function_call_output':
@@ -685,17 +761,26 @@ export class CodexResponsesAdapter {
             return
           }
           case 'custom_tool_call': {
+            const toolName =
+              typeof item.name === 'string' ? (item.name as string) : undefined
+            const callId =
+              typeof item.call_id === 'string' ? (item.call_id as string) : undefined
             this.headless.semantic.publishBlockCompleted({
               ...base,
-              toolName:
-                typeof item.name === 'string' ? (item.name as string) : undefined,
-              callId:
-                typeof item.call_id === 'string' ? (item.call_id as string) : undefined,
+              toolName,
+              callId,
               // CustomToolCall.input is a plain string (not JSON). Preserve
               // as argumentsJson for symmetry with function_call consumers.
               argumentsJson:
                 typeof item.input === 'string' ? (item.input as string) : undefined,
             })
+            // Record pending tool — same rationale as function_call above.
+            if (callId) {
+              flow.pendingToolUses.push({
+                toolUseId: callId,
+                toolName: toolName ?? '',
+              })
+            }
             return
           }
           case 'tool_search_call':
@@ -829,6 +914,22 @@ export class CodexResponsesAdapter {
           confidence: 'high',
         })
         flow.turnOpened = false
+        // Phase terminal transition. If the turn produced function_call
+        // or custom_tool_call items, the cc-shell client will execute
+        // them and send the outputs back on the next `/v1/responses`
+        // call — until then we sit in `awaiting-tool` so the user can
+        // see which tool the session is blocked on. Server-executed
+        // tools (web_search, image_generation, local_shell) don't
+        // land in pendingToolUses because they don't pause the client.
+        if (flow.pendingToolUses.length > 0) {
+          const first = flow.pendingToolUses[0]!
+          this.publishPhase(flow, 'awaiting-tool', {
+            toolName: first.toolName,
+            toolUseId: first.toolUseId,
+          })
+        } else {
+          this.publishPhase(flow, 'idle')
+        }
         return
       }
 
@@ -858,6 +959,9 @@ export class CodexResponsesAdapter {
           confidence: 'fallback',
         })
         flow.turnOpened = false
+        // API failure tears down the turn; pending tools are moot
+        // because the failure happened before we could send results.
+        this.publishPhase(flow, 'idle')
         return
       }
 
@@ -884,6 +988,9 @@ export class CodexResponsesAdapter {
           confidence: 'fallback',
         })
         flow.turnOpened = false
+        // Incomplete response (max_output_tokens / content_filter /
+        // etc.). Turn is done, no tools to wait on.
+        this.publishPhase(flow, 'idle')
         return
       }
 

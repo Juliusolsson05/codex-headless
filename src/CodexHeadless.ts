@@ -51,6 +51,11 @@ import { getCodexSessionsDir } from './transcript/ProjectDir.js'
 import { CommittedChannel } from './channels/CommittedChannel.js'
 import { ScreenChannel } from './channels/ScreenChannel.js'
 import { SemanticChannel } from './channels/SemanticChannel.js'
+import type {
+  LiveOwnerDecision,
+  LiveOwnerKind,
+  LiveOwnerState,
+} from './channels/types.js'
 
 // CodexHeadless — programmatic control of OpenAI Codex.
 //
@@ -113,6 +118,13 @@ export type CodexHeadlessEvents = {
   'rollout-error': [Error]
   'trust-dialog': [CodexTrustDialogState]
   exit: [{ exitCode: number; signal?: number }]
+
+  // Live-owner decision stream. Fires on every claim/clear/promote
+  // decision so debug tooling can watch live-turn authority change
+  // hands. Intentionally NOT part of the typed `event` union because
+  // consumers that don't care can ignore it without type churn. See
+  // the corresponding Claude-side comment for rationale.
+  'live-owner-change': [LiveOwnerDecision]
 }
 
 export interface CodexHeadless {
@@ -161,6 +173,28 @@ export class CodexHeadless extends EventEmitter {
   readonly screen = new ScreenChannel()
   readonly committed = new CommittedChannel()
 
+  /** Shadow SemanticChannel — dedicated sink for screen-fallback
+   *  publishing. Nobody in cc-shell's renderer subscribes to this.
+   *
+   *  WHY this exists:
+   *
+   *  Pre-2026-04-18 Codex had three independent producers that could
+   *  race for the same live-turn slot on `semantic`: proxy,
+   *  rollout, and screen fallback. The visible block flicker (see
+   *  2026-04-17-codex-semantic-flicker-fix.md) is a direct symptom.
+   *  The 2026-04-18 redesign plan draws a hard line: screen is an
+   *  overlay/bootstrap source, not a live content source. We route
+   *  every screen-sourced startTurn/applyDelta/finishTurn call to
+   *  this shadow channel so the production path keeps working and
+   *  subscribers that care can still observe it, but cc-shell's
+   *  main rendering consumes only `semantic` and will never see
+   *  screen-derived assistant content again.
+   *
+   *  Screen parsing for OVERLAYS (trust dialog, approval overlay,
+   *  working-row activity) continues to fire on the `screen`
+   *  channel — that surface was never the problem. */
+  readonly semanticShadow = new SemanticChannel()
+
   /** Active semantic turn id. For Codex this is usually the rollout's
    *  `turn_id` once we've seen a `task_started` / `turn_started`
    *  event. If the TUI reports activity before the rollout file has
@@ -190,6 +224,38 @@ export class CodexHeadless extends EventEmitter {
   private screenBaselineText = ''
   private screenBaselineSatisfied = false
 
+  /** Live-turn ownership.
+   *
+   *  Records which producer currently owns the authoritative
+   *  `this.semantic` channel. Only one owner at a time. Screen is
+   *  a legitimate kind here even though screen publishes to
+   *  `semanticShadow` — tracking screen ownership explicitly lets
+   *  the orchestrator express "proxy/rollout has preempted screen"
+   *  as a single `transitionLiveOwner` call instead of scattering
+   *  reset side effects across the code.
+   *
+   *  Owner lifecycle for Codex (all set via the helpers below):
+   *
+   *  - `screen` claims when TUI activity is detected AND no other
+   *    owner exists. Yields to rollout/proxy on `task_started` /
+   *    proxy `turn_started`. Released on the idle debounce when
+   *    screen is still the owner.
+   *  - `rollout` claims on `task_started` / `turn_started` in the
+   *    rollout stream. Yields on `task_complete` / `turn_complete`.
+   *    Takes priority over screen via `transitionLiveOwner`.
+   *  - `proxy` claims when the CodexResponsesAdapter fires a
+   *    proxy-sourced `turn_started` on `this.semantic`. Yields on
+   *    proxy `turn_completed`. Takes priority over screen; in the
+   *    current adapter design, proxy and rollout do not race in
+   *    practice (proxy preempts rollout via owner tracking — see
+   *    the turn_started listener wired in the constructor). */
+  private liveOwner: LiveOwnerState = {
+    kind: null,
+    turnId: null,
+    startedAt: null,
+    status: 'idle',
+  }
+
   constructor(options: CodexHeadlessOptions) {
     super()
     this.cwd = options.cwd
@@ -200,6 +266,42 @@ export class CodexHeadless extends EventEmitter {
       cols: options.cols ?? 120,
       rows: options.rows ?? 40,
       snapshotIntervalMs: options.snapshotIntervalMs ?? 16,
+    })
+
+    // Proxy / rollout ownership claims on the authoritative channel.
+    //
+    // Both the CodexResponsesAdapter and `ingestRolloutIntoSemantic`
+    // publish directly onto `this.semantic`. We mirror their turn
+    // lifecycle into `liveOwner` via a `turn_started` / `turn_completed`
+    // listener so the rest of the orchestrator can answer "who owns
+    // the live turn right now?" without peering into either producer.
+    //
+    // WHY a single listener covers both producers:
+    //
+    //   The listener branches on `ev.source`. Rollout's ingest path
+    //   calls `semantic.startTurn({ source: 'rollout', ... })`; the
+    //   proxy adapter calls `semantic.startTurn({ source: 'proxy',
+    //   ... })`. One listener plus a source switch is simpler than
+    //   two wrappers around each producer.
+    //
+    //   `transitionLiveOwner` is the right call regardless of which
+    //   kind we're entering because it handles the "screen was
+    //   already live, seal its shadow turn" case uniformly.
+    this.semantic.on('turn_started', ev => {
+      if (ev.source === 'proxy') {
+        this.transitionLiveOwner('proxy', ev.turnId, 'proxy turn_started')
+      } else if (ev.source === 'rollout') {
+        this.transitionLiveOwner('rollout', ev.turnId, 'rollout turn_started')
+      }
+    })
+    this.semantic.on('turn_completed', ev => {
+      if (ev.source !== 'proxy' && ev.source !== 'rollout') return
+      if (
+        this.liveOwner.kind === ev.source &&
+        this.liveOwner.turnId === ev.turnId
+      ) {
+        this.clearLiveOwner(`${ev.source} turn_completed`)
+      }
     })
 
     // --- Wire terminal events ---
@@ -230,39 +332,70 @@ export class CodexHeadless extends EventEmitter {
           this.emit('event', { type: 'activity', ts: Date.now(), status: activity })
           this.screen.publishActivity({ active: true, status: activity })
 
-          // Semantic fallback: open a screen-sourced turn ONLY if the
-          // rollout stream hasn't already opened one AND nothing else
-          // owns the SemanticChannel's active turn.
-          //
-          // The second check is the one that fixes the Codex flicker
-          // bug: the proxy adapter publishes directly onto the shared
-          // SemanticChannel (`source_changed` / `resp_...` turn ids)
-          // WITHOUT routing through `this.liveSemanticTurnId`. So a
-          // guard based solely on our own field would open a second
-          // live turn while the proxy was already streaming one, and
-          // every 16ms snapshot below would then fight the proxy for
-          // the channel's single activeTurnId slot. See
-          // docs/superpowers/plans/2026-04-17-codex-semantic-flicker-fix.md.
-          if (
-            !this.liveSemanticTurnId &&
-            this.semantic.getActiveTurnId() === null
-          ) {
-            this.liveSemanticTurnId = `live-${Date.now()}`
-            this.semanticSource = 'screen'
-            this.lastScreenSemanticText = ''
-            // Capture current assistant block as the baseline — until
-            // the next screen extract differs, we're looking at the
-            // PREVIOUS turn's text still on-screen. See
-            // screenBaselineText field docs.
-            this.screenBaselineText =
-              extractCodexAssistantInProgress(snap.recent) || ''
-            this.screenBaselineSatisfied = false
-            this.semantic.startTurn({
+          // Screen-fallback `stream_phase` → `thinking`. Proxy-sourced
+          // phase is strictly higher-confidence (it can distinguish
+          // `responding` / `tool-input` / `thinking` per item kind);
+          // the Codex TUI Working row is the same regardless of
+          // sub-phase, so `thinking` is the conservative bucket. Gate
+          // on `liveOwner.kind !== 'proxy'`: if the proxy owns the
+          // live turn it has already set a finer-grained phase via
+          // CodexResponsesAdapter and we must not clobber it. The
+          // shadow channel always gets the event so debug tooling
+          // can see screen-derived phase regardless.
+          if (this.liveOwner.kind !== 'proxy') {
+            this.semantic.publishStreamPhase({
               turnId: this.liveSemanticTurnId,
-              role: 'assistant',
+              phase: 'thinking',
               source: 'screen',
               confidence: 'fallback',
             })
+          }
+          this.semanticShadow.publishStreamPhase({
+            turnId: this.liveSemanticTurnId,
+            phase: 'thinking',
+            source: 'screen',
+            confidence: 'fallback',
+          })
+
+          // Screen-fallback live turn — opens on the SHADOW channel
+          // and claims `screen` ownership so rollout/proxy see the
+          // slot as occupied until they explicitly preempt via
+          // `transitionLiveOwner`.
+          //
+          // Why we also check `liveOwner.kind === null` on top of
+          // `!this.liveSemanticTurnId`: owner state is the real
+          // source of truth for live-turn authority. If rollout or
+          // proxy claimed ownership first via their own listener,
+          // the owner will be non-null even before we got a chance
+          // to touch `liveSemanticTurnId` — and screen must yield.
+          //
+          // The pre-2026-04-18 check against `semantic.getActiveTurnId()`
+          // is no longer the right gate because screen now publishes
+          // on `semanticShadow`, so the real channel's active-turn
+          // state only reflects proxy/rollout. Using `liveOwner`
+          // instead generalises the check correctly across all three
+          // producers.
+          if (!this.liveSemanticTurnId && this.liveOwner.kind === null) {
+            const candidateTurnId = `live-${Date.now()}`
+            const decision = this.claimLiveOwner(
+              'screen',
+              candidateTurnId,
+              'screen activity detected',
+            )
+            if (decision.accept) {
+              this.liveSemanticTurnId = candidateTurnId
+              this.semanticSource = 'screen'
+              this.lastScreenSemanticText = ''
+              this.screenBaselineText =
+                extractCodexAssistantInProgress(snap.recent) || ''
+              this.screenBaselineSatisfied = false
+              this.semanticShadow.startTurn({
+                turnId: candidateTurnId,
+                role: 'assistant',
+                source: 'screen',
+                confidence: 'fallback',
+              })
+            }
           }
         } else {
           if (this.idleDebounceTimer) clearTimeout(this.idleDebounceTimer)
@@ -276,56 +409,58 @@ export class CodexHeadless extends EventEmitter {
             this.emit('event', { type: 'idle', ts: Date.now() })
             this.screen.publishActivity({ active: false, status: null })
 
-            // If the live semantic turn was screen-sourced, seal it
-            // now. Rollout-sourced turns are sealed by
-            // `task_complete` / `turn_complete`, not by the idle
-            // debounce — we don't want the TUI missing a frame to
-            // accidentally close a turn the rollout still has deltas
-            // for.
-            if (this.liveSemanticTurnId && this.semanticSource === 'screen') {
-              this.semantic.finishTurn({
-                turnId: this.liveSemanticTurnId,
-                fullText: this.lastScreenSemanticText || undefined,
+            // Screen-fallback `stream_phase` → `idle`. Same gate as
+            // the active→true branch above: only hit the authoritative
+            // channel when we aren't the proxy-owned turn (proxy's
+            // response.completed already drove the phase terminal).
+            if (this.liveOwner.kind !== 'proxy') {
+              this.semantic.publishStreamPhase({
+                turnId: null,
+                phase: 'idle',
                 source: 'screen',
                 confidence: 'fallback',
               })
-              this.resetLiveTurn()
+            }
+            this.semanticShadow.publishStreamPhase({
+              turnId: null,
+              phase: 'idle',
+              source: 'screen',
+              confidence: 'fallback',
+            })
+
+            // Close any screen-fallback turn on the shadow channel
+            // and release screen ownership. Rollout- / proxy-sourced
+            // turns are finalized by their own lifecycle on the real
+            // channel (and their listener above clears ownership for
+            // us); the idle debounce must not race those paths.
+            if (this.liveOwner.kind === 'screen') {
+              this.finalizeScreenFallbackTurn('screen idle debounce')
+              this.clearLiveOwner('screen idle debounce')
             }
           }, 2500)
         }
       }
 
-      // Screen-sourced semantic fallback. Run the extractor only when
-      // no higher-trust source is driving the live turn. This is
-      // belt-and-braces for the narrow window between "TUI started
-      // drawing assistant text" and "rollout emitted the first
-      // agent_message_delta for this turn".
+      // Screen-sourced semantic fallback — SHADOW channel only.
       //
-      // Defensive hand-off: if something else has taken the channel's
-      // active turn out from under us (typically the proxy adapter
-      // opening a `resp_...` turn directly on the shared channel),
-      // drop our screen-sourced bookkeeping and stop firing deltas.
-      // Pre-fix this path kept calling applyDelta(live-...) every
-      // 16ms; the channel's auto-promotion logic then ping-ponged
-      // activeTurnId between our screen id and the proxy's id, which
-      // the reducer turned into the visible 0/1/0/1 flicker below
-      // the prompt.
+      // Screen publishes to `semanticShadow` so it cannot race proxy
+      // or rollout for the renderer-facing `semantic` channel. The
+      // pre-2026-04-18 defensive hand-off logic (releasing our own
+      // live turn when `semantic.getActiveTurnId()` diverged) is no
+      // longer needed because the preemption is now explicit: the
+      // rollout/proxy listeners in the constructor call
+      // `transitionLiveOwner` which finalises the screen fallback
+      // on the shadow channel for us.
+      //
+      // The only guard we still need is "am I still the screen
+      // owner?" If ownership has moved to rollout or proxy since
+      // the last snapshot, the screen path stops publishing even
+      // before the transition's finalizer runs this tick.
       if (
         this.liveSemanticTurnId &&
-        this.semanticSource === 'screen' &&
-        this.semantic.getActiveTurnId() !== null &&
-        this.semantic.getActiveTurnId() !== this.liveSemanticTurnId
+        this.liveOwner.kind === 'screen' &&
+        this.semanticSource === 'screen'
       ) {
-        // Someone else owns the channel. Release our shadow. Do NOT
-        // emit finishTurn for our turn — the channel already sealed
-        // it when the other source called startTurn, so emitting
-        // another finishTurn would either be a no-op (activeTurnId
-        // no longer matches) or fire a stale turn_completed. Reset
-        // only our local fields so future activity can open a fresh
-        // fallback cleanly.
-        this.resetLiveTurn()
-      }
-      if (this.liveSemanticTurnId && this.semanticSource === 'screen') {
         // Use the wider `recent` window so the extractor still finds
         // the assistant block after it scrolls past the viewport.
         const text = extractCodexAssistantInProgress(snap.recent)
@@ -346,7 +481,7 @@ export class CodexHeadless extends EventEmitter {
             ? text.slice(this.lastScreenSemanticText.length)
             : undefined
           this.lastScreenSemanticText = text
-          this.semantic.applyDelta({
+          this.semanticShadow.applyDelta({
             turnId: this.liveSemanticTurnId,
             fullText: text,
             textDelta: delta,
@@ -387,6 +522,178 @@ export class CodexHeadless extends EventEmitter {
       this.emit('event', { type: 'exit', ts: Date.now(), exitCode, signal })
       void this.cleanup()
     })
+  }
+
+  // --- Live-turn ownership helpers --------------------------------------
+  //
+  // Mirror of the Claude-side helpers. See ClaudeCodeHeadless for the
+  // full rationale — same design, same rules. Codex's key difference
+  // is that `rollout` is a first-class live owner alongside `proxy`,
+  // so transitions happen both ways: screen→rollout, screen→proxy,
+  // and (rarely, when proxy takes over mid-stream) rollout→proxy.
+
+  private canSourceMutateLiveTurn(
+    kind: LiveOwnerKind,
+    turnId: string | null,
+  ): boolean {
+    if (this.liveOwner.kind === null) return true
+    if (this.liveOwner.kind !== kind) return false
+    if (turnId && this.liveOwner.turnId && turnId !== this.liveOwner.turnId) {
+      return false
+    }
+    return true
+  }
+
+  private claimLiveOwner(
+    kind: LiveOwnerKind,
+    turnId: string,
+    reason: string,
+  ): LiveOwnerDecision {
+    const prev = this.liveOwner
+    const now = Date.now()
+    if (prev.kind === kind && prev.turnId === turnId) {
+      return {
+        accept: true,
+        action: 'start',
+        kind,
+        turnId,
+        reason: `re-claim: ${reason}`,
+        prev,
+        next: prev,
+        ts: now,
+      }
+    }
+    if (prev.kind !== null && prev.kind !== kind) {
+      const decision: LiveOwnerDecision = {
+        accept: false,
+        action: 'drop',
+        kind,
+        turnId,
+        reason: `owner=${prev.kind} turnId=${prev.turnId} — ${reason}`,
+        prev,
+        next: prev,
+        ts: now,
+      }
+      this.emit('live-owner-change', decision)
+      return decision
+    }
+    const next: LiveOwnerState = {
+      kind,
+      turnId,
+      startedAt: now,
+      status: 'live',
+    }
+    this.liveOwner = next
+    const decision: LiveOwnerDecision = {
+      accept: true,
+      action: 'start',
+      kind,
+      turnId,
+      reason,
+      prev,
+      next,
+      ts: now,
+    }
+    this.emit('live-owner-change', decision)
+    return decision
+  }
+
+  private clearLiveOwner(reason: string): void {
+    const prev = this.liveOwner
+    if (prev.kind === null) return
+    const next: LiveOwnerState = {
+      kind: null,
+      turnId: null,
+      startedAt: null,
+      status: 'idle',
+    }
+    this.liveOwner = next
+    this.emit('live-owner-change', {
+      accept: true,
+      action: 'clear',
+      kind: prev.kind,
+      turnId: prev.turnId ?? '',
+      reason,
+      prev,
+      next,
+      ts: Date.now(),
+    })
+  }
+
+  /** Promote from one owner to another. The outgoing owner's
+   *  bookkeeping is closed out first — for screen we explicitly seal
+   *  the shadow turn so shadow subscribers see a clean close. Rollout
+   *  and proxy finalize their own lifecycle on the real channel
+   *  through their normal publishers, so we don't force a finish
+   *  here for those owners. */
+  private transitionLiveOwner(
+    nextKind: LiveOwnerKind,
+    nextTurnId: string,
+    reason: string,
+  ): LiveOwnerDecision {
+    const prev = this.liveOwner
+    if (prev.kind === null) {
+      return this.claimLiveOwner(nextKind, nextTurnId, reason)
+    }
+    if (prev.kind === nextKind && prev.turnId === nextTurnId) {
+      return {
+        accept: true,
+        action: 'start',
+        kind: nextKind,
+        turnId: nextTurnId,
+        reason: `no-op transition: ${reason}`,
+        prev,
+        next: prev,
+        ts: Date.now(),
+      }
+    }
+    if (prev.kind === 'screen') {
+      this.finalizeScreenFallbackTurn('preempted by ' + nextKind)
+    }
+    const next: LiveOwnerState = {
+      kind: nextKind,
+      turnId: nextTurnId,
+      startedAt: Date.now(),
+      status: 'live',
+    }
+    this.liveOwner = next
+    const decision: LiveOwnerDecision = {
+      accept: true,
+      action: 'promote',
+      kind: nextKind,
+      turnId: nextTurnId,
+      reason: `${prev.kind} → ${nextKind}: ${reason}`,
+      prev,
+      next,
+      ts: Date.now(),
+    }
+    this.emit('live-owner-change', decision)
+    return decision
+  }
+
+  /** Close out the screen-fallback turn on the shadow channel and
+   *  reset screen-specific state. Kept as a helper so every "screen
+   *  turn is over" path (idle debounce, rollout preempt, proxy
+   *  preempt) resets the same fields in the same order. Idempotent. */
+  private finalizeScreenFallbackTurn(reason: string): void {
+    if (this.liveSemanticTurnId && this.semanticSource === 'screen') {
+      this.semanticShadow.finishTurn({
+        turnId: this.liveSemanticTurnId,
+        fullText: this.lastScreenSemanticText || undefined,
+        source: 'screen',
+        confidence: 'fallback',
+      })
+    }
+    // Screen-specific fields only; rollout fields are reset by
+    // `resetLiveTurn` on task_complete.
+    if (this.semanticSource === 'screen') {
+      this.liveSemanticTurnId = null
+      this.semanticSource = null
+      this.lastScreenSemanticText = ''
+      this.screenBaselineText = ''
+      this.screenBaselineSatisfied = false
+    }
+    void reason
   }
 
   /**
@@ -573,36 +880,35 @@ export class CodexHeadless extends EventEmitter {
         case 'task_started':
         case 'turn_started': {
           const e = evt as CodexTurnStartedEvent
-          // Promote or open the live turn with the real rollout id.
-          // If a screen-sourced turn was already open, replace it —
-          // we seal the screen turn explicitly so its consumer sees
-          // a clean `turn_completed` event before the rollout one
-          // starts, which is simpler than mutating turnId in place.
-          if (
-            this.liveSemanticTurnId &&
-            this.semanticSource === 'screen'
-          ) {
-            this.semantic.finishTurn({
-              turnId: this.liveSemanticTurnId,
-              fullText: this.lastScreenSemanticText || undefined,
-              source: 'screen',
-              confidence: 'fallback',
-            })
-          }
-          this.liveSemanticTurnId = e.turn_id
-          this.semanticSource = 'rollout'
-          this.rolloutAssistantText = ''
-          this.lastScreenSemanticText = ''
-          // Rollout has taken over; the screen baseline is
-          // obsolete.
-          this.screenBaselineText = ''
-          this.screenBaselineSatisfied = false
+          // Promote or open the live turn on the AUTHORITATIVE
+          // channel with the real rollout id.
+          //
+          // Ordering matters here. `startTurn` fires `turn_started`
+          // synchronously, which trips the `turn_started` listener
+          // wired up in the constructor; that listener calls
+          // `transitionLiveOwner('rollout', ...)`. The transition
+          // helper finalises any open screen-fallback turn on the
+          // SHADOW channel (so screen subscribers see a clean close)
+          // and clears screen-specific local fields. Only after the
+          // listener returns do we overwrite the local fields with
+          // the rollout-side bookkeeping we actually want to keep
+          // (`liveSemanticTurnId` / `semanticSource` / etc).
+          //
+          // The pre-2026-04-18 explicit `semantic.finishTurn({source:
+          // 'screen'})` call was removed because screen no longer
+          // publishes on `this.semantic` — it lives on
+          // `semanticShadow`. Calling finishTurn on the real channel
+          // with the screen turnId would now trip the strict
+          // `lifecycle_violation` path and be dropped.
           this.semantic.startTurn({
             turnId: e.turn_id,
             role: 'assistant',
             source: 'rollout',
             confidence: 'high',
           })
+          this.liveSemanticTurnId = e.turn_id
+          this.semanticSource = 'rollout'
+          this.rolloutAssistantText = ''
           return
         }
 

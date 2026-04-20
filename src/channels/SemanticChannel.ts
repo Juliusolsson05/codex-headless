@@ -8,9 +8,11 @@ import type {
   SemanticEvent,
   SemanticFlowIgnoredEvent,
   SemanticFlowSelectedEvent,
+  SemanticLifecycleViolationEvent,
   SemanticSource,
   SemanticSourceChangedEvent,
   SemanticStreamErrorEvent,
+  SemanticStreamPhaseEvent,
   SemanticTextDeltaEvent,
   SemanticThinkingDeltaEvent,
   SemanticToolCompletedEvent,
@@ -21,6 +23,7 @@ import type {
   SemanticTurnStartedEvent,
   SemanticTurnStoppedEvent,
   SemanticUsageEvent,
+  StreamPhase,
 } from './types.js'
 
 // Codex SemanticChannel — the "what Codex is producing right now"
@@ -35,6 +38,28 @@ import type {
 // channel. The whole point of the split is to keep semantic rendering
 // from being polluted by TUI chrome events — we are not going to
 // reintroduce that entanglement.
+//
+// -----------------------------------------------------------------------
+// Lifecycle strictness (2026-04-18 redesign).
+// -----------------------------------------------------------------------
+//
+// This channel is now a STRICT transport. It no longer auto-seals
+// mismatched turns on startTurn, and it no longer auto-starts a turn
+// when a delta arrives without one. Instead it DROPS the offending
+// event and emits a `lifecycle_violation` diagnostic so debug tooling
+// can see the miss.
+//
+// WHY: the prior auto-heal behaviour was defensible when rollout was
+// the only live producer, but once the CodexResponsesAdapter landed
+// we had two authoritative live producers. The auto-heal let them
+// fight over `activeTurnId`, producing the 0/1/0/1 block flicker
+// fixed by the 2026-04-17 flicker plan. Making the channel strict
+// pushes the coherence requirement up to the orchestrator, which is
+// where it belongs — only CodexHeadless sees rollout state, proxy
+// state, and screen state at once, so only it can assign an owner.
+//
+// See docs/superpowers/plans/2026-04-18-headless-live-turn-redesign.md
+// for the ownership model the orchestrator now uses.
 
 export type SemanticChannelEvents = {
   event: [SemanticEvent]
@@ -55,6 +80,18 @@ export type SemanticChannelEvents = {
   flow_selected: [SemanticFlowSelectedEvent]
   flow_ignored: [SemanticFlowIgnoredEvent]
   usage_updated: [SemanticUsageEvent]
+
+  // Upstream stream-phase derivation. Parallel to the Claude-side
+  // SemanticStreamPhaseEvent — the proxy adapter derives a phase label
+  // from response.output_item.added / .done transitions; the screen
+  // fallback publishes a coarser `thinking` / `idle` when proxy is off.
+  stream_phase: [SemanticStreamPhaseEvent]
+
+  // Lifecycle-violation diagnostics. Fires when a publisher calls
+  // startTurn/applyDelta/finishTurn with a turnId that does not match
+  // the active turn. Deliberately NOT on the catch-all `'event'`
+  // stream — see channels/types.ts for the rationale.
+  lifecycle_violation: [SemanticLifecycleViolationEvent]
 }
 
 export interface SemanticChannel {
@@ -90,6 +127,17 @@ export class SemanticChannel extends EventEmitter {
     return this.lastFullText
   }
 
+  /**
+   * Begin a semantic turn.
+   *
+   * Strict lifecycle (see file header): same-turn re-entry is an
+   * idempotent no-op; starting while a different turn is active is a
+   * protocol violation that we DROP + emit `lifecycle_violation` for.
+   * The orchestrator must explicitly `finishTurn` the previous turn
+   * before opening a new one. This is a change from the previous
+   * auto-seal behaviour, which let any racing producer take over the
+   * active-turn slot.
+   */
   startTurn(params: {
     turnId: string
     role: 'user' | 'assistant'
@@ -98,17 +146,17 @@ export class SemanticChannel extends EventEmitter {
   }): void {
     if (this.activeTurnId === params.turnId) return
 
-    // Seal the previous turn if it was never finished. Codex emits
-    // `task_started` before `task_complete`, but recording gaps and
-    // reconnects can both leave a turn dangling. Safer to auto-seal
-    // than to silently refuse the new turn.
     if (this.activeTurnId) {
-      this.finishTurn({
-        turnId: this.activeTurnId,
-        fullText: this.lastFullText || undefined,
-        source: this.lastSource ?? params.source,
-        confidence: 'medium',
-      })
+      const violation: SemanticLifecycleViolationEvent = {
+        type: 'lifecycle_violation',
+        kind: 'start_while_active',
+        attemptedTurnId: params.turnId,
+        activeTurnId: this.activeTurnId,
+        source: params.source,
+        ts: Date.now(),
+      }
+      this.emit('lifecycle_violation', violation)
+      return
     }
 
     this.activeTurnId = params.turnId
@@ -128,6 +176,19 @@ export class SemanticChannel extends EventEmitter {
     this.emit('event', ev)
   }
 
+  /**
+   * Publish a delta for the active turn.
+   *
+   * Strict lifecycle (see file header): mismatched turnId or no open
+   * turn → DROP + emit `lifecycle_violation`. The previous auto-start
+   * behaviour was removed because it let any producer hijack the
+   * active-turn slot with a delta alone.
+   *
+   * Same-turn source promotion (e.g. screen → rollout mid-turn, which
+   * in practice we no longer do because screen and rollout run on
+   * separate channels now, but the publisher contract still allows
+   * it) still emits `source_changed` before the delta.
+   */
   applyDelta(params: {
     turnId: string
     fullText: string
@@ -136,19 +197,24 @@ export class SemanticChannel extends EventEmitter {
     source: SemanticSource
     confidence?: SemanticTurnDeltaEvent['confidence']
   }): void {
-    if (
-      this.activeTurnId === params.turnId &&
-      this.lastFullText === params.fullText &&
-      !params.textDelta
-    ) {
+    if (this.activeTurnId !== params.turnId) {
+      const violation: SemanticLifecycleViolationEvent = {
+        type: 'lifecycle_violation',
+        kind: 'delta_mismatched_turn',
+        attemptedTurnId: params.turnId,
+        activeTurnId: this.activeTurnId,
+        source: params.source,
+        ts: Date.now(),
+      }
+      this.emit('lifecycle_violation', violation)
       return
     }
 
-    if (
-      this.activeTurnId === params.turnId &&
-      this.lastSource !== null &&
-      this.lastSource !== params.source
-    ) {
+    if (this.lastFullText === params.fullText && !params.textDelta) {
+      return
+    }
+
+    if (this.lastSource !== null && this.lastSource !== params.source) {
       const ev: SemanticSourceChangedEvent = {
         type: 'source_changed',
         turnId: params.turnId,
@@ -159,14 +225,6 @@ export class SemanticChannel extends EventEmitter {
       }
       this.emit('source_changed', ev)
       this.emit('event', ev)
-    }
-
-    if (this.activeTurnId !== params.turnId) {
-      this.startTurn({
-        turnId: params.turnId,
-        role: 'assistant',
-        source: params.source,
-      })
     }
 
     this.lastSource = params.source
@@ -186,13 +244,33 @@ export class SemanticChannel extends EventEmitter {
     this.emit('event', ev)
   }
 
+  /**
+   * Finalize the active turn.
+   *
+   * Idempotent by design (two producers can legitimately both think
+   * they ended the same turn; first wins). Mismatched turnId → DROP
+   * + emit `lifecycle_violation`. Dropping is safe because the real
+   * `turn_completed` has already fired; a duplicate would just
+   * confuse late subscribers.
+   */
   finishTurn(params: {
     turnId: string
     fullText?: string
     source: SemanticSource
     confidence?: SemanticTurnCompletedEvent['confidence']
   }): void {
-    if (this.activeTurnId !== params.turnId) return
+    if (this.activeTurnId !== params.turnId) {
+      const violation: SemanticLifecycleViolationEvent = {
+        type: 'lifecycle_violation',
+        kind: 'finish_mismatched_turn',
+        attemptedTurnId: params.turnId,
+        activeTurnId: this.activeTurnId,
+        source: params.source,
+        ts: Date.now(),
+      }
+      this.emit('lifecycle_violation', violation)
+      return
+    }
 
     const ev: SemanticTurnCompletedEvent = {
       type: 'turn_completed',
@@ -552,6 +630,57 @@ export class SemanticChannel extends EventEmitter {
       ts: Date.now(),
     }
     this.emit('api_error', ev)
+    this.emit('event', ev)
+  }
+
+  // -------------------------------------------------------------------
+  // Stream-phase publisher.
+  //
+  // Same pattern as the Claude-side SemanticChannel: stateful dedupe on
+  // (phase, turnId, toolUseId) so back-to-back identical emits are
+  // swallowed. Parallel implementation kept intentionally (not shared
+  // across packages) because each package's SemanticChannel is the
+  // seam its adapter publishes through — collapsing them would require
+  // a cross-package abstraction we don't have.
+  // -------------------------------------------------------------------
+  private lastPhase: StreamPhase = 'idle'
+  private lastPhaseTurnId: string | null = null
+  private lastPhaseToolUseId: string | undefined = undefined
+
+  getLastPhase(): StreamPhase {
+    return this.lastPhase
+  }
+
+  publishStreamPhase(params: {
+    turnId: string | null
+    phase: StreamPhase
+    toolName?: string
+    toolUseId?: string
+    source: SemanticSource
+    confidence?: SemanticStreamPhaseEvent['confidence']
+  }): void {
+    if (
+      this.lastPhase === params.phase &&
+      this.lastPhaseTurnId === params.turnId &&
+      this.lastPhaseToolUseId === params.toolUseId
+    ) {
+      return
+    }
+    this.lastPhase = params.phase
+    this.lastPhaseTurnId = params.turnId
+    this.lastPhaseToolUseId = params.toolUseId
+
+    const ev: SemanticStreamPhaseEvent = {
+      type: 'stream_phase',
+      turnId: params.turnId,
+      phase: params.phase,
+      toolName: params.toolName,
+      toolUseId: params.toolUseId,
+      source: params.source,
+      confidence: params.confidence ?? 'high',
+      ts: Date.now(),
+    }
+    this.emit('stream_phase', ev)
     this.emit('event', ev)
   }
 }
