@@ -191,6 +191,7 @@ export type CodexOtherItem = {
 export type CodexEventMsg =
   | CodexTurnStartedEvent
   | CodexTurnCompleteEvent
+  | CodexTurnAbortedEvent
   | CodexUserMessageEvent
   | CodexAgentMessageEvent
   | CodexAgentMessageDeltaEvent
@@ -215,6 +216,14 @@ export type CodexTurnStartedEvent = {
 export type CodexTurnCompleteEvent = {
   type: 'task_complete' | 'turn_complete'
   turn_id: string
+}
+
+export type CodexTurnAbortedEvent = {
+  type: 'turn_aborted'
+  turn_id: string
+  reason?: string
+  completed_at?: number
+  duration_ms?: number
 }
 
 export type CodexUserMessageEvent = {

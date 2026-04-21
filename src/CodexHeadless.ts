@@ -25,6 +25,7 @@ import {
   type CodexEventMsg,
   type CodexTurnStartedEvent,
   type CodexTurnCompleteEvent,
+  type CodexTurnAbortedEvent,
   type CodexAgentMessageEvent,
   type CodexAgentMessageDeltaEvent,
   type CodexExecCommandBeginEvent,
@@ -959,6 +960,30 @@ export class CodexHeadless extends EventEmitter {
           if (!this.liveSemanticTurnId) return
           this.semantic.finishTurn({
             turnId: this.liveSemanticTurnId,
+            fullText: this.rolloutAssistantText || undefined,
+            source: 'rollout',
+            confidence: 'high',
+          })
+          this.resetLiveTurn()
+          return
+        }
+
+        case 'turn_aborted': {
+          const e = evt as CodexTurnAbortedEvent
+          if (!this.liveSemanticTurnId || e.turn_id !== this.liveSemanticTurnId) return
+          // Codex can commit a final assistant message and then abort the
+          // rollout turn without ever emitting task_complete/turn_complete.
+          // If we leave the semantic turn open, Feed renders both the
+          // committed assistant entry and the still-mounted semantic row.
+          // Treat the abort as a terminal turn boundary.
+          this.semantic.publishTurnStopped({
+            turnId: e.turn_id,
+            stopReason: typeof e.reason === 'string' ? e.reason : 'interrupted',
+            source: 'rollout',
+            confidence: 'high',
+          })
+          this.semantic.finishTurn({
+            turnId: e.turn_id,
             fullText: this.rolloutAssistantText || undefined,
             source: 'rollout',
             confidence: 'high',
