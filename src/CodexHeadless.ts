@@ -1055,11 +1055,51 @@ export class CodexHeadless extends EventEmitter {
         const text = extractCodexMessageText(item as CodexMessageItem)
         if (!text) return
         if (this.liveSemanticTurnId) {
-          if (text === this.rolloutAssistantText) return
-          this.rolloutAssistantText = text
+          // Catch-up snapshot: if the streaming buffer disagrees with
+          // the committed text, publish the committed form so any live
+          // subscriber that skipped deltas sees the final content
+          // before we clear. When they match (the normal live path)
+          // the semantic channel itself no-ops on the repeat, so this
+          // is cheap.
+          if (text !== this.rolloutAssistantText) {
+            this.semantic.applyDelta({
+              turnId: this.liveSemanticTurnId,
+              fullText: text,
+              source: 'rollout',
+              confidence: 'medium',
+            })
+          }
+          // WHY we always clear the streaming buffer after a
+          // response_item commits:
+          //
+          // `currentTurn.text` means "assistant text streamed into the
+          // current turn that has NOT yet landed as a committed JSONL
+          // entry." Once a `response_item` of role=assistant lands, the
+          // feed's committed `:message` row owns display of that text.
+          // Leaving the same text in `currentTurn.text` causes
+          // SemanticStreamingTurn's no-blocks fallback (Codex has no
+          // per-block events) to paint it a second time below the
+          // committed row — the duplicate-response bug we kept seeing
+          // in Codex agentic turns that emit many assistant messages
+          // before the turn seals.
+          //
+          // Clearing via applyDelta(fullText='') flows through the
+          // reducer's turn_delta branch and snaps
+          // `currentTurn.text` back to ''. Feed's fallback checks
+          // `turn.text` before painting, so the ghost collapses to
+          // nothing until the next message's deltas start populating
+          // the buffer again.
+          //
+          // The earlier `shouldSuppressSemanticTurnForCommittedTail`
+          // guard in Feed.tsx tried to detect this in the renderer via
+          // text equality. Fixing it here keeps provider-specific
+          // commit semantics inside the provider adapter — the
+          // renderer does not need to know about Codex's
+          // many-messages-per-turn shape.
+          this.rolloutAssistantText = ''
           this.semantic.applyDelta({
             turnId: this.liveSemanticTurnId,
-            fullText: text,
+            fullText: '',
             source: 'rollout',
             confidence: 'medium',
           })
