@@ -164,6 +164,16 @@ type FlowState = {
   pendingToolUses: Array<{ toolUseId: string; toolName: string }>
   // Last observed `obfuscation` nonce — noisy, only for debug logs.
   lastObfuscation: string | null
+  // Wall-clock timestamp of the last proxy event touching this flow
+  // (request / response-chunk / response-end / response-error /
+  // upstream-error). Updated on every handler entry so the watchdog
+  // can detect flows that went silent without a terminator.
+  //
+  // Seeded at `request` time; refreshed on every subsequent chunk.
+  // A flow whose `lastEventAt` hasn't moved in WATCHDOG_STALE_MS is
+  // assumed dead and released, matching the Claude adapter's
+  // timeout pattern.
+  lastEventAt: number
   // Attribution — mirrors ClaudeProxyAdapter's three-state model.
   //
   //   'candidate' — freshly minted on `request`. No publishing yet.
@@ -188,6 +198,37 @@ type FlowState = {
   attribution: 'candidate' | 'active' | 'secondary'
 }
 
+// Watchdog thresholds for silent / leaked flows.
+//
+// WATCHDOG_STALE_MS — how long a flow can sit without any proxy
+//   event (request, chunk, end, error) before the watchdog treats
+//   it as dead. 60s is generous for legitimate deep-thinking or
+//   image-generation responses: OpenAI's SSE stream emits heartbeat
+//   deltas (`response.reasoning_summary_text.delta`,
+//   `response.output_text.delta`, obfuscation events) regularly
+//   during active streaming, and we've never seen a healthy flow go
+//   more than a few seconds without at least ONE event. Anything
+//   past 60s is almost certainly a dropped connection / proxy-side
+//   stall / upstream crash that never surfaced an error frame.
+//
+//   The concrete scenario this guards against was observed in the
+//   2026-04-23 debug bundle: a flow (`proxy-6`) got first-chunk
+//   attribution ('active'), published `flow_selected`, emitted one
+//   block_started / block_completed, then went silent. No
+//   response-end, no response-error. activeFlowId stayed pinned to
+//   proxy-6 for the rest of the session, so every subsequent
+//   /responses POST (18 of them over 2+ minutes) got attributed
+//   'secondary' at first-chunk and never published — effectively
+//   freezing the live semantic view for the rest of the session.
+//
+// WATCHDOG_INTERVAL_MS — how often the watchdog wakes up. 10s is
+//   short enough that a stale flow clears within ~70s of going
+//   silent (60s threshold + up to 10s poll lag), but long enough
+//   not to be a CPU sink. Event-loop timer; runs even during
+//   proxy backpressure.
+const WATCHDOG_STALE_MS = 60_000
+const WATCHDOG_INTERVAL_MS = 10_000
+
 export class CodexResponsesAdapter {
   private readonly proxy: ResponsesProxy
   private readonly headless: CodexHeadless
@@ -201,6 +242,11 @@ export class CodexResponsesAdapter {
   // response-end / response-error / upstream-error for the active
   // flow. See FlowState.attribution for the full rationale.
   private activeFlowId: string | null = null
+  // Watchdog timer handle. Wakes every WATCHDOG_INTERVAL_MS,
+  // looks for flows whose lastEventAt is older than
+  // WATCHDOG_STALE_MS, and forcibly releases them. Armed in
+  // attach(), cleared in detach().
+  private watchdogTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(proxy: ResponsesProxy, headless: CodexHeadless) {
     this.proxy = proxy
@@ -222,12 +268,28 @@ export class CodexResponsesAdapter {
       }
     }
     this.proxy.on('event', this.attachedHandler)
+    // Arm the watchdog. `unref` so it doesn't keep the Node
+    // process alive during shutdown — the adapter gets detached
+    // explicitly but a stray timer after detach is possible in
+    // testing/embedded contexts.
+    this.watchdogTimer = setInterval(() => {
+      try {
+        this.runWatchdog()
+      } catch (err) {
+        console.warn('[CodexResponsesAdapter] watchdog error:', err)
+      }
+    }, WATCHDOG_INTERVAL_MS)
+    this.watchdogTimer.unref?.()
   }
 
   detach(): void {
     if (!this.attachedHandler) return
     this.proxy.off('event', this.attachedHandler)
     this.attachedHandler = null
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer)
+      this.watchdogTimer = null
+    }
     // Drop any in-flight flow bookkeeping. A session restart that
     // re-attaches a new adapter shouldn't see residual state.
     this.flows.clear()
@@ -271,6 +333,7 @@ export class CodexResponsesAdapter {
         turnOpened: false,
         pendingToolUses: [],
         lastObfuscation: null,
+        lastEventAt: Date.now(),
         attribution: 'candidate',
       })
       return
@@ -280,6 +343,7 @@ export class CodexResponsesAdapter {
       const chunkEv = ev as unknown as ChunkEvent
       const flow = this.findFlowByRequestId(chunkEv.requestId)
       if (!flow) return
+      flow.lastEventAt = Date.now()
 
       // First-chunk attribution. Any /responses chunk is a reliable
       // "this is live streaming" signal — request headers don't
@@ -345,6 +409,7 @@ export class CodexResponsesAdapter {
       const endEv = ev as unknown as EndEvent
       const flow = this.findFlowByRequestId(endEv.requestId)
       if (!flow) return
+      flow.lastEventAt = Date.now()
       // Flush any bytes the decoder was holding back (i.e. a trailing
       // partial sequence that never got its continuation). In healthy
       // streams this is empty; on truncated streams we'd rather see
@@ -383,6 +448,7 @@ export class CodexResponsesAdapter {
       const errReqId = typeof ev.requestId === 'string' ? ev.requestId : ''
       const flow = this.findFlowByRequestId(errReqId)
       if (!flow) return
+      flow.lastEventAt = Date.now()
       if (flow.turnOpened && flow.responseId) {
         this.headless.semantic.finishTurn({
           turnId: flow.responseId,
@@ -394,6 +460,66 @@ export class CodexResponsesAdapter {
       // Same rationale as response-end above: release the slot so
       // the next flow can claim it.
       if (this.activeFlowId === flow.flowId) {
+        this.activeFlowId = null
+      }
+      this.flows.delete(flow.flowId)
+    }
+  }
+
+  // Watchdog sweep. Called every WATCHDOG_INTERVAL_MS.
+  //
+  // The only failure mode this guards against is a flow that went
+  // silent without a terminator event (no response-end, no
+  // response-error, no upstream-error). Healthy flows always see
+  // SSE heartbeats during active streaming, so a gap > WATCHDOG_STALE_MS
+  // means the upstream connection is dead-for-our-purposes and
+  // holding onto `activeFlowId` just starves every subsequent flow's
+  // first-chunk promotion path.
+  //
+  // The sweep does two things:
+  //
+  //   1. For the ACTIVE flow: if it's been silent too long, seal any
+  //      open turn (fallback confidence — we don't know if this is
+  //      the real end), release `activeFlowId`, and drop the flow.
+  //      Matches the `response-error` branch's cleanup exactly; the
+  //      caller side sees the same sequence of events either way.
+  //
+  //   2. For CANDIDATE / SECONDARY flows: if they've been silent too
+  //      long AND they're not the active slot-holder, just drop them.
+  //      Memory-pressure insurance — a proxy retry burst can leave
+  //      dozens of candidates that never chunked; they don't starve
+  //      anything but they sit in `this.flows` forever.
+  //
+  // Intentionally no "seal turn" for non-active flows — they never
+  // called startTurn, so there's nothing to seal.
+  private runWatchdog(): void {
+    const now = Date.now()
+    const staleFlows: FlowState[] = []
+    for (const flow of this.flows.values()) {
+      if (now - flow.lastEventAt > WATCHDOG_STALE_MS) {
+        staleFlows.push(flow)
+      }
+    }
+    for (const flow of staleFlows) {
+      const silentFor = now - flow.lastEventAt
+      const isActive = this.activeFlowId === flow.flowId
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[CodexResponsesAdapter] watchdog releasing ${flow.flowId} ` +
+          `(attribution=${flow.attribution} silent=${silentFor}ms)`,
+      )
+      if (isActive && flow.turnOpened && flow.responseId) {
+        // Seal the turn so the renderer doesn't sit in "streaming"
+        // state forever. `fallback` confidence signals to consumers
+        // that the end reason is synthesized, not upstream-attested.
+        this.headless.semantic.finishTurn({
+          turnId: flow.responseId,
+          fullText: flow.fullText || undefined,
+          source: 'proxy',
+          confidence: 'fallback',
+        })
+      }
+      if (isActive) {
         this.activeFlowId = null
       }
       this.flows.delete(flow.flowId)
