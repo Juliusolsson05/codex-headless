@@ -1,5 +1,5 @@
 import { readdir, stat, open } from 'fs/promises'
-import { join } from 'path'
+import { join, resolve as resolvePath } from 'path'
 
 import { getCodexSessionsDir } from './ProjectDir.js'
 import {
@@ -47,6 +47,24 @@ export type CodexSessionInfo = {
 
 export type ListCodexSessionsOptions = {
   limit?: number
+  /**
+   * If set, only return sessions whose recorded `session_meta.cwd`
+   * matches this directory (after `path.resolve` normalization on
+   * both sides). Optional so existing callers that genuinely want
+   * the global list — e.g. the rendering-debug harness in
+   * `session:list-all` — keep working unchanged.
+   *
+   * WHY this exists: Codex sessions live in a single date-bucketed
+   * directory regardless of which cwd they were originally created
+   * in, while the cc-shell resume picker is invoked per-cwd and the
+   * caller expects per-cwd results (Claude's lister works that way).
+   * Without this filter, the picker silently mixed sessions from
+   * every project the user had ever used Codex in. A user resuming
+   * what looked like a "this project" session would land on a
+   * different-cwd rollout, hit the upstream `cwd_prompt` modal, and
+   * have their first prompt eaten by it.
+   */
+  cwd?: string
 }
 
 // Head budget covers session_meta plus the first few entries — the
@@ -63,14 +81,21 @@ const ROLLOUT_RE = /^rollout-(.+)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * sessions directory recursively, reads HEAD of each rollout file,
  * and extracts metadata via typed JSONL decoding.
  *
- * Unlike Claude's lister which is scoped to a single cwd, this
- * returns ALL sessions (codex doesn't partition by cwd). The
- * caller can filter by cwd if needed.
+ * Codex stores all sessions in a single date tree regardless of cwd.
+ * Pass `options.cwd` to scope the result to a specific working
+ * directory — required for parity with Claude's per-cwd lister and
+ * for the cc-shell resume picker. Without it the result is global.
  */
 export async function listCodexSessions(
   options: ListCodexSessionsOptions = {},
 ): Promise<CodexSessionInfo[]> {
   const limit = options.limit ?? 20
+  // Normalize the requested cwd once. `path.resolve` collapses a
+  // trailing slash and any `..` segments so two stylistic variants
+  // of the same path compare equal. We don't `realpath` because that
+  // would resolve symlinks and we want to match the literal cwd that
+  // Codex recorded — which itself wasn't realpath'd on write.
+  const filterCwd = options.cwd ? resolvePath(options.cwd) : null
   const sessionsDir = getCodexSessionsDir()
 
   // Collect all rollout files recursively from the date tree.
@@ -82,14 +107,26 @@ export async function listCodexSessions(
     return []
   }
 
-  // Sort newest first so we can early-exit once we've filled `limit`.
+  // Sort newest first so we surface the most-recent matches and can
+  // early-exit once we've filled `limit`. With cwd filtering we keep
+  // walking past where we'd otherwise stop — only `limit` matched
+  // sessions counts, not `limit` files visited. Bounded by `files.length`.
   files.sort((a, b) => b.mtime - a.mtime)
 
   const sessions: CodexSessionInfo[] = []
   for (const f of files) {
     if (sessions.length >= limit) break
     const info = await parseCodexSession(f)
-    if (info) sessions.push(info)
+    if (!info) continue
+    if (filterCwd) {
+      // Drop entries whose recorded cwd doesn't match. Sessions whose
+      // session_meta couldn't be decoded (info.cwd is undefined) are
+      // also dropped under filtering — we'd rather miss a malformed
+      // rollout than mislead the user into resuming the wrong dir.
+      if (!info.cwd) continue
+      if (resolvePath(info.cwd) !== filterCwd) continue
+    }
+    sessions.push(info)
   }
   return sessions
 }
