@@ -14,10 +14,20 @@ import {
   extractCodexAssistantInProgress,
 } from './parsers/ScreenParser.js'
 import {
+  detectCodexApproval,
+  type ScreenApproval,
+} from './parsers/ApprovalParser.js'
+import {
   detectCodexTrustDialog,
   type CodexTrustDialogState,
   CODEX_TRUST_DIALOG_ACCEPT_KEYS,
 } from './parsers/TrustDialogParser.js'
+import {
+  codexConditionSnapshotKey,
+  evaluateCodexConditions,
+  type CodexApprovalMetadata,
+  type CodexConditionSnapshot,
+} from './conditions/index.js'
 import {
   type CodexRolloutLine,
   type CodexSessionMeta,
@@ -31,6 +41,7 @@ import {
   type CodexExecCommandBeginEvent,
   type CodexExecCommandEndEvent,
   type CodexExecCommandOutputDeltaEvent,
+  type CodexExecApprovalRequestEvent,
   type CodexMcpToolCallBeginEvent,
   type CodexMcpToolCallEndEvent,
   type CodexMessageItem,
@@ -100,6 +111,11 @@ export type CodexTrustDialogEvent = {
   type: 'trust_dialog'; ts: number; workspace: string | undefined
   accept: () => void; reject: () => void
 }
+export type CodexConditionsEvent = {
+  type: 'conditions'
+  ts: number
+  snapshot: CodexConditionSnapshot
+}
 export type CodexExitEvent = { type: 'exit'; ts: number; exitCode: number; signal?: number }
 
 export type CodexHeadlessEvent =
@@ -108,6 +124,7 @@ export type CodexHeadlessEvent =
   | CodexScreenEvent
   | CodexRolloutEntryEvent
   | CodexTrustDialogEvent
+  | CodexConditionsEvent
   | CodexExitEvent
 
 export type CodexHeadlessEvents = {
@@ -118,6 +135,8 @@ export type CodexHeadlessEvents = {
   'rollout-entry': [CodexRolloutLine, string]
   'rollout-error': [Error]
   'trust-dialog': [CodexTrustDialogState]
+  approval: [ScreenApproval | null]
+  conditions: [CodexConditionSnapshot]
   exit: [{ exitCode: number; signal?: number }]
 
   // Live-owner decision stream. Fires on every claim/clear/promote
@@ -162,6 +181,16 @@ export class CodexHeadless extends EventEmitter {
   // we apply the same 2500ms idle debounce for consistency.
   private idleDebounceTimer: ReturnType<typeof setTimeout> | null = null
   private lastTrustVisible = false
+  private trustDialogState: CodexTrustDialogState = { visible: false }
+  private approvalState: ScreenApproval | null = null
+  private approvalMetadata: CodexApprovalMetadata | null = null
+  private lastApprovalKey: string | null = null
+  private conditionSnapshot: CodexConditionSnapshot = {
+    provider: 'codex',
+    conditions: {},
+    ts: Date.now(),
+  }
+  private lastConditionKey = '{}'
   private sessionMeta: CodexSessionMeta | null = null
 
   // --- Three-channel truth surface ---------------------------------------
@@ -499,6 +528,11 @@ export class CodexHeadless extends EventEmitter {
       // to learn the dialog had closed (after the user accepted/rejected,
       // or after Codex auto-dismissed) and would stick on screen.
       const trust = detectCodexTrustDialog(snap.plain)
+      this.trustDialogState = trust
+      const approval = detectCodexApproval(snap.plain)
+      const approvalKey = approval ? JSON.stringify(approval) : null
+      this.approvalState = approval
+
       if (trust.visible !== this.lastTrustVisible) {
         this.lastTrustVisible = trust.visible
         this.emit('trust-dialog', trust)
@@ -516,6 +550,17 @@ export class CodexHeadless extends EventEmitter {
           })
         }
       }
+
+      if (approvalKey !== this.lastApprovalKey) {
+        this.lastApprovalKey = approvalKey
+        this.emit('approval', approval)
+        this.screen.publishApproval({
+          visible: approval !== null,
+          state: approval,
+        })
+      }
+
+      this.publishConditionSnapshot()
     })
 
     this.terminal.on('exit', ({ exitCode, signal }) => {
@@ -781,6 +826,32 @@ export class CodexHeadless extends EventEmitter {
     return this.lastActivity
   }
 
+  getApprovalState(): ScreenApproval | null {
+    return this.approvalState
+  }
+
+  getConditionSnapshot(): CodexConditionSnapshot {
+    return this.conditionSnapshot
+  }
+
+  private publishConditionSnapshot(): void {
+    const conditions = evaluateCodexConditions({
+      trustDialog: this.trustDialogState,
+      approval: this.approvalState,
+      approvalMetadata: this.approvalMetadata,
+    })
+    const conditionsKey = codexConditionSnapshotKey(conditions)
+    this.conditionSnapshot = conditions
+    if (conditionsKey === this.lastConditionKey) return
+    this.lastConditionKey = conditionsKey
+    this.emit('conditions', conditions)
+    this.emit('event', {
+      type: 'conditions',
+      ts: conditions.ts,
+      snapshot: conditions,
+    })
+  }
+
   getScreen(): string {
     return this.terminal.snapshotPlain()
   }
@@ -992,6 +1063,17 @@ export class CodexHeadless extends EventEmitter {
           return
         }
 
+        case 'exec_approval_request': {
+          const e = evt as CodexExecApprovalRequestEvent
+          this.approvalMetadata = {
+            callId: e.call_id ?? null,
+            commandParts: e.command ?? [],
+            workdir: e.workdir ?? null,
+          }
+          this.publishConditionSnapshot()
+          return
+        }
+
         case 'exec_command_begin': {
           const e = evt as CodexExecCommandBeginEvent
           const label = e.command?.join(' ')
@@ -1017,6 +1099,14 @@ export class CodexHeadless extends EventEmitter {
 
         case 'exec_command_end': {
           const e = evt as CodexExecCommandEndEvent
+          if (
+            !e.call_id ||
+            this.approvalMetadata?.callId === null ||
+            this.approvalMetadata?.callId === e.call_id
+          ) {
+            this.approvalMetadata = null
+            this.publishConditionSnapshot()
+          }
           this.semantic.toolCompleted({
             callId: e.call_id ?? `exec-${Date.now()}`,
             exitCode: e.exit_code,
