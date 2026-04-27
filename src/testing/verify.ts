@@ -18,6 +18,7 @@ import {
   extractCodexStreamingText,
 } from '../parsers/ScreenParser.js'
 import { terminalToMarkdown } from '../terminal/HeadlessTerminal.js'
+import { evaluateCodexConditions } from '../conditions/index.js'
 
 type RawEvent = { ts: number; data: string }
 type Meta = { cols?: number; rows?: number }
@@ -28,6 +29,41 @@ let failed = 0
 function assert(label: string, ok: boolean, detail?: string) {
   if (ok) { passed++; console.log(`  ✓ ${label}`) }
   else { failed++; console.log(`  ✗ ${label}${detail ? ` — ${detail}` : ''}`) }
+}
+
+function verifyConditionEvaluator(): void {
+  console.log('\n── condition evaluator ──')
+  const snapshot = evaluateCodexConditions({
+    trustDialog: { visible: false },
+    approval: {
+      title: 'Would you like to run the following command?',
+      reason: 'test',
+      command: 'npm test',
+      options: ['Yes', 'No'],
+      selectedIndex: 0,
+    },
+    approvalMetadata: {
+      callId: 'call-1',
+      commandParts: ['npm', 'test'],
+      workdir: '/tmp/project',
+    },
+  })
+  assert('snapshot provider is codex', snapshot.provider === 'codex')
+  assert(
+    'approval condition is mapped',
+    snapshot.conditions['codex.approval']?.state.command === 'npm test',
+  )
+  assert(
+    'approval exposes pty actions',
+    snapshot.conditions['codex.approval']?.actions.some(
+      action => action.kind === 'pty' && action.id === 'approve',
+    ) === true,
+  )
+  assert(
+    'approval carries rollout metadata',
+    snapshot.conditions['codex.approval']?.state.callId === 'call-1' &&
+      snapshot.conditions['codex.approval']?.state.workdir === '/tmp/project',
+  )
 }
 
 async function verifyRecording(dir: string): Promise<void> {
@@ -83,6 +119,8 @@ async function verifyRecording(dir: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  verifyConditionEvaluator()
+
   const arg = process.argv[2]
   if (arg) {
     await verifyRecording(arg)
