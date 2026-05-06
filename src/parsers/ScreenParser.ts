@@ -18,6 +18,9 @@
 // Working indicators (all prefixed with •):
 //   "• Working (Ns • esc to interrupt)"
 //   "• Working (Ns • esc to interrupt) · 1 background terminal running"
+//
+// Startup chrome (filtered from assistant text, but not considered
+// user-visible activity):
 //   "• Booting MCP server: name (Ns • esc to interrupt)"
 //
 // Tool-call chrome (prefixed with • but NOT assistant content):
@@ -209,9 +212,6 @@ const CODEX_WORKING_ROW_RE =
 
 const CODEX_WORKING_ELAPSED_RE = /^(.+?s)\b/
 
-/** Booting MCP regex. */
-const CODEX_BOOTING_RE = /^\s*[•◦]\s+Booting\s+MCP\s+server:\s+(\S+).*$/
-
 export function detectCodexWorkingState(screen: string): CodexWorkingState {
   if (!screen) return { active: false }
   const lines = screen.split('\n')
@@ -226,14 +226,6 @@ export function detectCodexWorkingState(screen: string): CodexWorkingState {
         active: true,
         statusText: 'Working',
         elapsedText: elapsed?.[1]?.trim(),
-      }
-    }
-
-    const boot = CODEX_BOOTING_RE.exec(line)
-    if (boot) {
-      return {
-        active: true,
-        statusText: `Booting MCP server: ${boot[1]}`,
       }
     }
   }
