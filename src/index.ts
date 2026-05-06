@@ -15,8 +15,22 @@ export {
   type CodexScreenEvent,
   type CodexRolloutEntryEvent,
   type CodexTrustDialogEvent,
+  type CodexConditionsEvent,
   type CodexExitEvent,
 } from './CodexHeadless.js'
+
+export type {
+  CodexApprovalCondition,
+  CodexCondition,
+  CodexConditionKind,
+  CodexConditionMap,
+  CodexConditionSnapshot,
+  CodexSwitchModelPromptCondition,
+  CodexTrustDialogCondition,
+  ConditionAction as CodexConditionAction,
+  ConditionCustomAction as CodexConditionCustomAction,
+  ConditionPtyAction as CodexConditionPtyAction,
+} from './conditions/index.js'
 
 // --- Terminal (shared primitive, identical to claude-code-headless) ---
 export {

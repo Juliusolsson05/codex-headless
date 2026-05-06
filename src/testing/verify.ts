@@ -14,10 +14,13 @@ import xtermHeadless from '@xterm/headless'
 const { Terminal } = xtermHeadless
 
 import {
+  detectCodexActivity,
+  detectCodexWorkingState,
   extractCodexAssistantInProgress,
   extractCodexStreamingText,
 } from '../parsers/ScreenParser.js'
 import { terminalToMarkdown } from '../terminal/HeadlessTerminal.js'
+import { evaluateCodexConditions } from '../conditions/index.js'
 
 type RawEvent = { ts: number; data: string }
 type Meta = { cols?: number; rows?: number }
@@ -28,6 +31,65 @@ let failed = 0
 function assert(label: string, ok: boolean, detail?: string) {
   if (ok) { passed++; console.log(`  ✓ ${label}`) }
   else { failed++; console.log(`  ✗ ${label}${detail ? ` — ${detail}` : ''}`) }
+}
+
+function verifyConditionEvaluator(): void {
+  console.log('\n── condition evaluator ──')
+  const snapshot = evaluateCodexConditions({
+    trustDialog: { visible: false },
+    approval: {
+      title: 'Would you like to run the following command?',
+      reason: 'test',
+      command: 'npm test',
+      options: ['Yes', 'No'],
+      selectedIndex: 0,
+    },
+    approvalMetadata: {
+      callId: 'call-1',
+      commandParts: ['npm', 'test'],
+      workdir: '/tmp/project',
+    },
+  })
+  assert('snapshot provider is codex', snapshot.provider === 'codex')
+  assert(
+    'approval condition is mapped',
+    snapshot.conditions['codex.approval']?.state.command === 'npm test',
+  )
+  assert(
+    'approval exposes pty actions',
+    snapshot.conditions['codex.approval']?.actions.some(
+      action => action.kind === 'pty' && action.id === 'approve',
+    ) === true,
+  )
+  assert(
+    'approval carries rollout metadata',
+    snapshot.conditions['codex.approval']?.state.callId === 'call-1' &&
+      snapshot.conditions['codex.approval']?.state.workdir === '/tmp/project',
+  )
+}
+
+function verifyActivityDetection(): void {
+  console.log('\n── activity detection ──')
+  const bootingMcp = [
+    '• Booting MCP server: codex_apps (2s • esc to interrupt)',
+    'gpt-5.4 medium fast · ~/project',
+    '›',
+  ].join('\n')
+  const working = [
+    '• Working (12s • esc to interrupt)',
+    'gpt-5.4 medium fast · ~/project',
+    '›',
+  ].join('\n')
+
+  // Booting an MCP server is startup/adapter chrome, not user-task
+  // activity. Treating it as active made cc-shell light up multiple
+  // restored panes immediately after launch even though every agent was
+  // otherwise idle. Keep the row in CODEX_TOOL_CALL_VERBS so streaming
+  // text extraction still filters it; just don't promote it into the
+  // process/activity channel.
+  assert('MCP boot row is not activity', detectCodexActivity(bootingMcp) === null)
+  assert('MCP boot state is inactive', detectCodexWorkingState(bootingMcp).active === false)
+  assert('working row remains activity', detectCodexActivity(working) === 'working… 12s')
 }
 
 async function verifyRecording(dir: string): Promise<void> {
@@ -83,6 +145,9 @@ async function verifyRecording(dir: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  verifyConditionEvaluator()
+  verifyActivityDetection()
+
   const arg = process.argv[2]
   if (arg) {
     await verifyRecording(arg)
