@@ -74,6 +74,29 @@ type StartEvent = {
   method: string
   path: string
   upstream: string
+  /** Typed endpoint label emitted by responsesProxy.classifyEndpoint:
+   *  one of 'responses', 'responses/compact', 'memories/trace_summarize',
+   *  'realtime/calls', 'models', 'unknown'. Used by handleTransportEvent
+   *  to filter sidecar endpoints out of the active-flow attribution
+   *  state machine — see the path-vs-endpoint comment in that method. */
+  endpoint?: string
+  /** Filtered request headers. Allowlist enforced by the proxy
+   *  (see responsesProxy.ts _HEADER_ALLOWLIST). Adapter does not
+   *  consume these today; forwarded for forensic logging only. */
+  headers?: Record<string, string>
+  /** Base64-encoded raw request body, when ≤ 2 MiB. Adapter does
+   *  not consume; future predicate work or bundle tooling reads it. */
+  body_b64?: string
+  /** Pre-parsed shape metadata (model, instructions_chars,
+   *  input_items_count, tools_count, has_reasoning). Same forensic
+   *  rationale as body_b64 — adapter doesn't read today. */
+  request_shape?: {
+    model?: string | null
+    instructions_chars?: number | null
+    input_items_count?: number | null
+    tools_count?: number | null
+    has_reasoning?: boolean
+  }
 }
 
 type EndEvent = {
@@ -298,10 +321,37 @@ export class CodexResponsesAdapter {
 
   private onProxyEvent(ev: Record<string, unknown>): void {
     const kind = ev.kind
-    // Only /responses POSTs produce semantic events. Skip /models
-    // and any other observability events.
-    const path = typeof ev.path === 'string' ? ev.path : ''
-    if (!path.includes('/responses')) return
+    // Only main `/responses` (the streaming SSE turn endpoint) produces
+    // semantic events. Skip every sidecar Codex routes through the same
+    // proxy:
+    //   - /responses/compact      conversation compaction (unary JSON)
+    //   - /memories/trace_summarize  memory summarization (unary JSON)
+    //   - /realtime/calls         WebRTC media setup
+    //   - /models                 quota/health
+    //   - any /v1/ path we forward but haven't classified
+    //
+    // The previous filter was `path.includes('/responses')` — a
+    // substring match that ALSO accepted '/responses/compact'. In
+    // practice the unary JSON payload from compact wouldn't drive the
+    // SSE parser past its first frame, so the leak was masked, but the
+    // attribution state machine was still being touched by every
+    // compact request. Switch to the typed `endpoint` label the proxy
+    // already emits (responsesProxy.classifyEndpoint) so the filter is
+    // intent-driven, not URL-pattern-driven. Old proxies that don't
+    // send `endpoint` fall back to the legacy substring check so a
+    // version-mismatched submodule pair still works.
+    const endpoint = typeof ev.endpoint === 'string' ? ev.endpoint : null
+    if (endpoint !== null) {
+      if (endpoint !== 'responses') return
+    } else {
+      const path = typeof ev.path === 'string' ? ev.path : ''
+      if (!path.includes('/responses')) return
+      // Belt-and-suspenders: even with the legacy substring path, drop
+      // /responses/compact explicitly so we don't accidentally let
+      // compact requests touch flow attribution if the typed label is
+      // missing for some reason.
+      if (path.includes('/responses/compact')) return
+    }
 
     if (kind === 'request') {
       const req = ev as unknown as StartEvent

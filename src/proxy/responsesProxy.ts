@@ -2,7 +2,7 @@ import { EventEmitter } from 'events'
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'http'
 import type { Socket } from 'net'
 import { Readable } from 'stream'
-import { readFileSync } from 'fs'
+import { appendFileSync, readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 
@@ -98,6 +98,135 @@ export type CodexResponsesProxyInfo = {
 type Options = {
   upstreamBaseUrl?: string
   authMode?: CodexAuthMode
+  /** Optional path of a JSONL file to mirror every emitted event into.
+   *
+   *  WHY this exists:
+   *    Codex's proxy events used to flow through EventEmitter only —
+   *    no on-disk record. The Claude proxy has had `proxy-events.jsonl`
+   *    since day one (see ProxyServer in claude-code-headless'
+   *    proxy-testing) and that's been load-bearing for forensic work
+   *    against debug bundles ("what was the actual prompt that
+   *    triggered this leak?"). Codex needs the same capability, ideally
+   *    in the same on-disk shape so a single bundle-inspection tool
+   *    can read either provider's traffic without branching.
+   *
+   *  WHY a path opt-in instead of always-on:
+   *    The package has a public testing entry point that constructs a
+   *    proxy without ever wiring disk persistence; baking it into the
+   *    constructor would force every embedder to opt OUT. Path-driven
+   *    opt-in keeps backward compat with existing callers while making
+   *    cc-shell's wiring trivially `eventsFile: <path>` at create
+   *    time.
+   *
+   *  Format mirrors mitmAddon.py: one JSON object per line, terminated
+   *  by `\n`, no header. Append-only; rotation is the caller's
+   *  problem (cc-shell allocates a fresh path per session run, so
+   *  natural rotation falls out for free). */
+  eventsFile?: string
+}
+
+
+// Cap on the request `body_b64` payload mirrored to disk. Sized to
+// match the Claude addon (`mitmAddon.py:_REQUEST_BODY_CAP`) so the
+// disk shape is identical across providers. Real Codex requests are
+// generally smaller than Claude's because the input is a structured
+// items array rather than a flat conversation string, but the cap is
+// the same for symmetry — debug-bundle tooling can rely on a single
+// invariant ("body_b64 fits, OR body was over 2 MiB and only
+// request_shape is present").
+const _REQUEST_BODY_CAP = 2 * 1024 * 1024
+
+
+// Headers we forward verbatim onto the proxy event. Allowlist
+// rationale matches the Claude addon's: Authorization is structurally
+// excluded so a leaked debug bundle cannot expose bearer tokens, and
+// unknown headers are dropped by default so a future Codex header
+// addition can't accidentally make it onto disk before we've reviewed
+// whether it's safe to record.
+//
+// Headers chosen by reading vendor/codex-src/codex-rs/core/src/client.rs
+// (build_responses_options + build_subagent_headers +
+//  build_responses_identity_headers) — these are the discriminating
+// signals for sidecar vs main turn vs subagent.
+const _HEADER_ALLOWLIST: ReadonlySet<string> = new Set([
+  'x-codex-installation-id',
+  'x-codex-window-id',
+  'x-codex-parent-thread-id',
+  'x-codex-turn-state',
+  'x-openai-subagent',
+  'user-agent',
+  'content-length',
+  'content-type',
+  'openai-beta',
+])
+
+
+function filterRequestHeaders(req: IncomingMessage): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(req.headers)) {
+    const lower = key.toLowerCase()
+    if (!_HEADER_ALLOWLIST.has(lower)) continue
+    if (typeof value === 'string') out[lower] = value
+    else if (Array.isArray(value)) out[lower] = value.join(', ')
+  }
+  return out
+}
+
+
+// Pre-extracted request shape for the Codex /responses endpoints.
+// Mirrors the design in claude-code-headless' mitmAddon.py: parse the
+// buffered body once at request time, ship a small structured object
+// instead of forwarding multi-MB base64 over the wire. Today the
+// adapter doesn't consume these fields — they're forensic-only —
+// but landing the slot now means future predicate work has a place
+// to read from without re-parsing.
+//
+// Field meaning (source: vendor/codex-src/codex-rs/core/src/client.rs
+// build_responses_request, compact_conversation_history,
+// summarize_memories):
+//   - model              slug like "gpt-5-codex"
+//   - instructions_chars total length of the `instructions` string
+//                        (Codex's equivalent of Claude's system block)
+//   - input_items_count  number of entries in `input` (the structured
+//                        conversation items array)
+//   - tools_count        number of entries in `tools` array, or null
+//                        if absent (memories/trace_summarize omits)
+//   - has_reasoning      true iff a `reasoning` object is present —
+//                        present on real turns and compact, absent
+//                        on memory summarization
+type CodexRequestShape = {
+  model: string | null
+  instructions_chars: number | null
+  input_items_count: number | null
+  tools_count: number | null
+  has_reasoning: boolean
+}
+
+
+function extractRequestShape(body: Buffer): CodexRequestShape | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(body.toString('utf-8'))
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object') return null
+  const obj = parsed as Record<string, unknown>
+
+  const model = typeof obj.model === 'string' ? obj.model : null
+  const instructions =
+    typeof obj.instructions === 'string' ? obj.instructions.length : null
+  const input = Array.isArray(obj.input) ? obj.input.length : null
+  const tools = Array.isArray(obj.tools) ? obj.tools.length : null
+  const hasReasoning = obj.reasoning != null && typeof obj.reasoning === 'object'
+
+  return {
+    model,
+    instructions_chars: instructions,
+    input_items_count: input,
+    tools_count: tools,
+    has_reasoning: hasReasoning,
+  }
 }
 
 // Detect which auth path Codex is configured for. Cheap enough to
@@ -155,23 +284,70 @@ export class ResponsesProxy extends EventEmitter {
   // merged retries' bytes into the later request's flow state. Opaque
   // monotonic id avoids that and is cheap.
   private nextRequestSeq = 1
+  // Path of the on-disk JSONL mirror, or null if disabled. When set,
+  // `emit('event', …)` ALSO appends the event as a JSON line. Append
+  // is synchronous (`appendFileSync`) because the events we emit are
+  // small (KB-range, even with body_b64) and ordering matters for
+  // forensic readback — an async stream tap would let later events
+  // race ahead during a fast burst. Cost: a microbenchmark on a 4 MB
+  // event takes <2 ms on SSD; the proxy's hot path (kind:
+  // 'response-chunk') is bounded by network anyway.
+  private readonly eventsFile: string | null
 
-  constructor(info: CodexResponsesProxyInfo) {
+  constructor(info: CodexResponsesProxyInfo, eventsFile: string | null) {
     super()
     this.info = info
+    this.eventsFile = eventsFile
+  }
+
+  // Override emit to mirror events into the on-disk JSONL. Done at
+  // emit time (not inside each handler) so ANY event the proxy
+  // produces — request, response-chunk, response-end, response-error,
+  // upgrade-rejected, server-error, request-error, rejected — lands
+  // on disk consistently. If we mirrored per-handler we'd inevitably
+  // forget to add the call when adding a new event kind.
+  override emit(event: string, ...args: unknown[]): boolean {
+    if (this.eventsFile && event === 'event' && args.length > 0) {
+      try {
+        // Strip Buffer instances out of mirror payloads. The
+        // 'response-chunk' event carries a Buffer with raw upstream
+        // bytes — JSON.stringify of a Buffer produces a useless
+        // {"type":"Buffer","data":[…]} blob and balloons disk size.
+        // Substitute a base64 encoding inline so the mirror file
+        // stays human-decodable without forcing all callers to
+        // pre-encode.
+        const payload = args[0]
+        const serialised = JSON.stringify(payload, (_key, value) => {
+          if (value && typeof value === 'object' && value instanceof Buffer) {
+            return { _buffer_b64: value.toString('base64') }
+          }
+          return value
+        })
+        appendFileSync(this.eventsFile, serialised + '\n', 'utf-8')
+      } catch {
+        // Best-effort. A failed mirror write must never break the
+        // live proxy — disk full or permissions issues should
+        // degrade to "no on-disk record" silently rather than crash
+        // the session.
+      }
+    }
+    return super.emit(event, ...args)
   }
 
   static async create(options: Options = {}): Promise<ResponsesProxy> {
     const authMode = options.authMode ?? detectAuthMode()
     const upstreamBaseUrl = options.upstreamBaseUrl ?? defaultUpstreamFor(authMode)
     const server = createServer()
-    const proxy = new ResponsesProxy({
-      // Populated after listen() resolves. Kept syntactically valid
-      // so callers that accidentally read it early don't crash.
-      proxyBaseUrl: 'http://127.0.0.1:0/v1',
-      upstreamBaseUrl,
-      authMode,
-    })
+    const proxy = new ResponsesProxy(
+      {
+        // Populated after listen() resolves. Kept syntactically valid
+        // so callers that accidentally read it early don't crash.
+        proxyBaseUrl: 'http://127.0.0.1:0/v1',
+        upstreamBaseUrl,
+        authMode,
+      },
+      options.eventsFile ?? null,
+    )
     proxy.server = server
     server.on('connection', socket => {
       // Record the socket for forced teardown in stop(). `once('close')`
@@ -381,6 +557,30 @@ export class ResponsesProxy extends EventEmitter {
     const headers = this.buildForwardedHeaders(req)
     const headersTimeoutMs = this.headersTimeoutMsFor(endpoint)
 
+    // Enriched request event. Pre-extension we emitted only
+    // {kind, requestId, endpoint, method, path, upstream, bytes} —
+    // useful for "did a request happen?" but useless for the
+    // forensic question "what prompt was sent?" Now we forward:
+    //   - headers      filtered allowlist (no Authorization). Lets
+    //                  bundle tooling discriminate subagent calls
+    //                  from main turns by `x-openai-subagent`
+    //                  presence and correlate windows by
+    //                  `x-codex-window-id`.
+    //   - body_b64     raw request body up to _REQUEST_BODY_CAP. If
+    //                  the body exceeds the cap it's omitted; the
+    //                  pre-extracted shape below still ships.
+    //   - request_shape  small parsed metadata (model,
+    //                  instructions_chars, input_items_count,
+    //                  tools_count, has_reasoning) so future predicate
+    //                  work has structured fields without re-parsing.
+    let bodyB64: string | undefined
+    let requestShape: CodexRequestShape | null = null
+    if (body) {
+      requestShape = extractRequestShape(body)
+      if (body.length <= _REQUEST_BODY_CAP) {
+        bodyB64 = body.toString('base64')
+      }
+    }
     this.emit('event', {
       kind: 'request',
       requestId,
@@ -389,6 +589,9 @@ export class ResponsesProxy extends EventEmitter {
       path: originalUrl,
       upstream,
       bytes: body?.length,
+      headers: filterRequestHeaders(req),
+      ...(bodyB64 !== undefined ? { body_b64: bodyB64 } : {}),
+      ...(requestShape !== null ? { request_shape: requestShape } : {}),
     })
 
     const abort = new AbortController()
