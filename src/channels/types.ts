@@ -500,9 +500,9 @@ export type SemanticApiErrorEvent = {
 // having to reverse-engineer it from request/response events.
 //
 // These mirror Claude's SemanticFlowSelectedEvent/SemanticFlowIgnoredEvent
-// one-to-one — same shape so a shared reducer in cc-shell can fold
+// one-to-one — same shape so a shared reducer in Agent Code can fold
 // either provider's diagnostics into the same ProxyDebugPanel state.
-// Before these existed, the cc-shell adapter had to cast
+// Before these existed, the Agent Code adapter had to cast
 // `headless.semantic as { emit }` to smuggle raw `flow_selected`
 // events through the untyped `event` channel — a hack that leaked
 // publisher details into the adapter and blocked further type-safety
@@ -539,7 +539,7 @@ export type SemanticFlowIgnoredEvent = {
 // does not match the channel's current active turnId. Mirrors the
 // Claude package's `SemanticLifecycleViolationEvent` — see that file
 // for the full rationale. Kept off the `SemanticEvent` union so the
-// reducer in cc-shell doesn't have to grow a new branch.
+// reducer in Agent Code doesn't have to grow a new branch.
 export type SemanticLifecycleViolationEvent = {
   type: 'lifecycle_violation'
   kind:
@@ -588,7 +588,7 @@ export type SemanticUsageEvent = {
 // ---------------------------------------------------------------------------
 //
 // Parallel to claude-code-headless/src/channels/types.ts — both packages
-// expose the same vocabulary so the cc-shell renderer can drive its
+// expose the same vocabulary so the Agent Code renderer can drive its
 // in-feed WorkIndicator off a single field regardless of provider. See
 // the sibling types file for the WHY of each label.
 export type StreamPhase =

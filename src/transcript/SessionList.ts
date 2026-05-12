@@ -56,7 +56,7 @@ export type ListCodexSessionsOptions = {
    *
    * WHY this exists: Codex sessions live in a single date-bucketed
    * directory regardless of which cwd they were originally created
-   * in, while the cc-shell resume picker is invoked per-cwd and the
+   * in, while the Agent Code resume picker is invoked per-cwd and the
    * caller expects per-cwd results (Claude's lister works that way).
    * Without this filter, the picker silently mixed sessions from
    * every project the user had ever used Codex in. A user resuming
@@ -84,7 +84,7 @@ const ROLLOUT_RE = /^rollout-(.+)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * Codex stores all sessions in a single date tree regardless of cwd.
  * Pass `options.cwd` to scope the result to a specific working
  * directory — required for parity with Claude's per-cwd lister and
- * for the cc-shell resume picker. Without it the result is global.
+ * for the Agent Code resume picker. Without it the result is global.
  */
 export async function listCodexSessions(
   options: ListCodexSessionsOptions = {},

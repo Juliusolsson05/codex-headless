@@ -8,7 +8,7 @@
 // is running, it's recording.
 //
 // Usage: npm run debugger
-//        CC_SHELL_CWD=/some/dir npm run debugger
+//        CODEX_HEADLESS_CWD=/some/dir npm run debugger
 
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { execFileSync } from 'child_process'
@@ -22,14 +22,15 @@ import xtermHeadless from '@xterm/headless'
 const { Terminal } = xtermHeadless
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-// Use cc-shell's electron-rebuilt node-pty.
+// Use the workspace's electron-rebuilt node-pty when this debugger is run from
+// a monorepo checkout.
 const require2 = createRequire(import.meta.url)
-const ccShellRoot = join(__dirname, '..', '..', '..')
-const { spawn: ptySpawn } = require2(join(ccShellRoot, 'node_modules', 'node-pty'))
+const workspaceRoot = join(__dirname, '..', '..', '..')
+const { spawn: ptySpawn } = require2(join(workspaceRoot, 'node_modules', 'node-pty'))
 
 // Resolve config once at startup.
-const cwd = process.env.CC_SHELL_CWD || process.cwd()
-let binary = process.env.CC_SHELL_CODEX_BINARY || 'codex'
+const cwd = process.env.CODEX_HEADLESS_CWD ?? process.env.CC_SHELL_CWD ?? process.cwd()
+let binary = process.env.CODEX_HEADLESS_BINARY ?? process.env.CC_SHELL_CODEX_BINARY ?? 'codex'
 try {
   const resolved = execFileSync('which', ['codex'], { encoding: 'utf8' }).trim()
   if (resolved) binary = resolved

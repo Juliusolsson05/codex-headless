@@ -196,7 +196,7 @@ export class CodexHeadless extends EventEmitter {
   // --- Three-channel truth surface ---------------------------------------
   //
   // These run IN ADDITION TO the legacy flat event surface so existing
-  // cc-shell consumers keep working. See src/channels/types.ts for the
+  // Agent Code consumers keep working. See src/channels/types.ts for the
   // rationale behind splitting semantic / screen / committed into three
   // separate streams.
   readonly semantic = new SemanticChannel()
@@ -204,7 +204,7 @@ export class CodexHeadless extends EventEmitter {
   readonly committed = new CommittedChannel()
 
   /** Shadow SemanticChannel — dedicated sink for screen-fallback
-   *  publishing. Nobody in cc-shell's renderer subscribes to this.
+   *  publishing. Nobody in Agent Code's renderer subscribes to this.
    *
    *  WHY this exists:
    *
@@ -216,7 +216,7 @@ export class CodexHeadless extends EventEmitter {
    *  overlay/bootstrap source, not a live content source. We route
    *  every screen-sourced startTurn/applyDelta/finishTurn call to
    *  this shadow channel so the production path keeps working and
-   *  subscribers that care can still observe it, but cc-shell's
+   *  subscribers that care can still observe it, but Agent Code's
    *  main rendering consumes only `semantic` and will never see
    *  screen-derived assistant content again.
    *

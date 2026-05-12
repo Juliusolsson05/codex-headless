@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 // End-to-end Codex proxy harness.
 //
-// Exercises the SAME pipeline cc-shell uses in production:
+// Exercises the SAME pipeline Agent Code uses in production:
 //   1. Start a local ResponsesProxy on 127.0.0.1:random.
 //   2. Spawn `codex` with `--config openai_base_url=<proxy>` so every
 //      Responses API call routes through the proxy.
@@ -12,9 +12,9 @@
 //      print both to stderr while also writing JSONL logs to disk.
 //
 // Why this exists:
-//   The proxy + adapter pair lived in cc-shell for a while, with no
+//   The proxy + adapter pair lived in Agent Code for a while, with no
 //   dedicated test surface. Regressions were caught (or not caught)
-//   by running cc-shell end-to-end, which is expensive and buries the
+//   by running Agent Code end-to-end, which is expensive and buries the
 //   signal under UI state. A CLI harness that speaks the same wire
 //   lets you bisect parser bugs, confirm header timeouts, and verify
 //   auth-mode detection in isolation.
