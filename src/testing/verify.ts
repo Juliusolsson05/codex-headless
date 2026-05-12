@@ -82,7 +82,7 @@ function verifyActivityDetection(): void {
   ].join('\n')
 
   // Booting an MCP server is startup/adapter chrome, not user-task
-  // activity. Treating it as active made cc-shell light up multiple
+  // activity. Treating it as active made Agent Code light up multiple
   // restored panes immediately after launch even though every agent was
   // otherwise idle. Keep the row in CODEX_TOOL_CALL_VERBS so streaming
   // text extraction still filters it; just don't promote it into the

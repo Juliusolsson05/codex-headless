@@ -7,13 +7,15 @@
  *
  * Usage:
  *   npx tsx src/testing/record.ts                       # interactive
- *   CC_SHELL_SCRIPT=src/testing/scripts/hello.json \    # scripted
+ *   CODEX_HEADLESS_SCRIPT=src/testing/scripts/hello.json \ # scripted
  *     npx tsx src/testing/record.ts
  *
  * Env vars:
- *   CC_SHELL_CWD            — override working directory
- *   CC_SHELL_CODEX_BINARY   — override binary (default: `codex`)
- *   CC_SHELL_SCRIPT         — path to a JSON script for headless mode
+ *   CODEX_HEADLESS_CWD      — override working directory
+ *   CODEX_HEADLESS_BINARY   — override binary (default: `codex`)
+ *   CODEX_HEADLESS_SCRIPT   — path to a JSON script for headless mode
+ *
+ * The old CC_SHELL_* names are still accepted as compatibility aliases.
  */
 
 import { mkdir, readFile, writeFile } from 'fs/promises'
@@ -41,7 +43,7 @@ async function loadScript(path: string): Promise<Script> {
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
 async function main(): Promise<void> {
-  const scriptPath = process.env.CC_SHELL_SCRIPT
+  const scriptPath = process.env.CODEX_HEADLESS_SCRIPT ?? process.env.CC_SHELL_SCRIPT
   const scripted = !!scriptPath
   const script: Script | null = scripted ? await loadScript(scriptPath!) : null
 
@@ -49,8 +51,8 @@ async function main(): Promise<void> {
   const recordingDir = join('recordings', ts)
   await mkdir(recordingDir, { recursive: true })
 
-  const cwd = process.env.CC_SHELL_CWD || process.cwd()
-  const binary = process.env.CC_SHELL_CODEX_BINARY || 'codex'
+  const cwd = process.env.CODEX_HEADLESS_CWD ?? process.env.CC_SHELL_CWD ?? process.cwd()
+  const binary = process.env.CODEX_HEADLESS_BINARY ?? process.env.CC_SHELL_CODEX_BINARY ?? 'codex'
   const cols = process.stdout.columns ?? 120
   const rows = process.stdout.rows ?? 40
 

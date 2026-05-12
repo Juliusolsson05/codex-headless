@@ -10,7 +10,7 @@ import { join } from 'path'
 //
 // WHY a proxy at all:
 //   Codex sends its assistant turns over `POST {base_url}/responses`
-//   as SSE. cc-shell wants to observe that wire so the renderer can
+//   as SSE. Agent Code wants to observe that wire so the renderer can
 //   build a semantic live-turn without screen-scraping. Inserting a
 //   local HTTP server between Codex and the real upstream gives us
 //   decrypted events with zero CA-injection gymnastics (unlike the
@@ -115,12 +115,12 @@ type Options = {
    *    proxy without ever wiring disk persistence; baking it into the
    *    constructor would force every embedder to opt OUT. Path-driven
    *    opt-in keeps backward compat with existing callers while making
-   *    cc-shell's wiring trivially `eventsFile: <path>` at create
+   *    Agent Code's wiring trivially `eventsFile: <path>` at create
    *    time.
    *
    *  Format mirrors mitmAddon.py: one JSON object per line, terminated
    *  by `\n`, no header. Append-only; rotation is the caller's
-   *  problem (cc-shell allocates a fresh path per session run, so
+   *  problem (Agent Code allocates a fresh path per session run, so
    *  natural rotation falls out for free). */
   eventsFile?: string
 }
@@ -619,11 +619,11 @@ export class ResponsesProxy extends EventEmitter {
       // keeps `lib: ["ES2022"]` (no DOM) — we're a Node package.
       //
       // Early versions imported `BodyInit` from `undici-types` to get
-      // the name in scope. That broke when cc-shell compiled this file
-      // through its path alias: cc-shell's @types/node ALSO declares a
+      // the name in scope. That broke when Agent Code compiled this file
+      // through its path alias: Agent Code's @types/node ALSO declares a
       // global `BodyInit`, and TypeScript saw the undici-types-named
       // value as a different nominal type than the one `fetch()` in
-      // cc-shell's context expects. Result: type mismatch at the call
+      // Agent Code's context expects. Result: type mismatch at the call
       // site.
       //
       // The cross-context fix is to derive the body type from fetch

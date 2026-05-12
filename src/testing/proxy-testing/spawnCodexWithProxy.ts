@@ -10,7 +10,7 @@ import { spawn as ptySpawn, type IPty } from 'node-pty'
 //   affect certain subcommands and would be silently ignored by the
 //   main TUI. `--config openai_base_url="…"` is the documented,
 //   authoritative override that the Rust client reads unconditionally
-//   at session start. cc-shell's real CodexSession does the same;
+//   at session start. Agent Code's real CodexSession does the same;
 //   see src/providers/codex/runtime/codexSession.ts:141.
 //
 // WHY no CA cert / proxy env:
@@ -67,7 +67,7 @@ export function spawnCodexWithProxy(options: SpawnCodexWithProxyOptions): IPty {
   }
   // JSON.stringify quotes the URL so codex's TOML parser treats it
   // as a string literal regardless of characters in the URL (port
-  // numbers, forward slashes). Matches cc-shell's production spawn.
+  // numbers, forward slashes). Matches Agent Code's production spawn.
   args.push('--config', `openai_base_url=${JSON.stringify(options.proxyBaseUrl)}`)
 
   return ptySpawn(options.binary ?? 'codex', args, {

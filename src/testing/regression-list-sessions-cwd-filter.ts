@@ -2,7 +2,7 @@
 //
 // Regression test for the "Codex resume picker eats the prompt" bug.
 //
-// Symptom: a user resuming a Codex session from cc-shell saw the
+// Symptom: a user resuming a Codex session from Agent Code saw the
 // optimistic user message in the feed but never got an assistant
 // reply — streamPhase stuck at 'submitting' forever, screen sat at
 // the empty Codex composer.
@@ -10,10 +10,10 @@
 // Root cause was upstream: when Codex resumes with `cwd != session
 // cwd` it opens a blocking `cwd_prompt` modal (Choose working
 // directory…) that explicitly drops bracketed-paste events. The
-// trailing `\r` of cc-shell's submit then selected the default
+// trailing `\r` of Agent Code's submit then selected the default
 // option and the user's text was thrown away.
 //
-// But the only reason cc-shell ever sent a prompt into that modal
+// But the only reason Agent Code ever sent a prompt into that modal
 // was that this lister returned a global session list when the
 // caller asked for sessions in a specific cwd — so the user picked
 // what looked like a "current project" session and it was actually

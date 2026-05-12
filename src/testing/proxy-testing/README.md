@@ -1,10 +1,10 @@
 # codex-headless proxy testing harness
 
-End-to-end CLI smoke test for the `ResponsesProxy` + `CodexResponsesAdapter` pair — the same pipeline cc-shell uses in production, isolated from the Electron UI.
+End-to-end CLI smoke test for the `ResponsesProxy` + `CodexResponsesAdapter` pair — the same pipeline Agent Code uses in production, isolated from the Electron UI.
 
 ## Why this exists
 
-The proxy and adapter handle a narrow but load-bearing seam: every `/responses` SSE byte Codex receives passes through them before the renderer sees a semantic delta. A regression here is invisible until a live cc-shell session streams garbled text. This harness runs the same pipeline headlessly so you can bisect parser bugs in minutes instead of hours.
+The proxy and adapter handle a narrow but load-bearing seam: every `/responses` SSE byte Codex receives passes through them before the renderer sees a semantic delta. A regression here is invisible until a live Agent Code session streams garbled text. This harness runs the same pipeline headlessly so you can bisect parser bugs in minutes instead of hours.
 
 ## Quick run
 

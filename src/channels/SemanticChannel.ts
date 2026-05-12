@@ -353,7 +353,7 @@ export class SemanticChannel extends EventEmitter {
   //
   // These are a first-class publisher surface so the proxy adapter
   // doesn't have to smuggle events through a typed-as-unknown cast on
-  // `.emit('event', …)`. Before they existed the cc-shell adapter had
+  // `.emit('event', …)`. Before they existed the Agent Code adapter had
   // a `publishRawEvent` helper that did exactly that — see the old
   // `src/providers/codex/runtime/codexResponsesAdapter.ts:155`. Typed
   // methods keep the publisher contract visible and let future

@@ -8,11 +8,11 @@ import type { ResponsesProxy } from './responsesProxy.js'
 // Responses API events, and publishes them to the CodexHeadless
 // SemanticChannel as `source: 'proxy'` turns/deltas.
 //
-// WHY this lives inside codex-headless (and not in cc-shell):
+// WHY this lives inside codex-headless (and not in Agent Code):
 //   This file used to live at src/providers/codex/runtime/ in
-//   cc-shell. The comment that used to justify that placement argued
+//   Agent Code. The comment that used to justify that placement argued
 //   the transport adapter belonged next to the HTTP server because
-//   both were "cc-shell transport concerns". That argument was wrong
+//   both were "Agent Code transport concerns". That argument was wrong
 //   on two counts:
 //     1. It called itself a "parallel" to ClaudeProxyAdapter, which
 //        in fact lives INSIDE the claude-code-headless package. The
@@ -30,7 +30,7 @@ import type { ResponsesProxy } from './responsesProxy.js'
 //   publishUsageUpdated) and keeps the package's public surface
 //   symmetric with claude-code-headless, where ClaudeProxyAdapter
 //   has always lived inside the submodule. Downstream consumers
-//   (cc-shell today, anyone else tomorrow) get a complete proxy
+//   (Agent Code today, anyone else tomorrow) get a complete proxy
 //   pipeline by importing one package, not two.
 //
 // WHY proxy source is preferred when available:
@@ -1091,7 +1091,7 @@ export class CodexResponsesAdapter {
         })
         flow.turnOpened = false
         // Phase terminal transition. If the turn produced function_call
-        // or custom_tool_call items, the cc-shell client will execute
+        // or custom_tool_call items, the Agent Code client will execute
         // them and send the outputs back on the next `/v1/responses`
         // call — until then we sit in `awaiting-tool` so the user can
         // see which tool the session is blocked on. Server-executed
