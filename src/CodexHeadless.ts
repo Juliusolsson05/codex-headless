@@ -48,6 +48,7 @@ import {
   isCodexSessionMeta,
   isCodexResponseItem,
   isCodexEventMsg,
+  isCodexMessageItem,
   extractCodexMessageText,
 } from './transcript/TranscriptTypes.js'
 import { getCodexSessionsDir } from './transcript/ProjectDir.js'
@@ -231,7 +232,10 @@ export class CodexHeadless extends EventEmitter {
    *  any event for this turn (rare — file creation race), we fall
    *  back to a synthetic `live-<ts>` id and promote to the real id
    *  when the first rollout event arrives. */
-  private liveSemanticTurnId: string | null = null
+  // Protected rather than private because regression harnesses need to assert
+  // lifecycle state through a subclass. That keeps the test breach explicit and
+  // typed, instead of forcing `as unknown as` casts at every private access.
+  protected liveSemanticTurnId: string | null = null
   /** Whether the live semantic turn is currently screen-sourced. Used
    *  to decide whether a screen snapshot should publish a fallback
    *  delta (only when no higher-trust source is driving the turn). */
@@ -896,13 +900,13 @@ export class CodexHeadless extends EventEmitter {
    * entry is captured for getSessionMeta().
    */
   private tailFile(filePath: string): () => Promise<void> {
-    return tailSessionFile(
+    return tailSessionFile<CodexRolloutLine>(
       filePath,
       (entry) => {
-        const line = entry as unknown as CodexRolloutLine
+        const line = entry
         // Capture session meta from the first entry that has it.
         if (isCodexSessionMeta(line) && !this.sessionMeta) {
-          this.sessionMeta = line.payload as CodexSessionMeta
+          this.sessionMeta = line.payload
         }
         this.emit('rollout-entry', line, filePath)
         this.emit('event', {
@@ -938,7 +942,10 @@ export class CodexHeadless extends EventEmitter {
   // preceding `agent_message_delta` (some server variants collapse
   // short replies), the message text still lands on the semantic
   // channel with `confidence: 'medium'` so consumers see it.
-  private ingestRolloutIntoSemantic(line: CodexRolloutLine): void {
+  // See `liveSemanticTurnId` above: tests drive this reducer directly through a
+  // subclass so they can verify rollout edge cases without spawning Codex or
+  // waiting on a filesystem tailer.
+  protected ingestRolloutIntoSemantic(line: CodexRolloutLine): void {
     if (isCodexEventMsg(line)) {
       // The event union includes a CodexGenericEvent catch-all, which
       // makes TS narrow to `{ type: string; [k: string]: unknown }`
@@ -1150,7 +1157,7 @@ export class CodexHeadless extends EventEmitter {
     }
 
     if (isCodexResponseItem(line)) {
-      const item = line.payload as CodexResponseItem
+      const item = line.payload
       // Fallback: a committed assistant message arrived, possibly
       // without a preceding `agent_message_delta` / `agent_message`.
       //
@@ -1164,10 +1171,10 @@ export class CodexHeadless extends EventEmitter {
       //   and seal it immediately after the snapshot so downstream
       //   consumers see a complete turn boundary.
       if (
-        item.type === 'message' &&
-        (item as CodexMessageItem).role === 'assistant'
+        isCodexMessageItem(item) &&
+        item.role === 'assistant'
       ) {
-        const text = extractCodexMessageText(item as CodexMessageItem)
+        const text = extractCodexMessageText(item)
         if (!text) return
         if (this.liveSemanticTurnId) {
           // Catch-up snapshot: if the streaming buffer disagrees with

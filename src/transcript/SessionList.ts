@@ -305,7 +305,12 @@ function extractEventUserMessageText(line: CodexRolloutLine): string | null {
 
 function extractReplayUserMessageText(line: CodexRolloutLine): string | null {
   const item = line.payload
-  if (item.type === 'message' && (item as CodexMessageItem).role === 'user') {
+  if (
+    item &&
+    typeof item === 'object' &&
+    (item as { type?: unknown }).type === 'message' &&
+    (item as { role?: unknown }).role === 'user'
+  ) {
     const text = extractCodexMessageText(item as CodexMessageItem)
     if (text) return cleanUserText(text)
   }

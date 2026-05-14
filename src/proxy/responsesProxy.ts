@@ -635,7 +635,7 @@ export class ResponsesProxy extends EventEmitter {
       const upstreamRes = await fetch(upstream, {
         method,
         headers,
-        body: body ? (body as unknown as FetchBody) : undefined,
+        body: body ? (body as FetchBody) : undefined,
         signal: abort.signal,
       })
       // Headers received — stop the abort timer. The body may still

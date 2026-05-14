@@ -308,15 +308,15 @@ export async function tailNewSessionFile(
  * Convenience for tailing a specific session file by absolute path
  * (when the file is already known).
  */
-export function tailSessionFile(
+export function tailSessionFile<T extends JsonlEntry = JsonlEntry>(
   filePath: string,
-  onEntry: (entry: JsonlEntry) => void,
+  onEntry: (entry: T) => void,
   onError?: (err: Error) => void,
   options?: {
     bootstrapTailLines?: number
   },
 ): () => Promise<void> {
-  const tailer = new FileTailer<JsonlEntry>(filePath, onEntry, onError, options)
+  const tailer = new FileTailer<T>(filePath, onEntry, onError, options)
   return async () => {
     await tailer.close()
   }

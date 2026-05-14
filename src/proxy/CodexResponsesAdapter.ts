@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import { StringDecoder } from 'string_decoder'
 import type { CodexHeadless } from '../CodexHeadless.js'
 import type { SemanticBlockKind, StreamPhase } from '../channels/types.js'
@@ -105,6 +106,8 @@ type EndEvent = {
   path: string
   bytes: number
 }
+
+type CodexResponsesAdapterHeadless = Pick<CodexHeadless, 'semantic'>
 
 // Per-turn state tracked by the adapter. Keyed by the proxy's
 // requestId (emitted on every request/response/chunk/end/error event
@@ -252,9 +255,71 @@ type FlowState = {
 const WATCHDOG_STALE_MS = 60_000
 const WATCHDOG_INTERVAL_MS = 10_000
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function stringField(record: Record<string, unknown> | null | undefined, key: string): string | undefined {
+  const value = record?.[key]
+  return typeof value === 'string' ? value : undefined
+}
+
+function numberField(record: Record<string, unknown> | null | undefined, key: string): number | undefined {
+  const value = record?.[key]
+  return typeof value === 'number' ? value : undefined
+}
+
+function stringArrayField(record: Record<string, unknown> | null | undefined, key: string): string[] | undefined {
+  const value = record?.[key]
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : undefined
+}
+
+function stringRecordField(record: Record<string, unknown> | null | undefined, key: string): Record<string, string> | undefined {
+  const value = asRecord(record?.[key])
+  if (!value) return undefined
+  const out: Record<string, string> = {}
+  for (const [entryKey, entryValue] of Object.entries(value)) {
+    if (typeof entryValue === 'string') out[entryKey] = entryValue
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+function isStartEvent(ev: Record<string, unknown>): ev is StartEvent {
+  return (
+    ev.kind === 'request' &&
+    typeof ev.requestId === 'string' &&
+    typeof ev.method === 'string' &&
+    typeof ev.path === 'string' &&
+    typeof ev.upstream === 'string'
+  )
+}
+
+function isChunkEvent(ev: Record<string, unknown>): ev is ChunkEvent {
+  return (
+    ev.kind === 'response-chunk' &&
+    typeof ev.requestId === 'string' &&
+    typeof ev.path === 'string' &&
+    typeof ev.size === 'number' &&
+    Buffer.isBuffer(ev.chunk)
+  )
+}
+
+function isEndEvent(ev: Record<string, unknown>): ev is EndEvent {
+  return (
+    ev.kind === 'response-end' &&
+    typeof ev.requestId === 'string' &&
+    typeof ev.path === 'string' &&
+    typeof ev.bytes === 'number'
+  )
+}
+
 export class CodexResponsesAdapter {
   private readonly proxy: ResponsesProxy
-  private readonly headless: CodexHeadless
+  private readonly headless: CodexResponsesAdapterHeadless
   private readonly flows = new Map<string, FlowState>()
   // Monotonically increasing flow id — not path-derived because
   // the same path fires on every retry and we need stable keys.
@@ -271,7 +336,7 @@ export class CodexResponsesAdapter {
   // attach(), cleared in detach().
   private watchdogTimer: ReturnType<typeof setInterval> | null = null
 
-  constructor(proxy: ResponsesProxy, headless: CodexHeadless) {
+  constructor(proxy: ResponsesProxy, headless: CodexResponsesAdapterHeadless) {
     this.proxy = proxy
     this.headless = headless
   }
@@ -354,7 +419,8 @@ export class CodexResponsesAdapter {
     }
 
     if (kind === 'request') {
-      const req = ev as unknown as StartEvent
+      const req = isStartEvent(ev) ? ev : null
+      if (!req) return
       if (req.method !== 'POST') return
       // Mint a flow in 'candidate' state. Don't publish anything
       // onto the shared semantic channel yet — we need to see the
@@ -390,7 +456,8 @@ export class CodexResponsesAdapter {
     }
 
     if (kind === 'response-chunk') {
-      const chunkEv = ev as unknown as ChunkEvent
+      const chunkEv = isChunkEvent(ev) ? ev : null
+      if (!chunkEv) return
       const flow = this.findFlowByRequestId(chunkEv.requestId)
       if (!flow) return
       flow.lastEventAt = Date.now()
@@ -456,7 +523,8 @@ export class CodexResponsesAdapter {
     }
 
     if (kind === 'response-end') {
-      const endEv = ev as unknown as EndEvent
+      const endEv = isEndEvent(ev) ? ev : null
+      if (!endEv) return
       const flow = this.findFlowByRequestId(endEv.requestId)
       if (!flow) return
       flow.lastEventAt = Date.now()
@@ -650,7 +718,18 @@ export class CodexResponsesAdapter {
 
     let parsed: Record<string, unknown>
     try {
-      parsed = JSON.parse(payload) as Record<string, unknown>
+      const value: unknown = JSON.parse(payload)
+      const record = asRecord(value)
+      if (!record) {
+        this.headless.semantic.publishStreamError({
+          turnId: flow.responseId,
+          errorType: 'json_parse_error',
+          message: 'SSE data frame was not a JSON object',
+          source: 'proxy',
+        })
+        return
+      }
+      parsed = record
     } catch (err) {
       // Malformed SSE data frame. In normal streams this never happens;
       // it's been observed when an upstream CDN buffers bytes incorrectly
@@ -671,8 +750,8 @@ export class CodexResponsesAdapter {
     switch (t) {
       case 'response.created':
       case 'response.in_progress': {
-        const response = parsed.response as Record<string, unknown> | undefined
-        const id = typeof response?.id === 'string' ? response.id : null
+        const response = asRecord(parsed.response)
+        const id = stringField(response, 'id') ?? null
         if (!id) return
         flow.responseId = id
         if (!flow.turnOpened) {
@@ -693,20 +772,17 @@ export class CodexResponsesAdapter {
 
       case 'response.output_item.added': {
         if (!flow.turnOpened || !flow.responseId) return
-        const item = parsed.item as Record<string, unknown> | undefined
-        const itemId = typeof item?.id === 'string' ? item.id : null
-        const itemType = typeof item?.type === 'string' ? item.type : ''
-        const outputIndex = typeof parsed.output_index === 'number' ? parsed.output_index : 0
+        const item = asRecord(parsed.item)
+        const itemId = stringField(item, 'id') ?? null
+        const itemType = stringField(item, 'type') ?? ''
+        const outputIndex = numberField(parsed, 'output_index') ?? 0
         if (!itemId) return
 
         const kind = mapItemTypeToBlockKind(itemType)
-        const callId =
-          typeof item?.call_id === 'string' ? (item.call_id as string) : undefined
-        const toolName =
-          typeof item?.name === 'string' ? (item.name as string) : undefined
-        const phase = extractMessagePhase(item)
-        const status =
-          typeof item?.status === 'string' ? (item.status as string) : undefined
+        const callId = stringField(item, 'call_id')
+        const toolName = stringField(item, 'name')
+        const phase = extractMessagePhase(item ?? undefined)
+        const status = stringField(item, 'status')
 
         flow.blocks.set(itemId, {
           index: outputIndex,
@@ -792,7 +868,7 @@ export class CodexResponsesAdapter {
         // isn't present (older schema) we fall back to the first
         // message block we saw, which matches pre-multi-message
         // behaviour.
-        const itemId = typeof parsed.item_id === 'string' ? (parsed.item_id as string) : null
+        const itemId = stringField(parsed, 'item_id') ?? null
         const block = itemId ? flow.blocks.get(itemId) : null
         if (block && block.kind === 'message') {
           block.textSoFar += delta
@@ -813,7 +889,7 @@ export class CodexResponsesAdapter {
         if (!flow.turnOpened || !flow.responseId) return
         const delta = typeof parsed.delta === 'string' ? parsed.delta : ''
         if (!delta) return
-        const itemId = typeof parsed.item_id === 'string' ? (parsed.item_id as string) : null
+        const itemId = stringField(parsed, 'item_id') ?? null
         const block = itemId ? flow.blocks.get(itemId) : null
         if (!block || block.kind !== 'reasoning') return
 
@@ -824,11 +900,7 @@ export class CodexResponsesAdapter {
         const isSummary = t === 'response.reasoning_summary_text.delta'
         const track: 'summary' | 'full' = isSummary ? 'summary' : 'full'
         const upstreamIndex =
-          (typeof parsed.summary_index === 'number'
-            ? (parsed.summary_index as number)
-            : typeof parsed.content_index === 'number'
-              ? (parsed.content_index as number)
-              : 0)
+          numberField(parsed, 'summary_index') ?? numberField(parsed, 'content_index') ?? 0
         if (isSummary) block.summarySoFar += delta
         else block.fullSoFar += delta
 
@@ -854,16 +926,15 @@ export class CodexResponsesAdapter {
 
       case 'response.output_item.done': {
         if (!flow.turnOpened || !flow.responseId) return
-        const item = (parsed.item as Record<string, unknown> | undefined) ?? {}
-        const itemId = typeof item.id === 'string' ? (item.id as string) : null
+        const item = asRecord(parsed.item) ?? {}
+        const itemId = stringField(item, 'id') ?? null
         const outputIndex =
-          typeof parsed.output_index === 'number'
-            ? (parsed.output_index as number)
-            : itemId
+          numberField(parsed, 'output_index') ??
+          (itemId
               ? (flow.blocks.get(itemId)?.index ?? 0)
-              : 0
+              : 0)
         const kind = mapItemTypeToBlockKind(
-          typeof item.type === 'string' ? (item.type as string) : '',
+          stringField(item, 'type') ?? '',
         )
         const block = itemId ? flow.blocks.get(itemId) : null
 
@@ -877,7 +948,7 @@ export class CodexResponsesAdapter {
           itemId: itemId ?? undefined,
           kind,
           status:
-            typeof item.status === 'string' ? (item.status as string) : undefined,
+            stringField(item, 'status'),
           raw: item,
           source: 'proxy' as const,
         }
@@ -899,13 +970,10 @@ export class CodexResponsesAdapter {
             return
           }
           case 'function_call': {
-            const argumentsJson =
-              typeof item.arguments === 'string' ? (item.arguments as string) : ''
+            const argumentsJson = stringField(item, 'arguments') ?? ''
             const parsedArgs = tryParseObject(argumentsJson)
-            const toolName =
-              typeof item.name === 'string' ? (item.name as string) : undefined
-            const callId =
-              typeof item.call_id === 'string' ? (item.call_id as string) : undefined
+            const toolName = stringField(item, 'name')
+            const callId = stringField(item, 'call_id')
             this.headless.semantic.publishBlockCompleted({
               ...base,
               toolName,
@@ -928,27 +996,22 @@ export class CodexResponsesAdapter {
           case 'custom_tool_call_output': {
             this.headless.semantic.publishBlockCompleted({
               ...base,
-              callId:
-                typeof item.call_id === 'string' ? (item.call_id as string) : undefined,
-              toolName:
-                typeof item.name === 'string' ? (item.name as string) : undefined,
+              callId: stringField(item, 'call_id'),
+              toolName: stringField(item, 'name'),
               output: item.output,
             })
             return
           }
           case 'custom_tool_call': {
-            const toolName =
-              typeof item.name === 'string' ? (item.name as string) : undefined
-            const callId =
-              typeof item.call_id === 'string' ? (item.call_id as string) : undefined
+            const toolName = stringField(item, 'name')
+            const callId = stringField(item, 'call_id')
             this.headless.semantic.publishBlockCompleted({
               ...base,
               toolName,
               callId,
               // CustomToolCall.input is a plain string (not JSON). Preserve
               // as argumentsJson for symmetry with function_call consumers.
-              argumentsJson:
-                typeof item.input === 'string' ? (item.input as string) : undefined,
+              argumentsJson: stringField(item, 'input'),
             })
             // Record pending tool — same rationale as function_call above.
             if (callId) {
@@ -963,8 +1026,7 @@ export class CodexResponsesAdapter {
           case 'tool_search_output': {
             this.headless.semantic.publishBlockCompleted({
               ...base,
-              callId:
-                typeof item.call_id === 'string' ? (item.call_id as string) : undefined,
+              callId: stringField(item, 'call_id'),
               // ToolSearchCall carries `arguments` (object), ToolSearchOutput
               // carries `tools` (array). Both flow through `raw` for now —
               // callers can reach into the typed payload if they need a
@@ -974,41 +1036,25 @@ export class CodexResponsesAdapter {
             return
           }
           case 'local_shell_call': {
-            const action = item.action as Record<string, unknown> | undefined
-            const command = Array.isArray(action?.command)
-              ? (action.command as unknown[]).filter((s): s is string => typeof s === 'string')
-              : []
+            const action = asRecord(item.action)
+            const command = stringArrayField(action, 'command') ?? []
             this.headless.semantic.publishBlockCompleted({
               ...base,
-              callId:
-                typeof item.call_id === 'string' ? (item.call_id as string) : undefined,
+              callId: stringField(item, 'call_id'),
               localShellCall: {
-                status:
-                  typeof item.status === 'string'
-                    ? (item.status as string)
-                    : 'unknown',
+                status: stringField(item, 'status') ?? 'unknown',
                 command,
-                workingDirectory:
-                  typeof action?.working_directory === 'string'
-                    ? (action.working_directory as string)
-                    : undefined,
-                timeoutMs:
-                  typeof action?.timeout_ms === 'number'
-                    ? (action.timeout_ms as number)
-                    : undefined,
-                env:
-                  action?.env && typeof action.env === 'object'
-                    ? (action.env as Record<string, string>)
-                    : undefined,
-                user:
-                  typeof action?.user === 'string' ? (action.user as string) : undefined,
+                workingDirectory: stringField(action, 'working_directory'),
+                timeoutMs: numberField(action, 'timeout_ms'),
+                env: stringRecordField(action, 'env'),
+                user: stringField(action, 'user'),
               },
             })
             return
           }
           case 'web_search_call': {
-            const action = item.action as Record<string, unknown> | undefined
-            const actionKind = typeof action?.type === 'string' ? (action.type as string) : ''
+            const action = asRecord(item.action)
+            const actionKind = stringField(action, 'type') ?? ''
             // Map Rust's WebSearchAction variants onto our simplified
             // tagged union. See codex-rs/protocol/src/models.rs:972-1000.
             const webSearchAction: {
@@ -1026,16 +1072,10 @@ export class CodexResponsesAdapter {
                     : actionKind === 'find_in_page'
                       ? 'find_in_page'
                       : 'other',
-              query:
-                typeof action?.query === 'string' ? (action.query as string) : undefined,
-              queries: Array.isArray(action?.queries)
-                ? (action.queries as unknown[]).filter(
-                    (s): s is string => typeof s === 'string',
-                  )
-                : undefined,
-              url: typeof action?.url === 'string' ? (action.url as string) : undefined,
-              pattern:
-                typeof action?.pattern === 'string' ? (action.pattern as string) : undefined,
+              query: stringField(action, 'query'),
+              queries: stringArrayField(action, 'queries'),
+              url: stringField(action, 'url'),
+              pattern: stringField(action, 'pattern'),
             }
             this.headless.semantic.publishBlockCompleted({ ...base, webSearchAction })
             return
@@ -1044,16 +1084,9 @@ export class CodexResponsesAdapter {
             this.headless.semantic.publishBlockCompleted({
               ...base,
               imageGeneration: {
-                status:
-                  typeof item.status === 'string'
-                    ? (item.status as string)
-                    : 'unknown',
-                revisedPrompt:
-                  typeof item.revised_prompt === 'string'
-                    ? (item.revised_prompt as string)
-                    : undefined,
-                result:
-                  typeof item.result === 'string' ? (item.result as string) : '',
+                status: stringField(item, 'status') ?? 'unknown',
+                revisedPrompt: stringField(item, 'revised_prompt'),
+                result: stringField(item, 'result') ?? '',
               },
             })
             return
@@ -1074,8 +1107,8 @@ export class CodexResponsesAdapter {
         if (!flow.responseId) return
         // Final usage is available on response.usage (mirrors
         // claude-code-headless's approach).
-        const response = parsed.response as Record<string, unknown> | undefined
-        const usage = response?.usage as Record<string, unknown> | undefined
+        const response = asRecord(parsed.response)
+        const usage = asRecord(response?.usage)
         if (usage) {
           this.headless.semantic.publishUsageUpdated({
             turnId: flow.responseId,
@@ -1119,7 +1152,7 @@ export class CodexResponsesAdapter {
         // (as the old adapter did) collapsed context-window overflows,
         // rate limits, and quota errors into a generic "fallback"
         // finishTurn — the user couldn't tell why a turn died.
-        const response = parsed.response as Record<string, unknown> | undefined
+        const response = asRecord(parsed.response) ?? undefined
         const classified = classifyResponseFailed(response)
         this.headless.semantic.publishApiError({
           turnId: flow.responseId,
@@ -1148,10 +1181,9 @@ export class CodexResponsesAdapter {
         // it at responses.rs:306-316. Surface via publishTurnStopped
         // so consumers can distinguish "ran out of tokens" from
         // "refused by safety" without parsing the raw event.
-        const response = parsed.response as Record<string, unknown> | undefined
-        const details = response?.incomplete_details as Record<string, unknown> | undefined
-        const reason =
-          typeof details?.reason === 'string' ? (details.reason as string) : null
+        const response = asRecord(parsed.response)
+        const details = asRecord(response?.incomplete_details)
+        const reason = stringField(details, 'reason') ?? null
         this.headless.semantic.publishTurnStopped({
           turnId: flow.responseId,
           stopReason: reason,
@@ -1183,7 +1215,7 @@ function flattenUsage(u: Record<string, unknown>): Record<string, number | strin
   for (const [k, v] of Object.entries(u)) {
     if (typeof v === 'number' || typeof v === 'string') out[k] = v
     else if (v && typeof v === 'object') {
-      for (const [ck, cv] of Object.entries(v as Record<string, unknown>)) {
+      for (const [ck, cv] of Object.entries(asRecord(v) ?? {})) {
         if (typeof cv === 'number' || typeof cv === 'string') out[`${k}.${ck}`] = cv
       }
     }
@@ -1247,10 +1279,10 @@ function extractMessageText(item: Record<string, unknown>): string | undefined {
   if (!Array.isArray(content)) return undefined
   const parts: string[] = []
   for (const entry of content) {
-    if (!entry || typeof entry !== 'object') continue
-    const obj = entry as Record<string, unknown>
-    if (obj.type === 'output_text' && typeof obj.text === 'string') {
-      parts.push(obj.text as string)
+    const obj = asRecord(entry)
+    const text = stringField(obj, 'text')
+    if (obj?.type === 'output_text' && text) {
+      parts.push(text)
     }
   }
   return parts.length > 0 ? parts.join('') : undefined
@@ -1266,10 +1298,10 @@ function extractReasoningSummary(
   if (!Array.isArray(summary)) return undefined
   const parts: string[] = []
   for (const entry of summary) {
-    if (!entry || typeof entry !== 'object') continue
-    const obj = entry as Record<string, unknown>
-    if (obj.type === 'summary_text' && typeof obj.text === 'string') {
-      parts.push(obj.text as string)
+    const obj = asRecord(entry)
+    const text = stringField(obj, 'text')
+    if (obj?.type === 'summary_text' && text) {
+      parts.push(text)
     }
   }
   return parts.length > 0 ? parts.join('\n') : undefined
@@ -1285,13 +1317,13 @@ function extractReasoningContent(
   if (!Array.isArray(content)) return undefined
   const parts: string[] = []
   for (const entry of content) {
-    if (!entry || typeof entry !== 'object') continue
-    const obj = entry as Record<string, unknown>
+    const obj = asRecord(entry)
+    const text = stringField(obj, 'text')
     if (
-      (obj.type === 'reasoning_text' || obj.type === 'text') &&
-      typeof obj.text === 'string'
+      (obj?.type === 'reasoning_text' || obj?.type === 'text') &&
+      text
     ) {
-      parts.push(obj.text as string)
+      parts.push(text)
     }
   }
   return parts.length > 0 ? parts.join('\n') : undefined
@@ -1307,10 +1339,9 @@ function tryParseObject(
   s: string,
 ): { value: Record<string, unknown>; error?: undefined } | { value?: undefined; error: string } {
   try {
-    const obj = JSON.parse(s) as unknown
-    if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-      return { value: obj as Record<string, unknown> }
-    }
+    const value: unknown = JSON.parse(s)
+    const obj = asRecord(value)
+    if (obj) return { value: obj }
     return { error: 'arguments did not parse to an object' }
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) }
@@ -1353,11 +1384,11 @@ function classifyResponseFailed(
   if (!err || typeof err !== 'object') {
     return { errorType: 'stream', message: 'response.failed event received' }
   }
-  const e = err as Record<string, unknown>
-  const code = typeof e.code === 'string' ? (e.code as string) : ''
-  const type = typeof e.type === 'string' ? (e.type as string) : ''
-  const message =
-    typeof e.message === 'string' ? (e.message as string) : 'response.failed'
+  const e = asRecord(err)
+  if (!e) return { errorType: 'stream', message: 'response.failed event received' }
+  const code = stringField(e, 'code') ?? ''
+  const type = stringField(e, 'type') ?? ''
+  const message = stringField(e, 'message') ?? 'response.failed'
 
   // Context window overflow — OpenAI returns "context_length_exceeded"
   // code or the phrase in the message. codex-rs's is_context_window_error
@@ -1418,10 +1449,7 @@ function parseRetryAfterMs(err: Record<string, unknown>): number | undefined {
   const secs = err.retry_after
   if (typeof secs === 'number' && Number.isFinite(secs) && secs >= 0) return secs * 1000
 
-  const details = err.details
-  if (details && typeof details === 'object') {
-    const nested = (details as Record<string, unknown>).retry_after
-    if (typeof nested === 'number' && Number.isFinite(nested) && nested >= 0) return nested * 1000
-  }
+  const nested = numberField(asRecord(err.details), 'retry_after')
+  if (typeof nested === 'number' && Number.isFinite(nested) && nested >= 0) return nested * 1000
   return undefined
 }
