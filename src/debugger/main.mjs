@@ -29,8 +29,13 @@ const workspaceRoot = join(__dirname, '..', '..', '..')
 const { spawn: ptySpawn } = require2(join(workspaceRoot, 'node_modules', 'node-pty'))
 
 // Resolve config once at startup.
-const cwd = process.env.CODEX_HEADLESS_CWD ?? process.env.CC_SHELL_CWD ?? process.cwd()
-let binary = process.env.CODEX_HEADLESS_BINARY ?? process.env.CC_SHELL_CODEX_BINARY ?? 'codex'
+//
+// The debugger intentionally only reads the current CODEX_HEADLESS_* names.
+// The app's one-time rename conversion has already landed, so leaving retired
+// env aliases here would make local debugging depend on stale shell state that
+// no current command documents or owns.
+const cwd = process.env.CODEX_HEADLESS_CWD ?? process.cwd()
+let binary = process.env.CODEX_HEADLESS_BINARY ?? 'codex'
 try {
   const resolved = execFileSync('which', ['codex'], { encoding: 'utf8' }).trim()
   if (resolved) binary = resolved
