@@ -204,7 +204,6 @@ async function parseCodexSession(
 
     try {
       for await (const raw of lines) {
-        lineCount += 1
         const line = raw.trim()
         if (!line) continue
         let parsed: CodexRolloutLine
@@ -214,6 +213,11 @@ async function parseCodexSession(
           // A garbled line shouldn't kill the whole summary — keep going.
           continue
         }
+        // Only count lines that decoded into a usable JSON record toward the
+        // budget. Counting raw lines would let leading blank or garbled lines
+        // exhaust the budget before any real session_meta / user message
+        // appears, which is the exact failure shape this scan exists to avoid.
+        lineCount += 1
 
         if (!meta && isCodexSessionMeta(parsed)) {
           meta = parsed.payload
