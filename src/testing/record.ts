@@ -14,8 +14,6 @@
  *   CODEX_HEADLESS_CWD      — override working directory
  *   CODEX_HEADLESS_BINARY   — override binary (default: `codex`)
  *   CODEX_HEADLESS_SCRIPT   — path to a JSON script for headless mode
- *
- * The old CC_SHELL_* names are still accepted as compatibility aliases.
  */
 
 import { mkdir, readFile, writeFile } from 'fs/promises'
@@ -43,7 +41,7 @@ async function loadScript(path: string): Promise<Script> {
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
 async function main(): Promise<void> {
-  const scriptPath = process.env.CODEX_HEADLESS_SCRIPT ?? process.env.CC_SHELL_SCRIPT
+  const scriptPath = process.env.CODEX_HEADLESS_SCRIPT
   const scripted = !!scriptPath
   const script: Script | null = scripted ? await loadScript(scriptPath!) : null
 
@@ -51,8 +49,12 @@ async function main(): Promise<void> {
   const recordingDir = join('recordings', ts)
   await mkdir(recordingDir, { recursive: true })
 
-  const cwd = process.env.CODEX_HEADLESS_CWD ?? process.env.CC_SHELL_CWD ?? process.cwd()
-  const binary = process.env.CODEX_HEADLESS_BINARY ?? process.env.CC_SHELL_CODEX_BINARY ?? 'codex'
+  // Keep this recorder aligned with the post-rename package surface. The
+  // compatibility aliases were useful during conversion, but retaining them in
+  // dev tools means stale exported env vars can alter a test run without any
+  // visible clue in the command being executed.
+  const cwd = process.env.CODEX_HEADLESS_CWD ?? process.cwd()
+  const binary = process.env.CODEX_HEADLESS_BINARY ?? 'codex'
   const cols = process.stdout.columns ?? 120
   const rows = process.stdout.rows ?? 40
 

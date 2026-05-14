@@ -1,4 +1,6 @@
-import { readdir, stat, open } from 'fs/promises'
+import { createReadStream } from 'fs'
+import { readdir, stat } from 'fs/promises'
+import { createInterface } from 'readline'
 import { join, resolve as resolvePath } from 'path'
 
 import { getCodexSessionsDir } from './ProjectDir.js'
@@ -67,11 +69,20 @@ export type ListCodexSessionsOptions = {
   cwd?: string
 }
 
-// Head budget covers session_meta plus the first few entries — the
-// first user message is almost always within the first ~16 KB of a
-// rollout. If we don't find one within the head we fall back to the
-// session id; we don't pay to scan the whole file just for a label.
-const HEAD_BYTES = 16 * 1024
+// We only need the early metadata and the first user-facing prompt for the
+// resume picker, but "early" cannot mean "first N bytes" anymore.
+//
+// WHY this is line-count bounded instead of byte-count bounded:
+// recent Codex builds put the full base instructions and active developer
+// context inside the very first `session_meta` JSONL object. In this repo that
+// line can easily exceed 16 KB. The old byte-head reader would split the first
+// JSON object mid-line, drop it as "possibly truncated", and then every
+// cwd-filtered resume picker saw `cwd === undefined`, which made it look like
+// there were no Codex sessions at all. JSONL's real framing unit is a complete
+// line, so we stream complete lines and stop after enough early events to get
+// the summary. This keeps the picker cheap without assuming provider metadata
+// has a stable byte size.
+const MAX_SUMMARY_LINES = 80
 
 // Rollout filename pattern: rollout-<timestamp>-<uuid>.jsonl
 const ROLLOUT_RE = /^rollout-(.+)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i
@@ -171,58 +182,75 @@ async function walkForRollouts(
 }
 
 /**
- * Extract metadata from a single rollout file's HEAD by typed JSONL
- * decoding. Reads the head bytes once, splits on newlines, decodes
- * each complete line, and pulls:
+ * Extract metadata from the early rollout lines by typed JSONL
+ * decoding. Streams complete JSONL records and pulls:
  *   - session_meta -> cwd, git.branch, timestamp
  *   - first user message -> summary text
- *
- * The last line of the head buffer is dropped because it may be
- * truncated mid-JSON.
  */
 async function parseCodexSession(
   file: { path: string; mtime: number; sessionId: string },
 ): Promise<CodexSessionInfo | null> {
-  let fd
   try {
-    fd = await open(file.path, 'r')
-    const s = await fd.stat()
+    const s = await stat(file.path)
     if (s.size === 0) return null
-
-    const headLen = Math.min(HEAD_BYTES, s.size)
-    const headBuf = Buffer.alloc(headLen)
-    await fd.read(headBuf, 0, headLen, 0)
-    const head = headBuf.toString('utf8')
-
-    const lines = head.split('\n')
-    // If we read a partial file and the last line is incomplete,
-    // drop it — we can't trust a truncated JSON object.
-    if (headLen < s.size && lines.length > 0) lines.pop()
 
     let meta: CodexSessionMeta | null = null
     let userText: string | null = null
+    let replayUserText: string | null = null
+    let lineCount = 0
 
-    for (const raw of lines) {
-      const line = raw.trim()
-      if (!line) continue
-      let parsed: CodexRolloutLine
-      try {
-        parsed = JSON.parse(line) as CodexRolloutLine
-      } catch {
-        // A garbled line shouldn't kill the whole summary — keep going.
-        continue
+    const stream = createReadStream(file.path, { encoding: 'utf8' })
+    const lines = createInterface({ input: stream, crlfDelay: Infinity })
+
+    try {
+      for await (const raw of lines) {
+        const line = raw.trim()
+        if (!line) continue
+        let parsed: CodexRolloutLine
+        try {
+          parsed = JSON.parse(line) as CodexRolloutLine
+        } catch {
+          // A garbled line shouldn't kill the whole summary — keep going.
+          continue
+        }
+        // Only count lines that decoded into a usable JSON record toward the
+        // budget. Counting raw lines would let leading blank or garbled lines
+        // exhaust the budget before any real session_meta / user message
+        // appears, which is the exact failure shape this scan exists to avoid.
+        lineCount += 1
+
+        if (!meta && isCodexSessionMeta(parsed)) {
+          meta = parsed.payload
+          if (userText) break
+          continue
+        }
+
+        if (!userText && isCodexEventMsg(parsed)) {
+          userText = extractEventUserMessageText(parsed)
+        }
+
+        if (!replayUserText && isCodexResponseItem(parsed)) {
+          replayUserText = extractReplayUserMessageText(parsed)
+        }
+
+        if (meta && userText) break
+        if (lineCount >= MAX_SUMMARY_LINES) break
       }
+    } finally {
+      lines.close()
+      stream.destroy()
+    }
 
-      if (!meta && isCodexSessionMeta(parsed)) {
-        meta = parsed.payload
-        continue
+    // If the first useful user prompt is further down the file than our cheap
+    // summary scan, still show the session. The resume command only needs the
+    // provider session id; summary text is just a label.
+    if (!meta && !userText && !replayUserText) {
+      return {
+        sessionId: file.sessionId,
+        summary: file.sessionId.slice(0, 8),
+        lastModified: file.mtime,
+        fileSize: s.size,
       }
-
-      if (!userText) {
-        userText = extractUserMessageText(parsed)
-      }
-
-      if (meta && userText) break
     }
 
     let createdAt: number | undefined
@@ -231,7 +259,7 @@ async function parseCodexSession(
       if (!Number.isNaN(parsedTs)) createdAt = parsedTs
     }
 
-    let summary = userText ?? ''
+    let summary = userText ?? replayUserText ?? ''
     if (summary.length > 200) summary = summary.slice(0, 200).trimEnd() + '…'
     if (!summary) summary = file.sessionId.slice(0, 8)
 
@@ -246,42 +274,40 @@ async function parseCodexSession(
     }
   } catch {
     return null
-  } finally {
-    await fd?.close().catch(() => {})
   }
 }
 
 /**
- * Pull a user-facing prompt string from any rollout line that could
- * carry one. Two shapes occur in practice:
+ * Pull user-facing prompt strings out of Codex rollout records.
  *
- *   1. event_msg / payload.type === 'user_message' — emitted by the
- *      TUI when the user submits text from the composer. The string
- *      lives at payload.message.
+ * WHY this is split into event-vs-replay helpers instead of one generic
+ * "first user message" extractor:
  *
- *   2. response_item / type === 'message' / role === 'user' — emitted
- *      when Codex replays prior turns into the next request, or when
- *      the session was forked / resumed. Text lives in
- *      content[*].input_text.
+ * New Codex rollouts can include large startup/context `response_item` entries
+ * with role === "user" before the actual typed prompt. Those are real protocol
+ * messages, but they are terrible resume-picker labels because every session
+ * looks like the repo's AGENTS.md/environment block. The terminal-originated
+ * `event_msg:user_message` is the best label when present. We still keep the
+ * response_item path as a fallback for replay/fork/resume files that may not
+ * contain an event_msg near the head.
  *
  * We strip a couple of known wrapper markers Codex uses internally
  * (`<user_input>...</user_input>` and the `USER_MESSAGE_BEGIN/END`
- * sentinels) so the picker shows the actual prompt text, not the
- * wire framing. Returns null if this line isn't a user message.
+ * sentinels) so the picker shows the actual prompt text, not wire framing.
  */
-function extractUserMessageText(line: CodexRolloutLine): string | null {
-  if (isCodexEventMsg(line)) {
-    const evt = line.payload as CodexUserMessageEvent
-    if (evt?.type === 'user_message' && typeof evt.message === 'string') {
-      return cleanUserText(evt.message)
-    }
+function extractEventUserMessageText(line: CodexRolloutLine): string | null {
+  const evt = line.payload as CodexUserMessageEvent
+  if (evt?.type === 'user_message' && typeof evt.message === 'string') {
+    return cleanUserText(evt.message)
   }
-  if (isCodexResponseItem(line)) {
-    const item = line.payload
-    if (item.type === 'message' && (item as CodexMessageItem).role === 'user') {
-      const text = extractCodexMessageText(item as CodexMessageItem)
-      if (text) return cleanUserText(text)
-    }
+  return null
+}
+
+function extractReplayUserMessageText(line: CodexRolloutLine): string | null {
+  const item = line.payload
+  if (item.type === 'message' && (item as CodexMessageItem).role === 'user') {
+    const text = extractCodexMessageText(item as CodexMessageItem)
+    if (text) return cleanUserText(text)
   }
   return null
 }
