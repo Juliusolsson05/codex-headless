@@ -323,6 +323,14 @@ export function isCodexSessionMeta(line: CodexRolloutLine): line is CodexRollout
   return line.type === 'session_meta'
 }
 
+export function isCodexMessageItem(item: CodexResponseItem): item is CodexMessageItem {
+  return (
+    item.type === 'message' &&
+    typeof item.role === 'string' &&
+    Array.isArray(item.content)
+  )
+}
+
 /** Extract text content from a CodexMessageItem's content array. */
 export function extractCodexMessageText(item: CodexMessageItem): string {
   return item.content
