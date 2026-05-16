@@ -1,7 +1,8 @@
 import { EventEmitter } from 'events'
 import type { IPty } from 'node-pty'
 import { mkdir, readdir, readFile, stat } from 'fs/promises'
-import { join } from 'path'
+import { realpathSync } from 'fs'
+import { join, resolve } from 'path'
 import { watch } from 'chokidar'
 
 import {
@@ -204,10 +205,34 @@ function collectRolloutLineageIds(
   }
 }
 
+// Canonicalise a cwd for comparison. The rollout fork detector
+// compares the cwd we were launched with against the cwd Codex
+// recorded into a candidate rollout's session_meta. A raw `===` is
+// wrong: on macOS the path may differ by symlink (`/var` vs
+// `/private/var`, `/tmp` vs `/private/tmp`), by case (HFS+/APFS are
+// case-insensitive by default), or by a trailing slash / `..`
+// segment from a non-canonical caller. realpathSync.native resolves
+// all three; it throws if the path no longer exists, in which case
+// we fall back to `resolve` (handles `..`/trailing-slash only).
+function normalizeCwd(cwd: string): string {
+  try {
+    return realpathSync.native(cwd)
+  } catch {
+    return resolve(cwd)
+  }
+}
+
 export class CodexHeadless extends EventEmitter {
   private static readonly RESUME_BOOTSTRAP_TAIL_LINES = 200
   private static readonly RESUME_FORK_WATCH_MS = 120000
-  private static readonly ROLLOUT_CANDIDATE_READ_BYTES = 256 * 1024
+  // How much of a candidate rollout to read when checking it for the
+  // fork lineage. Generous on purpose: Codex prepends large synthetic
+  // bootstrap entries (AGENTS.md preamble, environment_context) to a
+  // reconstructed history, and the copied item ids we match against
+  // sit after them — a small prefix could miss every shared id and
+  // false-negative a real fork. Reads only happen on fresh-file
+  // events inside the bounded resume window, so 4 MiB is cheap.
+  private static readonly ROLLOUT_CANDIDATE_READ_BYTES = 4 * 1024 * 1024
   // A candidate same-cwd rollout must share at least this many item
   // ids with the resumed file before we accept it as a fork of the
   // resumed session (rather than an unrelated sibling agent). See
@@ -1037,6 +1062,14 @@ export class CodexHeadless extends EventEmitter {
       if (stopped) return
       if (this.activeRolloutPath === filePath) return
       if (this.tailedRolloutPaths.has(filePath)) return
+      // Open the new tail BEFORE closing the stale one: a gap would
+      // drop any entry written in between. The brief overlap is safe
+      // — a forked rollout begins with this session's copied history,
+      // so the new tail's bootstrap re-emits entries the stale tail
+      // already emitted, and downstream ingest dedupes by the
+      // deterministic per-entry uuid (`<timestamp>:<id>`). Closing
+      // first to avoid the overlap would trade a harmless duplicate
+      // (deduped) for a real lost-entry window.
       const previous = currentStop
       currentStop = this.tailFile(filePath)
       this.emit(
@@ -1090,24 +1123,26 @@ export class CodexHeadless extends EventEmitter {
       onCandidate: (filePath: string) => Promise<void>
     },
   ): Promise<() => Promise<void>> {
-    const existing = new Set<string>()
-    const primingWatcher = watch(sessionsDir, {
-      persistent: true,
-      ignoreInitial: false,
-      depth: 4,
-    })
-    await new Promise<void>(resolve => {
-      primingWatcher.on('add', (filePath: string) => existing.add(filePath))
-      primingWatcher.on('ready', resolve)
-    })
-    await primingWatcher.close()
-
     let evaluating = false
     let closed = false
     const pending = new Set<string>()
+    // A single watcher with ignoreInitial:false. Every rollout file —
+    // those already on disk at attach time AND those created later —
+    // is fed through isResumeForkCandidate, whose mtime guard rejects
+    // anything older than the resume attach.
+    //
+    // The earlier two-phase design (prime an `existing` set, then
+    // watch only for files NOT in it) had a real hole: a reconstructed
+    // fork created during the priming scan was recorded as
+    // pre-existing and then skipped forever — the exact committed-
+    // channel outage this watcher exists to catch. Letting the mtime
+    // guard, not watcher ordering, decide freshness closes that
+    // window. ignoreInitial:false replays the on-disk tree once; old
+    // files are rejected cheaply by the stat-only mtime guard before
+    // any file read.
     const watcher = watch(sessionsDir, {
       persistent: true,
-      ignoreInitial: true,
+      ignoreInitial: false,
       depth: 4,
     })
 
@@ -1133,7 +1168,6 @@ export class CodexHeadless extends EventEmitter {
       if (closed) return
       const name = filePath.split('/').pop() ?? ''
       if (!CODEX_ROLLOUT_RE.test(name)) return
-      if (existing.has(filePath)) return
       if (filePath === options.initialPath) return
       if (this.tailedRolloutPaths.has(filePath)) return
       pending.add(filePath)
@@ -1185,17 +1219,15 @@ export class CodexHeadless extends EventEmitter {
     // orchestration branches that spawn child agents in-place):
     //
     //   - cwd match: the candidate's session_meta / turn_context
-    //     reports our cwd. Necessary but NOT sufficient — sibling
-    //     agents share it.
+    //     reports our cwd (compared canonically — see normalizeCwd).
+    //     Necessary but NOT sufficient — sibling agents share it.
     //   - lineage overlap: a true reconstruction copies this
     //     session's prior conversation into the new file, so the
     //     candidate's early entries carry item ids we fingerprinted
     //     from the resumed file. A sibling agent shares none.
     //
-    // We switch the committed tail only when BOTH hold. If the
-    // resumed file had no fingerprintable history (lineageIds empty),
-    // fall back to cwd-only so the fix still repairs the original
-    // issue #159 failure rather than regressing to "never switch".
+    // We switch the committed tail only when BOTH hold.
+    const ownCwd = normalizeCwd(this.cwd)
     let cwdMatch = false
     for (const rawLine of text.split('\n')) {
       const line = rawLine.trim()
@@ -1210,15 +1242,37 @@ export class CodexHeadless extends EventEmitter {
         type?: unknown
         payload?: { cwd?: unknown }
       }
+      const candidateCwd = record.payload?.cwd
       if (
         (record.type === 'session_meta' || record.type === 'turn_context') &&
-        record.payload?.cwd === this.cwd
+        typeof candidateCwd === 'string' &&
+        normalizeCwd(candidateCwd) === ownCwd
       ) {
         cwdMatch = true
         break
       }
     }
     if (!cwdMatch) return false
+
+    // Lineage is the second, decisive signal. If the resumed file had
+    // no fingerprintable history (empty id set — a near-empty resume
+    // target, or a failed read of it) we cannot prove this candidate
+    // is OURS, so we do NOT switch on cwd alone: a blind cwd-only
+    // switch is exactly how a sibling orchestration agent's transcript
+    // would get adopted into this pane. The cost of not switching here
+    // is near-zero — an empty resumed session has no accumulated
+    // conversation to lose — so failing closed is correct.
+    if (options.lineageIds.size === 0) {
+      this.emit(
+        'rollout-error',
+        new Error(
+          `Codex resume: cannot verify lineage for same-cwd rollout ${filePath} — ` +
+            `resumed file ${options.initialPath} carried no fingerprintable history; ` +
+            `not switching (a blind cwd-only switch could adopt a sibling agent).`,
+        ),
+      )
+      return false
+    }
 
     const candidateIds = new Set<string>()
     collectRolloutLineageIds(text, candidateIds, 8000)
@@ -1227,13 +1281,10 @@ export class CodexHeadless extends EventEmitter {
       if (options.lineageIds.has(id)) lineageOverlap += 1
     }
 
-    const requiredOverlap =
-      options.lineageIds.size === 0
-        ? 0
-        : Math.min(
-            CodexHeadless.RESUME_LINEAGE_MIN_OVERLAP,
-            options.lineageIds.size,
-          )
+    const requiredOverlap = Math.min(
+      CodexHeadless.RESUME_LINEAGE_MIN_OVERLAP,
+      options.lineageIds.size,
+    )
 
     if (lineageOverlap >= requiredOverlap) return true
 

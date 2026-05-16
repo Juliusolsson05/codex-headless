@@ -468,6 +468,17 @@ export class CodexResponsesAdapter {
       if (!chunkEv) return
       const flow = this.findFlowByRequestId(chunkEv.requestId)
       if (!flow) return
+
+      // A flow that already reached response.completed is semantically
+      // done. Late chunks for it (SSE keepalives, trailers, a retry
+      // tail) must NOT be appended or refresh lastEventAt: completed
+      // flows never drain (only 'active' does), so appending would
+      // leak flow.buffer, and refreshing lastEventAt would keep the
+      // watchdog from ever reaping the finished flow. Drop them —
+      // response-end deletes the flow, and if that never arrives the
+      // watchdog reaps it once lastEventAt (frozen here) goes stale.
+      if (flow.attribution === 'completed') return
+
       flow.lastEventAt = Date.now()
 
       // First-chunk attribution. Any /responses chunk is a reliable
