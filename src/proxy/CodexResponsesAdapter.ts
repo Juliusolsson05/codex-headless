@@ -212,6 +212,14 @@ type FlowState = {
   //                 flow is already active. Parsed (for bookkeeping)
   //                 but never published. Would-be publishes are
   //                 dropped at the handleFrame entry point.
+  //   'completed' — the SSE stream reached response.completed and
+  //                 published its terminal semantic state, but the
+  //                 HTTP transport has not emitted response-end yet.
+  //                 This state exists because response.completed is
+  //                 the semantic end of a Responses turn; waiting for
+  //                 the socket close to release the active slot makes
+  //                 client-executed tool calls such as MCP hide the
+  //                 next flow when the transport end lags.
   //
   // WHY this exists: before the gate was added, a retry or warmup
   // could open a second POST /v1/responses while the first was still
@@ -221,7 +229,7 @@ type FlowState = {
   // then alternated between rendering one flow's blocks and the
   // other's — the user-visible 0/1/0/1 flicker below the prompt.
   // See docs/superpowers/plans/2026-04-17-codex-semantic-flicker-fix.md.
-  attribution: 'candidate' | 'active' | 'secondary'
+  attribution: 'candidate' | 'active' | 'secondary' | 'completed'
 }
 
 // Watchdog thresholds for silent / leaked flows.
@@ -1139,6 +1147,23 @@ export class CodexResponsesAdapter {
         } else {
           this.publishPhase(flow, 'idle')
         }
+        // WHY release on response.completed instead of waiting for
+        // response-end:
+        // `response.completed` is the upstream semantic terminal
+        // event. For client-executed tools (including MCP), Codex can
+        // issue the follow-up `/v1/responses` request containing the
+        // function_call_output before the proxy observes the previous
+        // socket's response-end, and in broken/long-lived transports
+        // that end event may never arrive. Holding `activeFlowId` past
+        // response.completed incorrectly demotes the legitimate
+        // follow-up flow to secondary, so the renderer sees only
+        // phase changes and no block/text events. Marking this flow
+        // completed keeps any stray tail chunks from publishing while
+        // allowing the next model turn to claim the active slot.
+        if (this.activeFlowId === flow.flowId) {
+          this.activeFlowId = null
+        }
+        flow.attribution = 'completed'
         return
       }
 
