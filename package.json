@@ -8,13 +8,7 @@
   "files": ["dist"],
   "scripts": {
     "build": "tsc",
-    "test": "tsx src/testing/verify.ts",
-    "record": "tsx src/testing/record.ts",
-    "replay": "tsx src/testing/replay.ts",
-    "debugger": "electron src/debugger/main.mjs",
-    "proxy-test": "tsx src/testing/proxy-testing/run.ts",
-    "proxy-exec": "tsx src/testing/proxy-testing/exec.ts",
-    "proxy-smoke": "tsx src/testing/proxy-testing/smoke.ts"
+    "debugger": "electron src/debugger/main.mjs"
   },
   "dependencies": {
     "@xterm/headless": "^5.5.0",
