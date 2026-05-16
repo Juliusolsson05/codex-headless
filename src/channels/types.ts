@@ -320,6 +320,34 @@ export type SemanticThinkingDeltaEvent = SemanticBlockRef & {
   ts: number
 }
 
+/** Partial tool input for Responses tool-call variants whose arguments
+ *  stream before `response.output_item.done`.
+ *
+ *  WHY Codex has this even though final `CustomToolCall.input` also
+ *  arrives on `block_completed`: apply_patch/write-style tools are the
+ *  UX-sensitive path where the user wants to see "an edit is being
+ *  written" while the model is still producing the patch. The SSE wire
+ *  emits `response.custom_tool_call_input.delta` for that exact window;
+ *  dropping it forces the renderer to mount an empty tool skeleton and
+ *  then suddenly replace it with the full patch at completion. This
+ *  mirrors Claude's `tool_input_delta` contract so the renderer can fold
+ *  partial inputs without learning a Codex-only event shape. */
+export type SemanticToolInputDeltaEvent = SemanticBlockRef & {
+  type: 'tool_input_delta'
+  toolName: string
+  toolUseId: string
+  /** Raw fragment from this delta. For Codex custom tools this is a
+   *  plain string fragment, not necessarily JSON. The historical field
+   *  name is kept because the renderer fold already understands the
+   *  Claude-compatible contract. */
+  partialJson: string
+  /** Full accumulator so far. String — not parsed. */
+  inputJsonSoFar: string
+  source: SemanticSource
+  confidence: SemanticConfidence
+  ts: number
+}
+
 /** Fires at `response.output_item.done`. Carries the final, fully
  *  typed ResponseItem. This is the authoritative "this block is
  *  settled" signal — every structural item (tool calls, web searches,
@@ -626,6 +654,7 @@ export type SemanticEvent =
   | SemanticBlockStartedEvent
   | SemanticTextDeltaEvent
   | SemanticThinkingDeltaEvent
+  | SemanticToolInputDeltaEvent
   | SemanticBlockCompletedEvent
   | SemanticTurnStoppedEvent
   | SemanticStreamErrorEvent
