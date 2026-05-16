@@ -15,6 +15,7 @@ import type {
   SemanticStreamPhaseEvent,
   SemanticTextDeltaEvent,
   SemanticThinkingDeltaEvent,
+  SemanticToolInputDeltaEvent,
   SemanticToolCompletedEvent,
   SemanticToolOutputDeltaEvent,
   SemanticToolStartedEvent,
@@ -73,6 +74,7 @@ export type SemanticChannelEvents = {
   block_started: [SemanticBlockStartedEvent]
   text_delta: [SemanticTextDeltaEvent]
   thinking_delta: [SemanticThinkingDeltaEvent]
+  tool_input_delta: [SemanticToolInputDeltaEvent]
   block_completed: [SemanticBlockCompletedEvent]
   turn_stopped: [SemanticTurnStoppedEvent]
   stream_error: [SemanticStreamErrorEvent]
@@ -259,6 +261,15 @@ export class SemanticChannel extends EventEmitter {
     source: SemanticSource
     confidence?: SemanticTurnCompletedEvent['confidence']
   }): void {
+    const completion: SemanticTurnCompletedEvent = {
+      type: 'turn_completed',
+      turnId: params.turnId,
+      fullText: params.fullText ?? (this.lastFullText || undefined),
+      source: params.source,
+      confidence: params.confidence ?? (params.source === 'screen' ? 'fallback' : 'high'),
+      ts: Date.now(),
+    }
+
     if (this.activeTurnId !== params.turnId) {
       const violation: SemanticLifecycleViolationEvent = {
         type: 'lifecycle_violation',
@@ -269,19 +280,34 @@ export class SemanticChannel extends EventEmitter {
         ts: Date.now(),
       }
       this.emit('lifecycle_violation', violation)
+      this.emit('event', violation)
+      // WHY we still publish the terminal event on a mismatched finish:
+      // Codex Responses can leave the channel's single `activeTurnId`
+      // stale after an earlier turn was already dropped by the strict
+      // start/finish guard. The adapter then continues to publish
+      // block_started/text_delta/block_completed for the real current
+      // `resp_*`, so the renderer has a fully terminal live turn but
+      // never receives `turn_completed`. The visible symptom is the
+      // assistant row or work indicator squatting at the bottom with
+      // `endedAt: null` until some later response happens to replace it.
+      //
+      // A terminal event is not content ownership: it only seals the
+      // turn whose id it names. `foldSemanticEvent` already rejects
+      // terminal events for the wrong current turn via turnId matching,
+      // so forwarding this is safer than silently dropping it. Clearing
+      // the stale active slot lets the next proxy turn start cleanly
+      // instead of cascading the mismatch forever.
+      this.emit('turn_completed', completion)
+      this.emit('event', completion)
+      this.activeTurnId = null
+      this.activeRole = null
+      this.lastSource = null
+      this.lastFullText = ''
       return
     }
 
-    const ev: SemanticTurnCompletedEvent = {
-      type: 'turn_completed',
-      turnId: params.turnId,
-      fullText: params.fullText ?? (this.lastFullText || undefined),
-      source: params.source,
-      confidence: params.confidence ?? (params.source === 'screen' ? 'fallback' : 'high'),
-      ts: Date.now(),
-    }
-    this.emit('turn_completed', ev)
-    this.emit('event', ev)
+    this.emit('turn_completed', completion)
+    this.emit('event', completion)
 
     this.activeTurnId = null
     this.activeRole = null
@@ -507,6 +533,34 @@ export class SemanticChannel extends EventEmitter {
       ts: Date.now(),
     }
     this.emit('thinking_delta', ev)
+    this.emit('event', ev)
+  }
+
+  publishToolInputDelta(params: {
+    turnId: string
+    blockIndex: number
+    itemId?: string
+    toolName: string
+    toolUseId: string
+    partialJson: string
+    inputJsonSoFar: string
+    source: SemanticSource
+    confidence?: SemanticToolInputDeltaEvent['confidence']
+  }): void {
+    const ev: SemanticToolInputDeltaEvent = {
+      type: 'tool_input_delta',
+      turnId: params.turnId,
+      blockIndex: params.blockIndex,
+      itemId: params.itemId,
+      toolName: params.toolName,
+      toolUseId: params.toolUseId,
+      partialJson: params.partialJson,
+      inputJsonSoFar: params.inputJsonSoFar,
+      source: params.source,
+      confidence: params.confidence ?? 'high',
+      ts: Date.now(),
+    }
+    this.emit('tool_input_delta', ev)
     this.emit('event', ev)
   }
 

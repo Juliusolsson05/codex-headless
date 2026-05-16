@@ -150,9 +150,9 @@ type FlowState = {
   // entry here. Kept until `response.output_item.done` fires (and then
   // for the remainder of the flow so later events referencing the
   // same item id by race don't NPE). Deltas for text and reasoning
-  // accumulate into `textSoFar` / `summarySoFar` / `reasoningSoFar`
-  // so each delta event we emit carries a running total — consumers
-  // can jump in mid-stream without replaying.
+  // accumulate into `textSoFar` / `summarySoFar` / `reasoningSoFar` /
+  // `inputSoFar` so each delta event we emit carries a running total —
+  // consumers can jump in mid-stream without replaying.
   blocks: Map<
     string,
     {
@@ -175,6 +175,13 @@ type FlowState = {
       // reasoning_text.delta (the detailed chain-of-thought).
       summarySoFar: string
       fullSoFar: string
+      // For custom tool calls like apply_patch. The Responses wire
+      // streams these through response.custom_tool_call_input.delta
+      // before the final CustomToolCall.input appears at
+      // output_item.done. Keeping the accumulator here makes the
+      // semantic event self-sufficient and prevents renderers from
+      // having to replay raw SSE frames to reconstruct the patch.
+      inputSoFar: string
     }
   >
   // Whether we've emitted startTurn for this flow yet. Used to
@@ -811,6 +818,7 @@ export class CodexResponsesAdapter {
           textSoFar: '',
           summarySoFar: '',
           fullSoFar: '',
+          inputSoFar: '',
         })
         if (kind === 'message' && flow.messageBlockIndex === null) {
           flow.messageBlockIndex = outputIndex
@@ -900,6 +908,37 @@ export class CodexResponsesAdapter {
             source: 'proxy',
           })
         }
+        return
+      }
+
+      case 'response.custom_tool_call_input.delta': {
+        if (!flow.turnOpened || !flow.responseId) return
+        const delta = typeof parsed.delta === 'string' ? parsed.delta : ''
+        if (!delta) return
+        const itemId = stringField(parsed, 'item_id') ?? null
+        const block = itemId ? flow.blocks.get(itemId) : null
+        if (!block || block.kind !== 'custom_tool_call') return
+        block.inputSoFar += delta
+
+        // WHY this is a semantic event, not renderer special-casing:
+        // the debug bundle 2026-05-16T19-21-30 showed the wire already
+        // had hundreds of apply_patch input deltas while the UI's live
+        // block stayed at inputJson: "". That means the renderer had the
+        // right abstraction but the adapter dropped the only live payload
+        // source. Forwarding the accumulator here keeps apply_patch,
+        // future write/edit tools, and any non-React consumer on the same
+        // block lifecycle instead of teaching each surface to decode raw
+        // Responses SSE frames.
+        this.headless.semantic.publishToolInputDelta({
+          turnId: flow.responseId,
+          blockIndex: block.index,
+          itemId: itemId ?? undefined,
+          toolName: block.toolName ?? '',
+          toolUseId: block.callId ?? itemId ?? '',
+          partialJson: delta,
+          inputJsonSoFar: block.inputSoFar,
+          source: 'proxy',
+        })
         return
       }
 
