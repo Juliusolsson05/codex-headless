@@ -1,0 +1,12 @@
+{
+  "_comment": "Source of truth for the Codex CLI version this package has explicitly accepted as supported. The upstream-watch workflow compares npm's `latest` dist-tag against `accepted`; a human bumps `accepted` only after a compatibility review. Never edited by automation. See support/README.md.",
+  "providers": {
+    "codex": {
+      "label": "Codex",
+      "pkg": "@openai/codex",
+      "changelog": "https://github.com/openai/codex/releases",
+      "accepted": "0.130.0",
+      "checkedAt": "2026-05-16"
+    }
+  }
+}

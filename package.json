@@ -8,7 +8,8 @@
   "files": ["dist"],
   "scripts": {
     "build": "tsc",
-    "debugger": "electron src/debugger/main.mjs"
+    "debugger": "electron src/debugger/main.mjs",
+    "upstream:check": "node scripts/check-upstream.mjs"
   },
   "dependencies": {
     "@xterm/headless": "^5.5.0",
