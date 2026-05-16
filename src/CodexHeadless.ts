@@ -1072,12 +1072,15 @@ export class CodexHeadless extends EventEmitter {
       // (deduped) for a real lost-entry window.
       const previous = currentStop
       currentStop = this.tailFile(filePath)
-      this.emit(
-        'rollout-error',
-        new Error(
-          `Codex resume: switched rollout tail from stale resume file ${initialPath} to newer candidate ${filePath}`,
-        ),
-      )
+      // A successful tail switch is NOT an error. It used to emit
+      // `rollout-error`, which the Agent Code parent surfaces as a
+      // transcript failure ("transcript unavailable: …") even though
+      // the resume recovered correctly. Switching the committed tail
+      // to the forked rollout is the intended behaviour of this
+      // watcher, so it must not poison the error channel. A dedicated
+      // non-error diagnostic event is tracked separately in #11; until
+      // then this switch is observable through the `rollout-entry`
+      // stream that immediately resumes from the new file.
       if (previous) {
         try { await previous() } catch { /* best-effort stale tail close */ }
       }
