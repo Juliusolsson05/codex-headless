@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events'
 import type { IPty } from 'node-pty'
-import { mkdir, readdir, stat } from 'fs/promises'
+import { mkdir, readdir, readFile, stat } from 'fs/promises'
 import { join } from 'path'
 import { watch } from 'chokidar'
 
@@ -167,12 +167,58 @@ export interface CodexHeadless {
 const CODEX_ROLLOUT_RE =
   /^rollout-(.+)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i
 
+// Collect the opaque per-item identifiers (`payload.id`, `payload.call_id`,
+// `payload.turn_id`) from a rollout JSONL text blob into `into`.
+//
+// These ids are Codex-generated value strings (`msg_…`, `fc_…`,
+// `rs_…`, `call_…`, turn uuids). A reconstructed / forked rollout
+// copies this session's prior history into the new file, so its
+// early entries carry the SAME ids; an unrelated Codex agent has
+// entirely different ids. Matching by id VALUE (not raw line bytes)
+// is robust to any whitespace / key-order difference a re-serialised
+// copy might introduce. `session_meta` is skipped — it is unique per
+// file and never copied. `cap` bounds memory on long transcripts.
+function collectRolloutLineageIds(
+  text: string,
+  into: Set<string>,
+  cap: number,
+): void {
+  for (const rawLine of text.split('\n')) {
+    if (into.size >= cap) break
+    const line = rawLine.trim()
+    if (!line) continue
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(line)
+    } catch {
+      continue
+    }
+    const record = parsed as { type?: unknown; payload?: unknown }
+    if (record.type === 'session_meta') continue
+    const payload = record.payload
+    if (!payload || typeof payload !== 'object') continue
+    for (const key of ['id', 'call_id', 'turn_id'] as const) {
+      const value = (payload as Record<string, unknown>)[key]
+      if (typeof value === 'string' && value.length > 0) into.add(value)
+    }
+  }
+}
+
 export class CodexHeadless extends EventEmitter {
   private static readonly RESUME_BOOTSTRAP_TAIL_LINES = 200
+  private static readonly RESUME_FORK_WATCH_MS = 120000
+  private static readonly ROLLOUT_CANDIDATE_READ_BYTES = 256 * 1024
+  // A candidate same-cwd rollout must share at least this many item
+  // ids with the resumed file before we accept it as a fork of the
+  // resumed session (rather than an unrelated sibling agent). See
+  // isResumeForkCandidate.
+  private static readonly RESUME_LINEAGE_MIN_OVERLAP = 3
   private readonly terminal: HeadlessTerminal
   private readonly cwd: string
   private readonly resumeThreadId: string | null
   private stopRolloutTail: (() => Promise<void>) | null = null
+  private activeRolloutPath: string | null = null
+  private tailedRolloutPaths = new Set<string>()
   private lastActivity: string | null = null
   // See ClaudeCodeHeadless.idleDebounceTimer for the rationale —
   // briefly empty bottom-working-row snapshots between TUI redraws
@@ -767,7 +813,10 @@ export class CodexHeadless extends EventEmitter {
         this.resumeThreadId,
       )
       if (rolloutPath) {
-        this.stopRolloutTail = this.tailFile(rolloutPath)
+        this.stopRolloutTail = await this.tailResumeRolloutFile(
+          sessionsDir,
+          rolloutPath,
+        )
       } else {
         // Fallback: lookup missed (rare — usually a date-tree race or a
         // resume where Codex actually forks a NEW rollout file). The
@@ -900,6 +949,8 @@ export class CodexHeadless extends EventEmitter {
    * entry is captured for getSessionMeta().
    */
   private tailFile(filePath: string): () => Promise<void> {
+    this.activeRolloutPath = filePath
+    this.tailedRolloutPaths.add(filePath)
     return tailSessionFile<CodexRolloutLine>(
       filePath,
       (entry) => {
@@ -930,6 +981,295 @@ export class CodexHeadless extends EventEmitter {
         ? { bootstrapTailLines: CodexHeadless.RESUME_BOOTSTRAP_TAIL_LINES }
         : undefined,
     )
+  }
+
+  /**
+   * Resume tailing is deliberately wider than "tail the file whose
+   * filename contains the provider session id".
+   *
+   * WHY: Codex resume is not stable about file ownership. In the
+   * healthy case it appends to the original rollout file, so the
+   * `findRolloutByThreadId -> tailFile(existing)` path is correct.
+   * In the failure captured by Agent Code issue #159, the lookup hit
+   * an old rollout, bootstrap emitted the previous 53 entries, and
+   * Codex then wrote the resumed conversation somewhere else. The
+   * renderer still had live proxy semantics, but the committed
+   * transcript channel was dead forever because this class was pinned
+   * to the stale file.
+   *
+   * We therefore keep the existing tail and, for a bounded window,
+   * watch for a NEW rollout whose early metadata says it belongs to
+   * the same cwd. When such a fork appears we switch tails. We do not
+   * watch forever: after the initial resume decision, long-lived
+   * same-cwd rollouts are much more likely to be unrelated sibling
+   * agents than late resume forks. The window is intentionally long
+   * enough to cover Codex startup/auth/model latency, but finite so a
+   * parent orchestration session does not keep stealing child files
+   * later in the day.
+   *
+   * This is still not a perfect identity proof. Codex does not expose
+   * a parent/resume id in every forked file, and Agent Code can spawn
+   * multiple Codex sessions in the same cwd. The stronger long-term
+   * fix is for Codex to write a stable resume lineage id into
+   * `session_meta` or for Agent Code to get the provider session id
+   * over an explicit API. Until then, "new after resume + same cwd +
+   * bounded watch + switch once" is the narrowest practical repair
+   * for the permanent committed-channel outage.
+   */
+  private async tailResumeRolloutFile(
+    sessionsDir: string,
+    initialPath: string,
+  ): Promise<() => Promise<void>> {
+    await mkdir(sessionsDir, { recursive: true })
+
+    // Fingerprint the resumed file's existing conversation so the
+    // fork watcher can tell a genuine reconstruction of THIS session
+    // apart from an unrelated sibling agent that merely shares the
+    // cwd. See isResumeForkCandidate / readRolloutLineageIds.
+    const lineageIds = await this.readRolloutLineageIds(initialPath)
+
+    let stopped = false
+    let currentStop: (() => Promise<void>) | null = this.tailFile(initialPath)
+    let watcherStop: (() => Promise<void>) | null = null
+    const watchStartedAt = Date.now()
+
+    const switchTo = async (filePath: string): Promise<void> => {
+      if (stopped) return
+      if (this.activeRolloutPath === filePath) return
+      if (this.tailedRolloutPaths.has(filePath)) return
+      const previous = currentStop
+      currentStop = this.tailFile(filePath)
+      this.emit(
+        'rollout-error',
+        new Error(
+          `Codex resume: switched rollout tail from stale resume file ${initialPath} to newer candidate ${filePath}`,
+        ),
+      )
+      if (previous) {
+        try { await previous() } catch { /* best-effort stale tail close */ }
+      }
+      if (watcherStop) {
+        try { await watcherStop() } catch { /* best-effort watcher close */ }
+        watcherStop = null
+      }
+    }
+
+    watcherStop = await this.watchResumeForkRollout(sessionsDir, {
+      startedAt: watchStartedAt,
+      initialPath,
+      lineageIds,
+      onCandidate: switchTo,
+    })
+
+    const timeout = setTimeout(() => {
+      if (!watcherStop) return
+      const stop = watcherStop
+      watcherStop = null
+      void stop()
+    }, CodexHeadless.RESUME_FORK_WATCH_MS)
+
+    return async () => {
+      stopped = true
+      clearTimeout(timeout)
+      const stops = [watcherStop, currentStop]
+      watcherStop = null
+      currentStop = null
+      for (const stop of stops) {
+        if (!stop) continue
+        try { await stop() } catch { /* best-effort */ }
+      }
+    }
+  }
+
+  private async watchResumeForkRollout(
+    sessionsDir: string,
+    options: {
+      startedAt: number
+      initialPath: string
+      lineageIds: ReadonlySet<string>
+      onCandidate: (filePath: string) => Promise<void>
+    },
+  ): Promise<() => Promise<void>> {
+    const existing = new Set<string>()
+    const primingWatcher = watch(sessionsDir, {
+      persistent: true,
+      ignoreInitial: false,
+      depth: 4,
+    })
+    await new Promise<void>(resolve => {
+      primingWatcher.on('add', (filePath: string) => existing.add(filePath))
+      primingWatcher.on('ready', resolve)
+    })
+    await primingWatcher.close()
+
+    let evaluating = false
+    let closed = false
+    const pending = new Set<string>()
+    const watcher = watch(sessionsDir, {
+      persistent: true,
+      ignoreInitial: true,
+      depth: 4,
+    })
+
+    const drain = async (): Promise<void> => {
+      if (evaluating || closed) return
+      evaluating = true
+      try {
+        for (;;) {
+          const next = pending.values().next().value as string | undefined
+          if (!next || closed) break
+          pending.delete(next)
+          if (await this.isResumeForkCandidate(next, options)) {
+            await options.onCandidate(next)
+            break
+          }
+        }
+      } finally {
+        evaluating = false
+      }
+    }
+
+    watcher.on('add', (filePath: string) => {
+      if (closed) return
+      const name = filePath.split('/').pop() ?? ''
+      if (!CODEX_ROLLOUT_RE.test(name)) return
+      if (existing.has(filePath)) return
+      if (filePath === options.initialPath) return
+      if (this.tailedRolloutPaths.has(filePath)) return
+      pending.add(filePath)
+      void drain()
+    })
+    watcher.on('error', (err: unknown) => this.emit('rollout-error', err instanceof Error ? err : new Error(String(err))))
+
+    return async () => {
+      closed = true
+      pending.clear()
+      await watcher.close()
+    }
+  }
+
+  private async isResumeForkCandidate(
+    filePath: string,
+    options: {
+      startedAt: number
+      initialPath: string
+      lineageIds: ReadonlySet<string>
+    },
+  ): Promise<boolean> {
+    if (filePath === options.initialPath) return false
+    if (this.tailedRolloutPaths.has(filePath)) return false
+    let st: Awaited<ReturnType<typeof stat>>
+    try {
+      st = await stat(filePath)
+    } catch {
+      return false
+    }
+    if (!st.isFile()) return false
+    // New-file events can be delivered a little late, but they
+    // should not point at a rollout that predates the resume attach.
+    // That guard is what keeps a resumed parent from adopting some
+    // old same-cwd transcript just because chokidar replayed an add.
+    if (st.mtimeMs < options.startedAt - 5000) return false
+
+    let text: string
+    try {
+      const raw = await readFile(filePath)
+      text = raw.subarray(0, CodexHeadless.ROLLOUT_CANDIDATE_READ_BYTES).toString('utf8')
+    } catch {
+      return false
+    }
+
+    // Two independent signals decide whether this new same-period
+    // rollout is a fork of THE SESSION WE RESUMED, vs an unrelated
+    // Codex agent that merely runs in the same directory (common on
+    // orchestration branches that spawn child agents in-place):
+    //
+    //   - cwd match: the candidate's session_meta / turn_context
+    //     reports our cwd. Necessary but NOT sufficient — sibling
+    //     agents share it.
+    //   - lineage overlap: a true reconstruction copies this
+    //     session's prior conversation into the new file, so the
+    //     candidate's early entries carry item ids we fingerprinted
+    //     from the resumed file. A sibling agent shares none.
+    //
+    // We switch the committed tail only when BOTH hold. If the
+    // resumed file had no fingerprintable history (lineageIds empty),
+    // fall back to cwd-only so the fix still repairs the original
+    // issue #159 failure rather than regressing to "never switch".
+    let cwdMatch = false
+    for (const rawLine of text.split('\n')) {
+      const line = rawLine.trim()
+      if (!line) continue
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(line)
+      } catch {
+        continue
+      }
+      const record = parsed as {
+        type?: unknown
+        payload?: { cwd?: unknown }
+      }
+      if (
+        (record.type === 'session_meta' || record.type === 'turn_context') &&
+        record.payload?.cwd === this.cwd
+      ) {
+        cwdMatch = true
+        break
+      }
+    }
+    if (!cwdMatch) return false
+
+    const candidateIds = new Set<string>()
+    collectRolloutLineageIds(text, candidateIds, 8000)
+    let lineageOverlap = 0
+    for (const id of candidateIds) {
+      if (options.lineageIds.has(id)) lineageOverlap += 1
+    }
+
+    const requiredOverlap =
+      options.lineageIds.size === 0
+        ? 0
+        : Math.min(
+            CodexHeadless.RESUME_LINEAGE_MIN_OVERLAP,
+            options.lineageIds.size,
+          )
+
+    if (lineageOverlap >= requiredOverlap) return true
+
+    // Same cwd but no shared history: almost certainly a sibling
+    // agent's rollout, not our fork. Switching to it would paint
+    // another agent's conversation into this pane — worse than
+    // staying stale — so we keep the current tail and surface a
+    // diagnostic in case the rejection is ever wrong.
+    this.emit(
+      'rollout-error',
+      new Error(
+        `Codex resume: ignoring same-cwd rollout ${filePath} — only ` +
+          `${lineageOverlap}/${requiredOverlap} item ids shared with resumed file ` +
+          `${options.initialPath}; treating it as an unrelated session.`,
+      ),
+    )
+    return false
+  }
+
+  /**
+   * Fingerprint a rollout file's existing conversation as the set of
+   * opaque item ids it contains. Used by isResumeForkCandidate to
+   * recognise a reconstructed fork of the resumed session — a fork
+   * copies these ids, an unrelated session does not. Best-effort:
+   * a read failure yields an empty set, which downgrades the fork
+   * check to cwd-only rather than breaking resume.
+   */
+  private async readRolloutLineageIds(filePath: string): Promise<Set<string>> {
+    const ids = new Set<string>()
+    try {
+      const text = await readFile(filePath, 'utf8')
+      collectRolloutLineageIds(text, ids, 8000)
+    } catch {
+      /* best-effort — empty set falls back to cwd-only matching */
+    }
+    return ids
   }
 
   // --- Rollout → semantic translation -----------------------------------
@@ -1297,16 +1637,34 @@ export class CodexHeadless extends EventEmitter {
     await primingWatcher.close()
 
     let stopTail: (() => Promise<void>) | null = null
+    let latchedPath: string | null = null
     const watcher = watch(sessionsDir, {
       persistent: true,
       ignoreInitial: true,
       depth: 4,
     })
     watcher.on('add', (filePath: string) => {
-      if (stopTail) return
       const name = filePath.split('/').pop() ?? ''
       if (!CODEX_ROLLOUT_RE.test(name)) return
       if (existing.has(filePath)) return
+      if (latchedPath) {
+        // A second brand-new rollout appeared during startup. On
+        // orchestration branches that spawn sibling Codex agents in
+        // the same directory this is how a fresh pane can latch the
+        // wrong session's transcript ("first new rollout wins"). We
+        // keep the first file — a blind switch is just as likely
+        // wrong — but surface the ambiguity so a mis-attach is
+        // debuggable rather than silent.
+        this.emit(
+          'rollout-error',
+          new Error(
+            `Codex start: multiple new rollout files appeared during startup; ` +
+              `tailing ${latchedPath}, ignoring ${filePath} — possible wrong-session attach.`,
+          ),
+        )
+        return
+      }
+      latchedPath = filePath
       stopTail = this.tailFile(filePath)
     })
     watcher.on('error', (err: unknown) => this.emit('rollout-error', err instanceof Error ? err : new Error(String(err))))
