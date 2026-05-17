@@ -11,6 +11,14 @@ import {
 } from './terminal/HeadlessTerminal.js'
 import { tailSessionFile } from './transcript/JsonlTailer.js'
 import {
+  decideFreshRolloutClaim,
+  extractSubmittedPromptFromWrite,
+  normalizePromptForOwnership,
+  parseFreshRolloutCandidate,
+  type FreshRolloutCandidate,
+  type SubmittedPrompt,
+} from './transcript/FreshRolloutClaim.js'
+import {
   detectCodexActivity,
   extractCodexAssistantInProgress,
 } from './parsers/ScreenParser.js'
@@ -244,6 +252,23 @@ export class CodexHeadless extends EventEmitter {
   private stopRolloutTail: (() => Promise<void>) | null = null
   private activeRolloutPath: string | null = null
   private tailedRolloutPaths = new Set<string>()
+  // WHY fresh sessions keep their own prompt ledger:
+  //
+  // A fresh Codex PTY does not expose its provider `ThreadId` to Agent
+  // Code until a rollout file eventually writes `session_meta`. The
+  // old fallback guessed that the first new global rollout file after
+  // spawn belonged to this PTY. That guess is exactly what breaks
+  // orchestration: four sibling PTYs in the same cwd can all see the
+  // same first JSONL and then permanently capture the sibling's
+  // provider id. The prompt bytes are one of the few signals that are
+  // private to THIS headless instance, so the fresh tailer requires a
+  // candidate rollout's first real user message to match a prompt that
+  // passed through this instance before it starts tailing committed
+  // transcript lines.
+  private submittedPrompts: SubmittedPrompt[] = []
+  private freshRolloutCandidates = new Map<string, FreshRolloutCandidate>()
+  private freshRolloutClaimTask: Promise<void> = Promise.resolve()
+  private freshRolloutStopTail: (() => Promise<void>) | null = null
   private lastActivity: string | null = null
   // See ClaudeCodeHeadless.idleDebounceTimer for the rationale —
   // briefly empty bottom-working-row snapshots between TUI redraws
@@ -875,6 +900,7 @@ export class CodexHeadless extends EventEmitter {
   // --- Input ---
 
   write(data: string): void {
+    this.recordSubmittedPromptFromWrite(data)
     this.terminal.write(data)
   }
 
@@ -888,6 +914,34 @@ export class CodexHeadless extends EventEmitter {
 
   resize(cols: number, rows: number): void {
     this.terminal.resize(cols, rows)
+  }
+
+  private recordSubmittedPromptFromWrite(data: string): void {
+    const prompt = extractSubmittedPromptFromWrite(data)
+    if (prompt === null) return
+    this.recordSubmittedPrompt(prompt)
+  }
+
+  private recordSubmittedPrompt(text: string): void {
+    const normalized = normalizePromptForOwnership(text)
+    if (!normalized) return
+    this.submittedPrompts.push({ text, normalized, ts: Date.now() })
+    if (this.submittedPrompts.length > 20) {
+      this.submittedPrompts.splice(0, this.submittedPrompts.length - 20)
+    }
+    this.reconsiderFreshRolloutCandidates()
+  }
+
+  private reconsiderFreshRolloutCandidates(): void {
+    if (this.activeRolloutPath) return
+    this.freshRolloutClaimTask = this.freshRolloutClaimTask
+      .then(() => this.evaluateFreshRolloutCandidates())
+      .catch(err => {
+        this.emit(
+          'rollout-error',
+          err instanceof Error ? err : new Error(String(err)),
+        )
+      })
   }
 
   // --- State queries ---
@@ -1006,6 +1060,47 @@ export class CodexHeadless extends EventEmitter {
         ? { bootstrapTailLines: CodexHeadless.RESUME_BOOTSTRAP_TAIL_LINES }
         : undefined,
     )
+  }
+
+  private async evaluateFreshRolloutCandidates(changedPath?: string): Promise<void> {
+    if (this.activeRolloutPath) return
+    const decision = decideFreshRolloutClaim({
+      ownCwd: this.cwd,
+      prompts: this.submittedPrompts,
+      candidates: this.freshRolloutCandidates.values(),
+      normalizeCwd,
+    })
+
+    if (decision.type === 'accept') {
+      // This is the only fresh-session path that may call tailFile().
+      // Cwd is only a gate; prompt ownership is the proof. Failing
+      // closed here is intentional: a delayed committed transcript is
+      // annoying but recoverable, while tailing the wrong rollout
+      // poisons `providerSessionId` and makes the renderer believe a
+      // sibling conversation belongs to this pane.
+      this.freshRolloutStopTail = this.tailFile(decision.filePath)
+      return
+    }
+
+    if (decision.type === 'ambiguous') {
+      this.emit(
+        'rollout-error',
+        new Error(
+          `Codex fresh rollout ownership ambiguous; refusing to attach by recency. ` +
+            `Candidates: ${decision.filePaths.join(', ')}`,
+        ),
+      )
+      return
+    }
+
+    if (decision.type === 'reject' && changedPath) {
+      this.emit(
+        'rollout-error',
+        new Error(
+          `Codex fresh rollout ${changedPath} rejected: ${decision.reason}`,
+        ),
+      )
+    }
   }
 
   /**
@@ -1670,7 +1765,20 @@ export class CodexHeadless extends EventEmitter {
 
   /**
    * Watch the Codex sessions directory for a new rollout file.
-   * Snapshots existing files first, then watches for adds.
+   * Snapshots existing files first, then watches for adds/changes.
+   *
+   * WHY this does NOT tail the first new file anymore:
+   *
+   * Codex stores every rollout under one global date tree. There is no
+   * per-PTY directory boundary like Claude has, and fresh sessions do
+   * not yet have a provider id we can exact-match. The prior
+   * "first new rollout wins" rule therefore encoded timing as
+   * identity. That is tolerable only when launches are serialized; it
+   * cross-wires orchestration children that start together in the same
+   * cwd. We now hold candidates until their early JSONL proves the
+   * file belongs to a prompt submitted through this headless instance.
+   * If multiple files prove equally well, we keep holding rather than
+   * choosing by recency.
    */
   private async tailNewRolloutFile(
     sessionsDir: string,
@@ -1690,48 +1798,70 @@ export class CodexHeadless extends EventEmitter {
     })
     await primingWatcher.close()
 
-    let stopTail: (() => Promise<void>) | null = null
-    let latchedPath: string | null = null
+    let stopped = false
+
+    const tryClaim = async (filePath: string): Promise<void> => {
+      if (stopped) return
+      if (this.activeRolloutPath) return
+      if (this.tailedRolloutPaths.has(filePath)) return
+      const name = filePath.split('/').pop() ?? ''
+      if (!CODEX_ROLLOUT_RE.test(name)) return
+      if (existing.has(filePath)) return
+      let text: string
+      try {
+        const raw = await readFile(filePath)
+        text = raw
+          .subarray(0, CodexHeadless.ROLLOUT_CANDIDATE_READ_BYTES)
+          .toString('utf8')
+      } catch {
+        return
+      }
+      const candidate = parseFreshRolloutCandidate(filePath, text)
+      if (!candidate) return
+      this.freshRolloutCandidates.set(filePath, candidate)
+      await this.evaluateFreshRolloutCandidates(candidate.filePath)
+    }
+
+    const enqueueClaim = (filePath: string): void => {
+      this.freshRolloutClaimTask = this.freshRolloutClaimTask
+        .then(() => tryClaim(filePath))
+        .catch(err => {
+          this.emit(
+            'rollout-error',
+            err instanceof Error ? err : new Error(String(err)),
+          )
+        })
+    }
+
     const watcher = watch(sessionsDir, {
       persistent: true,
       ignoreInitial: true,
       depth: 4,
     })
-    watcher.on('add', (filePath: string) => {
-      const name = filePath.split('/').pop() ?? ''
-      if (!CODEX_ROLLOUT_RE.test(name)) return
-      if (existing.has(filePath)) return
-      if (latchedPath) {
-        // A second brand-new rollout appeared during startup. On
-        // orchestration branches that spawn sibling Codex agents in
-        // the same directory this is how a fresh pane can latch the
-        // wrong session's transcript ("first new rollout wins"). We
-        // keep the first file — a blind switch is just as likely
-        // wrong — but surface the ambiguity so a mis-attach is
-        // debuggable rather than silent.
-        this.emit(
-          'rollout-error',
-          new Error(
-            `Codex start: multiple new rollout files appeared during startup; ` +
-              `tailing ${latchedPath}, ignoring ${filePath} — possible wrong-session attach.`,
-          ),
-        )
-        return
-      }
-      latchedPath = filePath
-      stopTail = this.tailFile(filePath)
-    })
+    watcher.on('add', enqueueClaim)
+    watcher.on('change', enqueueClaim)
     watcher.on('error', (err: unknown) => this.emit('rollout-error', err instanceof Error ? err : new Error(String(err))))
 
     return async () => {
+      stopped = true
       await watcher.close()
+      const stopTail = this.freshRolloutStopTail
+      this.freshRolloutStopTail = null
       if (stopTail) await stopTail()
     }
   }
 
   /**
    * Find a rollout file by thread ID. Walks the date tree backwards
-   * (most recent dates first) looking for a filename containing the ID.
+   * (most recent dates first) looking for an exact rollout UUID
+   * suffix.
+   *
+   * WHY not `filename.includes(threadId)`: Codex's session tree is
+   * global, so lookup helpers must never degrade into substring
+   * matches. The rollout filename already has a structured
+   * `rollout-<timestamp>-<uuid>.jsonl` shape; using the parsed UUID
+   * keeps resume lookup on the same exact-provider-id rule as the
+   * fresh claimant once it finally captures `session_meta.id`.
    */
   private async findRolloutByThreadId(
     sessionsDir: string,
@@ -1755,7 +1885,10 @@ export class CodexHeadless extends EventEmitter {
             const dStat = await stat(dayDir).catch(() => null)
             if (!dStat?.isDirectory()) continue
             const files = await readdir(dayDir)
-            const match = files.find(f => f.includes(threadId) && f.endsWith('.jsonl'))
+            const match = files.find(f => {
+              const parsed = CODEX_ROLLOUT_RE.exec(f)
+              return parsed?.[2] === threadId
+            })
             if (match) return join(dayDir, match)
           }
         }
