@@ -296,7 +296,9 @@ export class CodexHeadless extends EventEmitter {
   // CODEX_MODULES registry and the real wall clock. Replaces the old hand-rolled
   // `evaluateCodexConditions` + `codexConditionSnapshotKey` + `lastConditionKey`
   // trio — see publishConditionSnapshot. The emitted snapshot shape and the two
-  // events are byte-identical to before (verified by the PR-2 golden matrix).
+  // events are byte-identical to before (verified out-of-band by a throwaway
+  // byte-for-byte comparison of the OLD and NEW serialized snapshots — not
+  // committed, per the repo's no-committed-tests policy).
   private readonly conditionEvaluator: ConditionEvaluator<
     'codex',
     CodexConditionInputs

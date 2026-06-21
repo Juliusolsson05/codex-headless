@@ -33,7 +33,9 @@ export function evaluateCodexConditions(
 }
 
 // codexConditionSnapshotKey — UNCHANGED dedupe key. Kept exported because other
-// importers (and the byte-for-byte golden) rely on it. It is identical to the
+// importers (and the out-of-band byte-for-byte comparison used to verify this
+// migration — a throwaway, not committed, per the repo's no-committed-tests
+// policy) rely on it. It is identical to the
 // generic evaluator's `keyOf` (JSON.stringify of the conditions map, excluding
 // ts); we keep the standalone function so callers that only have a snapshot (no
 // evaluator instance) can still compute the key.

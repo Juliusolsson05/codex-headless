@@ -8,13 +8,19 @@ import type {
   CodexConditionInputs,
 } from './types.js'
 
-// The approval actions. Module-level constant for the same reason as the trust
-// dialog's: the new module and the legacy builder must emit the IDENTICAL array.
+// The approval action TEMPLATE — DATA only; `actions()` clones it into a fresh
+// array of fresh objects per call (see the isolation rationale on the trust
+// dialog's TRUST_DIALOG_ACTIONS, which applies identically here). The exact
+// ids/labels/keystrokes/order are a wire contract: the migration is byte-for-byte
+// (verified out-of-band by a throwaway byte-for-byte comparison of the OLD and
+// NEW serialized snapshots — not committed, per the repo's no-committed-tests
+// policy), so nothing in this literal may change.
+//
 // The keystrokes are the contract with the real Codex approval overlay:
 //   '\r'   = accept the highlighted "Approve" choice
 //   'p'    = the "Approve always (for this session)" hotkey
 //   '\x1b' = ESC, which Codex maps to "Deny"
-const APPROVAL_ACTIONS: ConditionAction[] = [
+const APPROVAL_ACTIONS: readonly ConditionAction[] = [
   { kind: 'pty', id: 'approve', label: 'Approve', data: '\r' },
   { kind: 'pty', id: 'approve-always', label: 'Approve always', data: 'p' },
   { kind: 'pty', id: 'deny', label: 'Deny', data: '\x1b' },
@@ -33,7 +39,9 @@ const APPROVAL_ACTIONS: ConditionAction[] = [
 // we layer metadata fields on top of it; when ONLY metadata is present we
 // synthesize a minimal screen-shaped state from it. The exact field precedence
 // (`command: state.command ?? commandParts.join(' ')`, etc.) is preserved
-// EXACTLY — changing it would change the serialized bytes and break the golden.
+// EXACTLY — changing it would change the serialized bytes (the migration was
+// verified out-of-band by a throwaway byte-for-byte comparison, not committed,
+// per the repo's no-committed-tests policy).
 function mergeApprovalState(
   state: ScreenApproval | null,
   metadata: CodexApprovalMetadata | null,
@@ -78,7 +86,10 @@ export const approvalModule = defineModule<
   kind: 'codex.approval',
   detect: (inputs) =>
     mergeApprovalState(inputs.approval, inputs.approvalMetadata ?? null),
-  actions: () => APPROVAL_ACTIONS,
+  // Fresh array of fresh objects per call — see APPROVAL_ACTIONS: the isolation
+  // contract requires a mutated snapshot not to poison later ones. `{ ...a }` is
+  // a sufficient clone because ConditionAction fields are all primitives.
+  actions: () => APPROVAL_ACTIONS.map((a) => ({ ...a })),
 })
 
 // Legacy builder, re-implemented on top of the module. Same signature as before

@@ -6,15 +6,31 @@ import { defineModule } from './core/contract.js'
 import type { ConditionAction } from './core/contract.js'
 import type { CodexConditionInputs, CodexTrustDialogCondition } from './types.js'
 
-// The trust-dialog actions. Pulled into a module-level constant so BOTH the new
-// module (`trustDialogModule.actions`) and the legacy
-// `buildCodexTrustDialogCondition` builder below hand back the EXACT same array
-// — byte-for-byte identical serialized output is this migration's whole
-// acceptance test. The accept keystroke is sourced from the parser
-// (CODEX_TRUST_DIALOG_ACCEPT_KEYS) so the keystroke contract with the real Codex
-// TUI lives in one place; the reject keystroke '2\r' is the literal "Quit"
-// menu-index keystroke.
-const TRUST_DIALOG_ACTIONS: ConditionAction[] = [
+// The trust-dialog action TEMPLATE. This holds the action DATA only — every
+// `actions()` call clones it into a FRESH array of FRESH objects (see the module
+// below). The exact ids/labels/keystrokes/order here are a wire contract: the
+// migration is byte-for-byte (verified out-of-band by a throwaway byte-for-byte
+// comparison of the OLD and NEW serialized snapshots — not committed, per the
+// repo's no-committed-tests policy), so nothing in this literal may change.
+//
+// WHY fresh-per-call and not just return this array directly.
+// The conditions-core isolation contract says an emitted snapshot's `actions`
+// must be private to that snapshot: a consumer that mutates a returned action
+// (e.g. patches `actions[0].data` before dispatching) must NOT poison the next
+// evaluation. The OLD `buildCodexTrustDialogCondition` allocated a fresh array
+// of fresh object literals on every call, so it had this property for free. An
+// earlier cut of this module handed back this shared module-level array of
+// shared objects directly, which silently regressed that contract — one
+// mutation would leak into every future snapshot. Keeping the DATA module-level
+// (one source of truth for ids/labels/keystrokes) but cloning per call restores
+// the old freshness without re-typing the literals at the call site.
+//
+// `readonly` marks the template as not-for-mutation; the per-call clone is what
+// callers receive and may freely own. The accept keystroke is sourced from the
+// parser (CODEX_TRUST_DIALOG_ACCEPT_KEYS) so the keystroke contract with the
+// real Codex TUI lives in one place; the reject keystroke '2\r' is the literal
+// "Quit" menu-index keystroke.
+const TRUST_DIALOG_ACTIONS: readonly ConditionAction[] = [
   { kind: 'pty', id: 'accept', label: 'Trust folder', data: CODEX_TRUST_DIALOG_ACCEPT_KEYS },
   { kind: 'pty', id: 'reject', label: 'Quit', data: '2\r' },
 ]
@@ -37,7 +53,11 @@ export const trustDialogModule = defineModule<
 >({
   kind: 'codex.trust-dialog',
   detect: (inputs) => (inputs.trustDialog.visible ? inputs.trustDialog : null),
-  actions: () => TRUST_DIALOG_ACTIONS,
+  // Fresh array of fresh objects per call — see TRUST_DIALOG_ACTIONS: the
+  // isolation contract requires a mutated snapshot not to poison later ones.
+  // `{ ...a }` is a sufficient clone because ConditionAction fields are all
+  // primitives (no nested objects to share).
+  actions: () => TRUST_DIALOG_ACTIONS.map((a) => ({ ...a })),
 })
 
 // Legacy builder, re-implemented on top of the module so any external importer
