@@ -32,10 +32,12 @@ import {
   CODEX_TRUST_DIALOG_ACCEPT_KEYS,
 } from './parsers/TrustDialogParser.js'
 import {
-  codexConditionSnapshotKey,
-  evaluateCodexConditions,
+  makeEvaluator,
+  CODEX_MODULES,
   type CodexApprovalMetadata,
+  type CodexConditionInputs,
   type CodexConditionSnapshot,
+  type ConditionEvaluator,
 } from './conditions/index.js'
 import {
   type CodexRolloutLine,
@@ -287,7 +289,18 @@ export class CodexHeadless extends EventEmitter {
     conditions: {},
     ts: Date.now(),
   }
-  private lastConditionKey = '{}'
+  // The long-lived generic evaluator that drives this session's condition
+  // snapshots. It OWNS the dedupe latch (seeded to '{}' internally, matching the
+  // old `lastConditionKey = '{}'` so the first empty snapshot is correctly a
+  // no-change). Built once per CodexHeadless instance with the ordered
+  // CODEX_MODULES registry and the real wall clock. Replaces the old hand-rolled
+  // `evaluateCodexConditions` + `codexConditionSnapshotKey` + `lastConditionKey`
+  // trio — see publishConditionSnapshot. The emitted snapshot shape and the two
+  // events are byte-identical to before (verified by the PR-2 golden matrix).
+  private readonly conditionEvaluator: ConditionEvaluator<
+    'codex',
+    CodexConditionInputs
+  > = makeEvaluator('codex', CODEX_MODULES, () => Date.now())
   private sessionMeta: CodexSessionMeta | null = null
 
   // --- Three-channel truth surface ---------------------------------------
@@ -967,20 +980,32 @@ export class CodexHeadless extends EventEmitter {
   }
 
   private publishConditionSnapshot(): void {
-    const conditions = evaluateCodexConditions({
+    // Assemble the snapshot through the generic evaluator over the two live
+    // condition sources (trust dialog) plus the two-source approval merge
+    // (screen `approvalState` + rollout `approvalMetadata`). The cast narrows the
+    // evaluator's generic snapshot to the Codex-typed one; the runtime value is
+    // identical (only the `conditions` map's static type is narrowed).
+    const snap = this.conditionEvaluator.evaluate({
       trustDialog: this.trustDialogState,
       approval: this.approvalState,
       approvalMetadata: this.approvalMetadata,
-    })
-    const conditionsKey = codexConditionSnapshotKey(conditions)
-    this.conditionSnapshot = conditions
-    if (conditionsKey === this.lastConditionKey) return
-    this.lastConditionKey = conditionsKey
-    this.emit('conditions', conditions)
+    }) as CodexConditionSnapshot
+    // ALWAYS update the public snapshot, even when unchanged — `getConditionSnapshot`
+    // must reflect the latest `ts`. This matches the old behavior (it assigned
+    // `this.conditionSnapshot` before the dedupe early-return).
+    this.conditionSnapshot = snap
+    // Dedupe on the evaluator's latch (keyOf == the old codexConditionSnapshotKey:
+    // JSON.stringify of the conditions map, ts excluded, insertion order
+    // preserved). `changed` returns false and short-circuits when the conditions
+    // are byte-identical to the last emission, exactly as the old
+    // `conditionsKey === this.lastConditionKey` guard did.
+    if (!this.conditionEvaluator.changed(this.conditionEvaluator.keyOf(snap)))
+      return
+    this.emit('conditions', snap)
     this.emit('event', {
       type: 'conditions',
-      ts: conditions.ts,
-      snapshot: conditions,
+      ts: snap.ts,
+      snapshot: snap,
     })
   }
 
