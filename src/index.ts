@@ -25,7 +25,6 @@ export type {
   CodexConditionKind,
   CodexConditionMap,
   CodexConditionSnapshot,
-  CodexSwitchModelPromptCondition,
   CodexTrustDialogCondition,
   ConditionAction as CodexConditionAction,
   ConditionCustomAction as CodexConditionCustomAction,

@@ -1071,8 +1071,7 @@ type CodexConditionMap = Partial<{
 }>
 ```
 
-`CodexConditionKind` = `'codex.trust-dialog' | 'codex.approval' |
-'codex.switch-model-prompt'`.
+`CodexConditionKind` = `'codex.trust-dialog' | 'codex.approval'`.
 
 A snapshot with an empty `conditions` map means nothing is currently
 blocking. A condition's presence means that interactive state is
@@ -1080,7 +1079,7 @@ on-screen.
 
 ### 6.2 Condition variants — `CodexCondition`
 
-`CodexCondition` is the union of the three variants. Every variant has
+`CodexCondition` is the union of the two variants. Every variant has
 `{ kind, state, actions }`.
 
 **`CodexTrustDialogCondition`** — `kind: 'codex.trust-dialog'`
@@ -1104,20 +1103,10 @@ arrived, the screen-parsed state is used directly; when only the
 rollout `exec_approval_request` metadata arrived (overlay not yet
 painted), a synthetic state with the canonical title is built.
 
-**`CodexSwitchModelPromptCondition`** — `kind: 'codex.switch-model-prompt'`
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `state` | `{ visible: true; message: string; selectedIndex?: number; options?: string[] }` | The model-switch prompt. |
-| `actions` | `ConditionAction[]` | |
-
-> **Hedge:** the `codex.switch-model-prompt` *type* is exported and is
-> part of the `CodexCondition` union, but the bundled evaluator
-> (`evaluateCodexConditions`, §6.4) only ever populates
-> `codex.trust-dialog` and `codex.approval`. There is no builder for
-> the model-switch prompt in the current source. The type exists for
-> consumers that detect that prompt themselves and inject the
-> condition; the orchestrator will not emit it on its own.
+There is no `codex.switch-model-prompt` condition in this package today. An
+older type-only placeholder existed without a parser, module, or emission path;
+it was removed so the public union only describes states the evaluator can
+actually produce.
 
 ### 6.3 Actions — `ConditionAction`
 
