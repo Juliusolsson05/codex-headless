@@ -1,5 +1,6 @@
 import type { ScreenApproval } from '../parsers/ApprovalParser.js'
 import type { CodexTrustDialogState } from '../parsers/TrustDialogParser.js'
+import type { ConditionAction } from './core/contract.js'
 
 export type CodexApprovalMetadata = {
   callId: string | null
@@ -13,21 +14,16 @@ export type CodexApprovalState = ScreenApproval & {
   workdir?: string | null
 }
 
-export type ConditionPtyAction = {
-  kind: 'pty'
-  id: string
-  label: string
-  data: string
-}
-
-export type ConditionCustomAction = {
-  kind: 'custom'
-  id: string
-  label: string
-  name: string
-}
-
-export type ConditionAction = ConditionPtyAction | ConditionCustomAction
+// Re-export the wire action union from the vendored core instead of maintaining
+// a local copy. The custom action shape gained `payload?: unknown` for the
+// conditions resolver path; duplicating it here made Codex's public barrel drift
+// from the package's own core contract even though Codex does not emit a custom
+// action today.
+export type {
+  ConditionAction,
+  ConditionPtyAction,
+  ConditionCustomAction,
+} from './core/contract.js'
 
 export type CodexTrustDialogCondition = {
   kind: 'codex.trust-dialog'
