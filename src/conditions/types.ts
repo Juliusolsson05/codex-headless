@@ -41,21 +41,9 @@ export type CodexApprovalCondition = {
   actions: ConditionAction[]
 }
 
-export type CodexSwitchModelPromptCondition = {
-  kind: 'codex.switch-model-prompt'
-  state: {
-    visible: true
-    message: string
-    selectedIndex?: number
-    options?: string[]
-  }
-  actions: ConditionAction[]
-}
-
 export type CodexCondition =
   | CodexTrustDialogCondition
   | CodexApprovalCondition
-  | CodexSwitchModelPromptCondition
 
 export type CodexConditionKind = CodexCondition['kind']
 

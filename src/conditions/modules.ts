@@ -13,11 +13,10 @@ import type { CodexConditionInputs } from './types.js'
 // second here: reordering them would change the serialized key for any snapshot
 // where both are live, which the dedupe latch would see as a spurious change.
 //
-// `codex.switch-model-prompt` is intentionally ABSENT: it's a typed condition
-// kind with no headless detector today (it was never emitted by
-// evaluateCodexConditions — only the type exists for a future builder). Adding a
-// detector now would change behavior; the migration is byte-for-byte, so we
-// leave it out exactly as the old path left it out.
+// There are exactly two live Codex condition modules today. A previous type-only
+// `codex.switch-model-prompt` placeholder had no parser, no module, and no
+// emission path; PR-6 removes that dead declaration instead of pretending the
+// evaluator can ever produce it.
 //
 // `readonly` + `as const`: the order is load-bearing, so we freeze it at the type
 // level. The `ConditionModule<string, CodexConditionInputs, any>` element type is
