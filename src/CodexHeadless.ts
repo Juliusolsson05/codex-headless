@@ -19,6 +19,10 @@ import {
   type SubmittedPrompt,
 } from './transcript/FreshRolloutClaim.js'
 import {
+  collectRolloutLineageIds,
+  decideResumeForkCandidate,
+} from './transcript/ResumeForkCandidate.js'
+import {
   detectCodexActivity,
   extractCodexAssistantInProgress,
 } from './parsers/ScreenParser.js'
@@ -129,6 +133,16 @@ export type CodexConditionsEvent = {
   snapshot: CodexConditionSnapshot
 }
 export type CodexExitEvent = { type: 'exit'; ts: number; exitCode: number; signal?: number }
+export type CodexRolloutDiagnostic = {
+  type: 'resume-fork-ignored'
+  ts: number
+  message: string
+  candidatePath: string
+  initialPath: string
+  reason: 'missing-lineage' | 'insufficient-lineage-overlap'
+  lineageOverlap: number
+  requiredOverlap: number
+}
 
 export type CodexHeadlessEvent =
   | CodexActivityEvent
@@ -146,6 +160,7 @@ export type CodexHeadlessEvents = {
   screen: [ScreenSnapshot]
   'rollout-entry': [CodexRolloutLine, string]
   'rollout-error': [Error]
+  'rollout-diagnostic': [CodexRolloutDiagnostic]
   'trust-dialog': [CodexTrustDialogState]
   approval: [ScreenApproval | null]
   conditions: [CodexConditionSnapshot]
@@ -177,43 +192,6 @@ export interface CodexHeadless {
 // Rollout filename pattern: rollout-<date>-<uuid>.jsonl
 const CODEX_ROLLOUT_RE =
   /^rollout-(.+)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i
-
-// Collect the opaque per-item identifiers (`payload.id`, `payload.call_id`,
-// `payload.turn_id`) from a rollout JSONL text blob into `into`.
-//
-// These ids are Codex-generated value strings (`msg_…`, `fc_…`,
-// `rs_…`, `call_…`, turn uuids). A reconstructed / forked rollout
-// copies this session's prior history into the new file, so its
-// early entries carry the SAME ids; an unrelated Codex agent has
-// entirely different ids. Matching by id VALUE (not raw line bytes)
-// is robust to any whitespace / key-order difference a re-serialised
-// copy might introduce. `session_meta` is skipped — it is unique per
-// file and never copied. `cap` bounds memory on long transcripts.
-function collectRolloutLineageIds(
-  text: string,
-  into: Set<string>,
-  cap: number,
-): void {
-  for (const rawLine of text.split('\n')) {
-    if (into.size >= cap) break
-    const line = rawLine.trim()
-    if (!line) continue
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(line)
-    } catch {
-      continue
-    }
-    const record = parsed as { type?: unknown; payload?: unknown }
-    if (record.type === 'session_meta') continue
-    const payload = record.payload
-    if (!payload || typeof payload !== 'object') continue
-    for (const key of ['id', 'call_id', 'turn_id'] as const) {
-      const value = (payload as Record<string, unknown>)[key]
-      if (typeof value === 'string' && value.length > 0) into.add(value)
-    }
-  }
-}
 
 // Canonicalise a cwd for comparison. The rollout fork detector
 // compares the cwd we were launched with against the cwd Codex
@@ -1338,94 +1316,35 @@ export class CodexHeadless extends EventEmitter {
       return false
     }
 
-    // Two independent signals decide whether this new same-period
-    // rollout is a fork of THE SESSION WE RESUMED, vs an unrelated
-    // Codex agent that merely runs in the same directory (common on
-    // orchestration branches that spawn child agents in-place):
-    //
-    //   - cwd match: the candidate's session_meta / turn_context
-    //     reports our cwd (compared canonically — see normalizeCwd).
-    //     Necessary but NOT sufficient — sibling agents share it.
-    //   - lineage overlap: a true reconstruction copies this
-    //     session's prior conversation into the new file, so the
-    //     candidate's early entries carry item ids we fingerprinted
-    //     from the resumed file. A sibling agent shares none.
-    //
-    // We switch the committed tail only when BOTH hold.
-    const ownCwd = normalizeCwd(this.cwd)
-    let cwdMatch = false
-    for (const rawLine of text.split('\n')) {
-      const line = rawLine.trim()
-      if (!line) continue
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(line)
-      } catch {
-        continue
-      }
-      const record = parsed as {
-        type?: unknown
-        payload?: { cwd?: unknown }
-      }
-      const candidateCwd = record.payload?.cwd
-      if (
-        (record.type === 'session_meta' || record.type === 'turn_context') &&
-        typeof candidateCwd === 'string' &&
-        normalizeCwd(candidateCwd) === ownCwd
-      ) {
-        cwdMatch = true
-        break
-      }
+    // Two independent signals decide whether this new same-period rollout is
+    // a fork of THE SESSION WE RESUMED, vs an unrelated Codex agent that
+    // merely runs in the same directory. The helper deliberately classifies
+    // rejected same-cwd siblings as diagnostics, not fatal rollout errors:
+    // orchestration creates exactly those siblings, and poisoning the error
+    // channel makes the renderer hide an otherwise healthy transcript.
+    const decision = decideResumeForkCandidate({
+      ownCwd: this.cwd,
+      candidateText: text,
+      initialPath: options.initialPath,
+      candidatePath: filePath,
+      lineageIds: options.lineageIds,
+      requiredOverlapLimit: CodexHeadless.RESUME_LINEAGE_MIN_OVERLAP,
+      normalizeCwd,
+    })
+
+    if (decision.type === 'accept') return true
+    if (decision.message && decision.reason !== 'cwd-mismatch') {
+      this.emit('rollout-diagnostic', {
+        type: 'resume-fork-ignored',
+        ts: Date.now(),
+        message: decision.message,
+        candidatePath: filePath,
+        initialPath: options.initialPath,
+        reason: decision.reason,
+        lineageOverlap: decision.lineageOverlap,
+        requiredOverlap: decision.requiredOverlap,
+      })
     }
-    if (!cwdMatch) return false
-
-    // Lineage is the second, decisive signal. If the resumed file had
-    // no fingerprintable history (empty id set — a near-empty resume
-    // target, or a failed read of it) we cannot prove this candidate
-    // is OURS, so we do NOT switch on cwd alone: a blind cwd-only
-    // switch is exactly how a sibling orchestration agent's transcript
-    // would get adopted into this pane. The cost of not switching here
-    // is near-zero — an empty resumed session has no accumulated
-    // conversation to lose — so failing closed is correct.
-    if (options.lineageIds.size === 0) {
-      this.emit(
-        'rollout-error',
-        new Error(
-          `Codex resume: cannot verify lineage for same-cwd rollout ${filePath} — ` +
-            `resumed file ${options.initialPath} carried no fingerprintable history; ` +
-            `not switching (a blind cwd-only switch could adopt a sibling agent).`,
-        ),
-      )
-      return false
-    }
-
-    const candidateIds = new Set<string>()
-    collectRolloutLineageIds(text, candidateIds, 8000)
-    let lineageOverlap = 0
-    for (const id of candidateIds) {
-      if (options.lineageIds.has(id)) lineageOverlap += 1
-    }
-
-    const requiredOverlap = Math.min(
-      CodexHeadless.RESUME_LINEAGE_MIN_OVERLAP,
-      options.lineageIds.size,
-    )
-
-    if (lineageOverlap >= requiredOverlap) return true
-
-    // Same cwd but no shared history: almost certainly a sibling
-    // agent's rollout, not our fork. Switching to it would paint
-    // another agent's conversation into this pane — worse than
-    // staying stale — so we keep the current tail and surface a
-    // diagnostic in case the rejection is ever wrong.
-    this.emit(
-      'rollout-error',
-      new Error(
-        `Codex resume: ignoring same-cwd rollout ${filePath} — only ` +
-          `${lineageOverlap}/${requiredOverlap} item ids shared with resumed file ` +
-          `${options.initialPath}; treating it as an unrelated session.`,
-      ),
-    )
     return false
   }
 

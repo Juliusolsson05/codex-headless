@@ -9,6 +9,7 @@
   "scripts": {
     "build": "tsc",
     "test:fresh-rollout-claim": "tsx scripts/test-fresh-rollout-claim.ts",
+    "test:resume-fork-candidate": "tsx scripts/test-resume-fork-candidate.ts",
     "debugger": "electron src/debugger/main.mjs",
     "upstream:check": "node scripts/check-upstream.mjs"
   },
