@@ -566,8 +566,10 @@ export type SemanticFlowIgnoredEvent = {
 // Fires when a publisher calls into SemanticChannel with a turnId that
 // does not match the channel's current active turnId. Mirrors the
 // Claude package's `SemanticLifecycleViolationEvent` — see that file
-// for the full rationale. Kept off the `SemanticEvent` union so the
-// reducer in Agent Code doesn't have to grow a new branch.
+// for the full rationale. Included in `SemanticEvent` because
+// SemanticChannel emits it on the aggregate `'event'` stream as well
+// as the named `'lifecycle_violation'` stream; leaving it out made the
+// package-local `tsc` build reject its own publisher.
 export type SemanticLifecycleViolationEvent = {
   type: 'lifecycle_violation'
   kind:
@@ -661,6 +663,7 @@ export type SemanticEvent =
   | SemanticApiErrorEvent
   | SemanticFlowSelectedEvent
   | SemanticFlowIgnoredEvent
+  | SemanticLifecycleViolationEvent
   | SemanticUsageEvent
   | SemanticStreamPhaseEvent
 

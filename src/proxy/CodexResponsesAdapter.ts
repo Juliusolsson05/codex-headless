@@ -124,6 +124,15 @@ type FlowState = {
   // `response.id` from the upstream, used as our semantic turnId.
   // Falls back to the flow id until response.created arrives.
   responseId: string | null
+  // Active flow visible at request time, if any. First-chunk
+  // attribution deliberately happens later, but request-time
+  // concurrency is still semantically important: a request born while
+  // another response owns the slot is a retry/warmup/overlap, not the
+  // client-executed tool follow-up that appears only after a terminal
+  // SSE event. Without preserving this snapshot, an overlap whose
+  // first bytes arrive after the active flow completes can steal the
+  // newly freed active slot and demote the real follow-up to secondary.
+  activeFlowIdAtRequest: string | null
   // Rolling SSE frame buffer — bytes are chunked arbitrarily.
   buffer: string
   // Incremental UTF-8 decoder. HTTP chunks can split a multi-byte
@@ -415,6 +424,13 @@ export class CodexResponsesAdapter {
     flow.attribution = 'completed'
   }
 
+  private hydrateResponseIdFromFrame(flow: FlowState, parsed: Record<string, unknown>): void {
+    if (flow.responseId) return
+    const response = asRecord(parsed.response)
+    const id = stringField(response, 'id') ?? null
+    if (id) flow.responseId = id
+  }
+
   private onProxyEvent(ev: Record<string, unknown>): void {
     const kind = ev.kind
     // Only main `/responses` (the streaming SSE turn endpoint) produces
@@ -472,6 +488,7 @@ export class CodexResponsesAdapter {
         requestId: req.requestId,
         path: req.path,
         responseId: null,
+        activeFlowIdAtRequest: this.activeFlowId,
         buffer: '',
         decoder: new StringDecoder('utf8'),
         fullText: '',
@@ -513,7 +530,14 @@ export class CodexResponsesAdapter {
       // and publish flow_ignored for observability. This matches
       // ClaudeProxyAdapter's activeStreamingFlowId pattern 1:1.
       if (flow.attribution === 'candidate') {
-        if (this.activeFlowId === null) {
+        if (flow.activeFlowIdAtRequest !== null) {
+          flow.attribution = 'secondary'
+          this.headless.semantic.publishFlowIgnored({
+            flowId: flow.flowId,
+            reason: `request started while active flow ${flow.activeFlowIdAtRequest} owned the slot`,
+            source: 'proxy',
+          })
+        } else if (this.activeFlowId === null) {
           flow.attribution = 'active'
           this.activeFlowId = flow.flowId
           this.headless.semantic.publishFlowSelected({
@@ -551,10 +575,10 @@ export class CodexResponsesAdapter {
       // semantic events for an entire turn because `\n\n` never
       // appears in the buffer.
       const decoded = flow.decoder.write(chunkEv.chunk).replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-      // Only the active flow feeds the semantic channel. Skip parsing
-      // entirely for secondary flows — nothing downstream would look
-      // at the parsed state, and the decode/frame/JSON.parse cost on
-      // retry bursts is real.
+      // Only the active flow feeds the semantic channel. Secondary
+      // flows still pass through StringDecoder so split UTF-8 state
+      // remains internally consistent, but they no longer retain the
+      // decoded SSE text in `flow.buffer` or pay frame/JSON parse cost.
       if (flow.attribution !== 'active') return
 
       flow.buffer += decoded
@@ -1176,7 +1200,11 @@ export class CodexResponsesAdapter {
       }
 
       case 'response.completed': {
-        if (!flow.responseId) return
+        this.hydrateResponseIdFromFrame(flow, parsed)
+        if (!flow.responseId) {
+          this.markFlowTerminal(flow)
+          return
+        }
         // Final usage is available on response.usage (mirrors
         // claude-code-headless's approach).
         const response = asRecord(parsed.response)
@@ -1229,7 +1257,11 @@ export class CodexResponsesAdapter {
       }
 
       case 'response.failed': {
-        if (!flow.responseId) return
+        this.hydrateResponseIdFromFrame(flow, parsed)
+        if (!flow.responseId) {
+          this.markFlowTerminal(flow)
+          return
+        }
         // Classify the upstream error. Port of codex-rs's
         // responses.rs:274-305 — same checks, same precedence, so a
         // renderer that branches on errorType sees identical semantics
@@ -1262,7 +1294,11 @@ export class CodexResponsesAdapter {
       }
 
       case 'response.incomplete': {
-        if (!flow.responseId) return
+        this.hydrateResponseIdFromFrame(flow, parsed)
+        if (!flow.responseId) {
+          this.markFlowTerminal(flow)
+          return
+        }
         // `incomplete_details.reason` is the upstream explanation:
         // `max_output_tokens`, `content_filter`, etc. codex-rs pulls
         // it at responses.rs:306-316. Surface via publishTurnStopped
