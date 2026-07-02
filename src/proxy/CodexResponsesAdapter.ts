@@ -399,6 +399,22 @@ export class CodexResponsesAdapter {
     this.activeFlowId = null
   }
 
+  private markFlowTerminal(flow: FlowState): void {
+    // WHY centralize terminal cleanup instead of only deleting flows on
+    // transport-level response-end: the Responses API has semantic terminal
+    // events (`completed`, `failed`, `incomplete`) that can arrive before the
+    // proxy observes socket closure, and in the recent heap incidents the
+    // socket closure path was exactly what lagged or went missing. Once a
+    // terminal SSE event lands, this flow must stop owning the active slot and
+    // must stop accepting late chunk bytes into `flow.buffer`; otherwise every
+    // follow-up request is demoted to secondary until the watchdog fires, and
+    // late trailers/keepalives can keep a dead flow alive under memory pressure.
+    if (this.activeFlowId === flow.flowId) {
+      this.activeFlowId = null
+    }
+    flow.attribution = 'completed'
+  }
+
   private onProxyEvent(ev: Record<string, unknown>): void {
     const kind = ev.kind
     // Only main `/responses` (the streaming SSE turn endpoint) produces
@@ -534,17 +550,15 @@ export class CodexResponsesAdapter {
       // contain them). Without this, a CRLF upstream emits zero
       // semantic events for an entire turn because `\n\n` never
       // appears in the buffer.
-      flow.buffer += flow.decoder.write(chunkEv.chunk).replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+      const decoded = flow.decoder.write(chunkEv.chunk).replace(/\r\n/g, '\n').replace(/\r/g, '\n')
       // Only the active flow feeds the semantic channel. Skip parsing
       // entirely for secondary flows — nothing downstream would look
       // at the parsed state, and the decode/frame/JSON.parse cost on
-      // retry bursts is real. We still write into flow.decoder above
-      // so the StringDecoder holds a consistent position if the flow
-      // were ever promoted later (defensive; today we never flip
-      // secondary → active).
-      if (flow.attribution === 'active') {
-        this.drainFrames(flow)
-      }
+      // retry bursts is real.
+      if (flow.attribution !== 'active') return
+
+      flow.buffer += decoded
+      this.drainFrames(flow)
       return
     }
 
@@ -1210,10 +1224,7 @@ export class CodexResponsesAdapter {
         // phase changes and no block/text events. Marking this flow
         // completed keeps any stray tail chunks from publishing while
         // allowing the next model turn to claim the active slot.
-        if (this.activeFlowId === flow.flowId) {
-          this.activeFlowId = null
-        }
-        flow.attribution = 'completed'
+        this.markFlowTerminal(flow)
         return
       }
 
@@ -1246,6 +1257,7 @@ export class CodexResponsesAdapter {
         // API failure tears down the turn; pending tools are moot
         // because the failure happened before we could send results.
         this.publishPhase(flow, 'idle')
+        this.markFlowTerminal(flow)
         return
       }
 
@@ -1274,6 +1286,7 @@ export class CodexResponsesAdapter {
         // Incomplete response (max_output_tokens / content_filter /
         // etc.). Turn is done, no tools to wait on.
         this.publishPhase(flow, 'idle')
+        this.markFlowTerminal(flow)
         return
       }
 
