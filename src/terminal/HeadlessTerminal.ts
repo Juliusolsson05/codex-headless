@@ -393,6 +393,45 @@ export class HeadlessTerminal extends EventEmitter {
 
   // ---------------------------------------------------------------------------
 
+  // ---------------------------------------------------------------------------
+  //
+  // KNOWN ISSUE: the 'screen' event can stall under synchronized output
+  //
+  // (Back-ported from claude-code-headless's copy of this file, where the
+  // bug was discovered and documented — the two copies had drifted and this
+  // operational knowledge was lost here. See agent-code#394 §8.)
+  //
+  // TUIs that use the synchronized-output protocol wrap redraws in
+  // `\x1b[?2026h … \x1b[?2026l` so the terminal renders the new frame
+  // atomically. `@xterm/headless` parses those sequences correctly into
+  // the buffer, but its `write(data, cb)` callback timing is influenced
+  // by them: under sustained sync-output pressure the per-chunk callbacks
+  // can land in a way that leaves `pendingWrites` > 0 indefinitely, so
+  // `scheduleFlush()` is never re-armed and consumers stop receiving
+  // 'screen' events even though the buffer is being updated correctly.
+  //
+  // This was discovered against Claude Code's TUI (see the paste-submit
+  // reproduction harness at Agent Code's
+  // `vendor/in_progress/paste-submit-repro/`), but the mechanism lives in
+  // the shared pendingWrites/write-callback pattern below, which this
+  // copy shares byte-for-byte — Codex's TUI also emits synchronized
+  // output, so the same stall is possible here.
+  //
+  // What this means for consumers:
+  //   * If you only need a periodic snapshot for diagnostics or parsing,
+  //     prefer a fixed-interval poll of `snapshotPlain()` /
+  //     `snapshotMarkdown()` over subscribing to 'screen'.
+  //   * If you DO subscribe to 'screen' for low-latency reaction, you
+  //     MUST also have a wall-clock timeout fallback because the event
+  //     may never fire in this session.
+  //
+  // A real fix would be either: drop the pendingWrites counter and
+  // schedule a flush on every `pty.onData` (cheap, more events but no
+  // stalls); or replace the @xterm/headless callback mechanism with our
+  // own write→parse barrier.
+  //
+  // ---------------------------------------------------------------------------
+
   private scheduleFlush(): void {
     if (this.flushPending) return
     this.flushPending = true
