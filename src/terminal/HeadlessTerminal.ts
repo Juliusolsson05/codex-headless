@@ -58,7 +58,21 @@ export type HeadlessTerminalOptions = {
   cols?: number
   /** Terminal rows. Default 40. */
   rows?: number
-  /** Throttle interval in ms for screen snapshots. Default 16 (~60Hz). */
+  /** Throttle interval in ms for screen snapshots. Default 100 (~10Hz).
+   *
+   *  WHY 100 and not the old 16 (~60Hz): the 'screen' event is a
+   *  monitoring/parsing surface, not a display path — the real
+   *  terminal pane renders from raw PTY data in the consumer. Every
+   *  snapshot builds four buffer serializations (two of which are
+   *  per-cell JS walks over ~200 rows, see terminalToMarkdown) and
+   *  triggers every downstream parser + IPC forward. At 16ms with ~10
+   *  concurrent live sessions this allocated hundreds of MB/s of
+   *  garbage in Agent Code's main process; the resulting V8 major-GC
+   *  storm pinned ~80% CPU with the heap oscillating 46MB↔1.2GB
+   *  (agent-code#390). Nothing that consumes 'screen' needs better
+   *  than ~10Hz: picker/trust/permission detection, activity status,
+   *  and streaming-card extraction are all human-timescale, and
+   *  paste-confirmation waits have multi-second timeouts. */
   snapshotIntervalMs?: number
 }
 
@@ -217,11 +231,17 @@ export class HeadlessTerminal extends EventEmitter {
   // dispose() call and accumulate over the process lifetime.
   private ptyDataDisposable: { dispose: () => void } | null = null
   private ptyExitDisposable: { dispose: () => void } | null = null
+  // Last emitted snapshot text, kept so scheduleFlush() can skip the
+  // whole emit when nothing the consumer can see has changed. See the
+  // WHY block inside scheduleFlush(). A few KB retained per session —
+  // negligible next to the churn it prevents.
+  private lastEmittedPlain: string | null = null
+  private lastEmittedRecent: string | null = null
 
   constructor(options: HeadlessTerminalOptions) {
     super()
     this.pty = options.pty
-    this.snapshotIntervalMs = options.snapshotIntervalMs ?? 16
+    this.snapshotIntervalMs = options.snapshotIntervalMs ?? 100
 
     const cols = options.cols ?? 120
     const rows = options.rows ?? 40
@@ -379,10 +399,49 @@ export class HeadlessTerminal extends EventEmitter {
     this.flushTimer = setTimeout(() => {
       this.flushPending = false
       this.flushTimer = null
+      // Change gate: build only the two CHEAP serializations first
+      // (translateToString is native xterm code) and bail before the
+      // expensive work when the text is identical to what we last
+      // emitted.
+      //
+      // WHY this exists: agent TUIs redraw their composer/spinner
+      // chrome continuously while "working", so PTY data flows — and
+      // re-arms this flush — even when the visible text is unchanged
+      // frame after frame. Before this gate, every such frame paid
+      // for two per-cell markdown walks (terminalToMarkdown over
+      // viewport + ~200 recent rows), the downstream parsers, the
+      // event emissions, and an IPC forward of four strings. With ~10
+      // live sessions that was the dominant allocation source in
+      // Agent Code's main process (GC storm, agent-code#390). The
+      // renderer already had a bail-out for identical frames; gating
+      // here means main stops paying to produce frames the renderer
+      // was discarding anyway.
+      //
+      // WHY compare BOTH plain and recent: plain is viewport-only. A
+      // program spewing identical lines can scroll new content into
+      // scrollback while the viewport text stays byte-identical;
+      // comparing `recent` (last ~200 rows) too keeps the streaming
+      // extractors' window honest. If all 200 recent rows are
+      // byte-identical, the extractors would see identical input
+      // anyway, so skipping is safe by construction.
+      //
+      // KNOWN TRADEOFF: attribute-only changes (e.g. a cell flips
+      // bold with identical characters) no longer produce a snapshot,
+      // because both gate strings are attribute-blind. Every current
+      // consumer keys off text content or reads the live grid via
+      // getTerminal(), so nothing observable regresses; revisit if a
+      // consumer ever needs attribute-driven cadence.
+      const plain = this.snapshotPlain()
+      const recent = this.snapshotRecent()
+      if (plain === this.lastEmittedPlain && recent === this.lastEmittedRecent) {
+        return
+      }
+      this.lastEmittedPlain = plain
+      this.lastEmittedRecent = recent
       this.emit('screen', {
-        plain: this.snapshotPlain(),
+        plain,
         markdown: this.snapshotMarkdown(),
-        recent: this.snapshotRecent(),
+        recent,
         recentMarkdown: this.snapshotRecentMarkdown(),
       })
     }, this.snapshotIntervalMs)
