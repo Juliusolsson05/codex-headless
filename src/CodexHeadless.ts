@@ -107,7 +107,9 @@ export type CodexHeadlessOptions = {
   cols?: number
   /** Terminal rows. Default 40. */
   rows?: number
-  /** Throttle interval for screen snapshots in ms. Default 16. */
+  /** Throttle interval for screen snapshots in ms. Defaults to
+   *  HeadlessTerminal's default (100ms — see the WHY on
+   *  HeadlessTerminalOptions.snapshotIntervalMs; agent-code#390). */
   snapshotIntervalMs?: number
   /** If set, tail the existing rollout file by thread ID instead of
    *  waiting for a new one. Used for resume flows. */
@@ -388,7 +390,12 @@ export class CodexHeadless extends EventEmitter {
       pty: options.pty,
       cols: options.cols ?? 120,
       rows: options.rows ?? 40,
-      snapshotIntervalMs: options.snapshotIntervalMs ?? 16,
+      // Pass through undefined so HeadlessTerminal owns the default.
+      // Keeping a second `?? <n>` here would mean two places must
+      // agree for a default change to take effect — exactly the kind
+      // of silent shadowing that would undo the 60Hz→10Hz fix
+      // (agent-code#390) the next time someone edits only one of them.
+      snapshotIntervalMs: options.snapshotIntervalMs,
     })
 
     // Proxy / rollout ownership claims on the authoritative channel.

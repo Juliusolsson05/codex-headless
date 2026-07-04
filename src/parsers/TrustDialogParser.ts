@@ -38,7 +38,8 @@ const REQUIRED_MARKERS = [
  *
  * Returns { visible: true, workspace, options } when the dialog is
  * on screen, { visible: false } otherwise. Called on every screen
- * frame (~10Hz in the debugger, ~60Hz in production), so it needs
+ * frame (up to ~10Hz per session, and only on changed frames since
+ * the change gate in HeadlessTerminal.scheduleFlush), so it needs
  * to be cheap — early return on first missing marker.
  */
 export function detectCodexTrustDialog(screen: string): CodexTrustDialogState {
