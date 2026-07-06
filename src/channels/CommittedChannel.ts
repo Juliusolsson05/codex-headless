@@ -35,7 +35,19 @@ export type CommittedChannelEvents = {
   response_item: [CommittedResponseItemEvent]
   session_meta: [CommittedSessionMetaEvent]
   rollout_line: [CommittedRolloutLineEvent]
-  error: [Error]
+  // WHY not 'error':
+  //   Node's EventEmitter treats the literal event name 'error'
+  //   specially — if no listener is attached, the emitter throws
+  //   synchronously and crashes the process. Consumers who only
+  //   care about turn_committed / rollout_line would bring down the
+  //   host the first time a rollout read failed. Renamed to
+  //   'tail_error' so missing listeners stay harmless.
+  //   (Back-port of the same fix in claude-code-headless's
+  //   CommittedChannel — the copies had drifted, and this package
+  //   kept the crash-prone name with zero subscribers anywhere,
+  //   meaning any publishError() call was a guaranteed process
+  //   crash. See agent-code#394 §8 on copy-drift.)
+  tail_error: [Error]
 }
 
 export interface CommittedChannel {
@@ -127,6 +139,6 @@ export class CommittedChannel extends EventEmitter {
   }
 
   publishError(err: Error): void {
-    this.emit('error', err)
+    this.emit('tail_error', err)
   }
 }

@@ -59,6 +59,14 @@ class FileTailer<T> {
   // starts to show up as "typing feels sluggish" when submit →
   // feed-update takes noticeable wall time.
   private static readonly POLL_INTERVAL_MS = 100
+  // Resume bootstrap intentionally reads a bounded tail slice instead
+  // of the whole rollout. The goal is "show the recent context and
+  // start following new appends", not "hydrate a megabyte-scale
+  // historical archive before first paint". 512 KB is large enough to
+  // hold the last few hundred normal JSONL lines even when some tool
+  // outputs are chunky, while still capping startup cost.
+  // (Doc back-ported from claude-code-headless's copy — the rationale
+  // was written there after this file was forked. agent-code#394 §8.)
   private static readonly BOOTSTRAP_TAIL_BYTES = 512 * 1024
   private reading = false
   private pendingRead = false
@@ -68,6 +76,15 @@ class FileTailer<T> {
     private readonly onEntry: (entry: T) => void,
     private readonly onError?: (err: Error) => void,
     options?: {
+      /**
+       * When set, do NOT replay the whole file from byte 0 on startup.
+       * Instead, synchronously parse only the most recent N complete
+       * JSONL lines, then begin tailing from EOF for future appends.
+       *
+       * Used by resume flows so long rollouts open at the current end
+       * of the conversation instead of making the renderer watch
+       * thousands of historical entries stream by.
+       */
       bootstrapTailLines?: number
     },
   ) {
