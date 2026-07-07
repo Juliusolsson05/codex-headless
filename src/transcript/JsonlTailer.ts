@@ -7,6 +7,7 @@ import {
   statSync,
   unwatchFile,
   watchFile,
+  type Stats,
 } from 'fs'
 import { mkdir, readdir } from 'fs/promises'
 import { basename } from 'path'
@@ -49,7 +50,7 @@ import { basename } from 'path'
  * queued. This guarantees strict serialization with zero unbounded
  * queuing and zero concurrency.
  */
-class FileTailer<T> {
+export class FileTailer<T> {
   private offset = 0
   private buffer = ''
   private closed = false
@@ -59,6 +60,9 @@ class FileTailer<T> {
   // starts to show up as "typing feels sluggish" when submit →
   // feed-update takes noticeable wall time.
   private static readonly POLL_INTERVAL_MS = 100
+  // Stall watchdog window. 15s is ~150 missed polls — unambiguous death,
+  // never a slow disk. Cheap: one stat per window per tailer.
+  private static readonly WATCHDOG_MS = 15_000
   // Resume bootstrap intentionally reads a bounded tail slice instead
   // of the whole rollout. The goal is "show the recent context and
   // start following new appends", not "hydrate a megabyte-scale
@@ -70,6 +74,23 @@ class FileTailer<T> {
   private static readonly BOOTSTRAP_TAIL_BYTES = 512 * 1024
   private reading = false
   private pendingRead = false
+  /**
+   * The stat listener MUST be stored and passed to unwatchFile on close.
+   * WHY: `unwatchFile(path)` with no listener removes EVERY stat-watcher
+   * for that path in the whole process (Node semantics). agent-code's
+   * replaceSession spawns the new session before killing the old one, and
+   * on an in-place resume both tail the SAME rollout file — so the old
+   * session's close was deterministically killing the new pane's watcher.
+   * That was the root cause of the "dead committed channel" / "prompt
+   * stuck in queue" bug family (agent-code residue plan 2026-07, P0):
+   * prompts landed in the rollout 12ms after submit and were never
+   * ingested because this tail was dead.
+   */
+  private statListener: ((curr: Stats, prev: Stats) => void) | null = null
+  /** Wall-clock of the last successful readNew kick — feeds the stall
+   *  watchdog below. */
+  private lastPollAt = Date.now()
+  private watchdog: ReturnType<typeof setInterval> | null = null
 
   constructor(
     private readonly filePath: string,
@@ -86,6 +107,12 @@ class FileTailer<T> {
        * thousands of historical entries stream by.
        */
       bootstrapTailLines?: number
+      /**
+       * Stall-watchdog window override. Production default (15s) is
+       * unambiguous watcher death; tests shrink it so the self-heal
+       * path is exercisable in milliseconds. 0/undefined = default.
+       */
+      watchdogMs?: number
     },
   ) {
     const bootstrapTailLines = options?.bootstrapTailLines ?? 0
@@ -99,21 +126,53 @@ class FileTailer<T> {
       this.readNew()
     }
 
+    this.statListener = (curr, prev) => {
+      if (this.closed) return
+      this.lastPollAt = Date.now()
+      // Only act when the file has actually grown or its mtime
+      // moved. stat returns size=0 when the file briefly
+      // disappears (rare, but happens on some atomic-rename
+      // writers); we let the next tick pick it back up.
+      if (curr.size <= prev.size && curr.mtimeMs === prev.mtimeMs) {
+        return
+      }
+      this.readNew()
+    }
     watchFile(
       filePath,
       { interval: FileTailer.POLL_INTERVAL_MS, persistent: true },
-      (curr, prev) => {
-        if (this.closed) return
-        // Only act when the file has actually grown or its mtime
-        // moved. stat returns size=0 when the file briefly
-        // disappears (rare, but happens on some atomic-rename
-        // writers); we let the next tick pick it back up.
-        if (curr.size <= prev.size && curr.mtimeMs === prev.mtimeMs) {
-          return
-        }
-        this.readNew()
-      },
+      this.statListener,
     )
+
+    // Stall watchdog: if the file has grown past our offset but the stat
+    // watcher hasn't ticked in a whole watchdog window, the watcher is
+    // dead (the historical cause: another FileTailer on the same path
+    // closed with an unscoped unwatchFile — fixed above, but ANY future
+    // watcher-death recurrence self-heals here instead of silently
+    // killing the committed channel). Re-arm and surface a diagnostic so
+    // debug bundles show the event instead of an unexplained stale tail.
+    const watchdogMs = options?.watchdogMs || FileTailer.WATCHDOG_MS
+    this.watchdog = setInterval(() => {
+      if (this.closed || this.statListener === null) return
+      if (Date.now() - this.lastPollAt < watchdogMs) return
+      let size = 0
+      try {
+        size = statSync(this.filePath).size
+      } catch {
+        return // file briefly missing — next tick
+      }
+      if (size <= this.offset) return
+      unwatchFile(this.filePath, this.statListener)
+      watchFile(
+        this.filePath,
+        { interval: FileTailer.POLL_INTERVAL_MS, persistent: true },
+        this.statListener,
+      )
+      this.onError?.(new Error('tail-stalled: stat watcher dead with unread data; re-armed'))
+      this.readNew()
+    }, watchdogMs)
+    // Never hold the process open just for the watchdog.
+    this.watchdog.unref?.()
   }
 
   private bootstrapTail(maxLines: number): void {
@@ -253,7 +312,13 @@ class FileTailer<T> {
 
   async close(): Promise<void> {
     this.closed = true
-    unwatchFile(this.filePath)
+    if (this.watchdog !== null) clearInterval(this.watchdog)
+    // Scoped unwatch — see statListener's WHY. Passing the listener is
+    // the entire fix; do not "simplify" back to unwatchFile(path).
+    if (this.statListener !== null) {
+      unwatchFile(this.filePath, this.statListener)
+      this.statListener = null
+    }
   }
 }
 
