@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, unwatchFile, writeFileSync } from 'fs'
+import { appendFileSync, mkdtempSync, renameSync, truncateSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -42,7 +42,7 @@ afterEach(async () => {
   while (openTailers.length > 0) await openTailers.pop()?.close()
 })
 
-describe('FileTailer scoped unwatch', () => {
+describe('FileTailer polling ownership', () => {
   it('a second tailer on the same path survives the first one closing', async () => {
     const file = makeFile()
     const seenByB: number[] = []
@@ -59,26 +59,39 @@ describe('FileTailer scoped unwatch', () => {
     expect(seenByB).toContain(1)
   })
 
-  it('watchdog self-heals a murdered watcher and surfaces a diagnostic', async () => {
+  it('delivers an append made immediately after construction exactly once', async () => {
     const file = makeFile()
     const seen: number[] = []
-    const diagnostics: string[] = []
-    tail(file, seen, 200, e => diagnostics.push(e.message))
-
-    // Let construction's initial read and its post-watch reconciliation become idle. Killing the
-    // watcher before that handoff finishes does not model a dead established watcher: the queued
-    // reconciliation can legitimately observe the append without needing watchdog recovery.
-    expect(await waitFor(() => seen.includes(0), 1000)).toBe(true)
-    await new Promise(r => setTimeout(r, 250))
-
-    // Simulate the legacy bug class from a third party: strip EVERY
-    // watcher on the path (this is exactly what the unscoped
-    // unwatchFile(path) used to do to innocent tailers).
-    unwatchFile(file)
+    tail(file, seen)
     appendFileSync(file, JSON.stringify({ seq: 1 }) + '\n')
 
-    // The stat watcher is dead, so only the watchdog can deliver this.
-    expect(await waitFor(() => seen.includes(1), 3000)).toBe(true)
-    expect(diagnostics.some(m => m.includes('tail-stalled'))).toBe(true)
+    expect(await waitFor(() => seen.includes(1), 1000)).toBe(true)
+    expect(seen.filter(seq => seq === 1)).toHaveLength(1)
+  })
+
+  it('restarts from byte zero after truncate-in-place and atomic replacement', async () => {
+    const file = makeFile()
+    const seen: number[] = []
+    tail(file, seen)
+    expect(await waitFor(() => seen.includes(0), 1000)).toBe(true)
+
+    truncateSync(file, 0)
+    appendFileSync(file, JSON.stringify({ seq: 1 }) + '\n')
+    expect(await waitFor(() => seen.includes(1), 1000)).toBe(true)
+
+    const replacement = `${file}.replacement`
+    writeFileSync(replacement, JSON.stringify({ seq: 2 }) + '\n')
+    renameSync(replacement, file)
+    expect(await waitFor(() => seen.includes(2), 1000)).toBe(true)
+  })
+
+  it('does not emit callbacks after close resolves', async () => {
+    const file = makeFile()
+    const seen: number[] = []
+    const watcher = tail(file, seen)
+    await watcher.close()
+    appendFileSync(file, JSON.stringify({ seq: 1 }) + '\n')
+    await new Promise(r => setTimeout(r, 250))
+    expect(seen).not.toContain(1)
   })
 })

@@ -2,12 +2,11 @@ import { watch } from 'chokidar'
 import {
   closeSync,
   createReadStream,
+  fstatSync,
   openSync,
   readSync,
   statSync,
-  unwatchFile,
-  watchFile,
-  type Stats,
+  type ReadStream,
 } from 'fs'
 import { mkdir, readdir } from 'fs/promises'
 import { basename } from 'path'
@@ -18,12 +17,12 @@ import { basename } from 'path'
 /**
  * Watches a single JSONL file and emits parsed objects line-by-line as the
  * file grows. Append-only: it remembers a byte offset and reads everything
- * past it on the tick of a polling-based stat watcher.
+ * past it on the tick of a private polling timer.
  *
  * Partial trailing lines are buffered until the next read brings the
  * terminating newline.
  *
- * Why fs.watchFile (poll) instead of chokidar's fs.watch path:
+ * Why a private stat poll instead of chokidar/fs.watchFile:
  *   chokidar on macOS defaults to fs.watch-based change detection for
  *   single files, which is known to silently miss rapid appends from
  *   non-editor writers (append-only files that don't atomic-rename).
@@ -32,8 +31,10 @@ import { basename } from 'path'
  *   feed wouldn't update until some unrelated later write nudged
  *   chokidar into re-reading. "The prompt didn't appear."
  *
- *   fs.watchFile polls stat() on an interval and fires whenever
- *   size/mtime changes. At 100ms interval the latency is imperceptible
+ *   A direct timer polls stat() on an interval. Unlike fs.watchFile it has
+ *   no hidden first-baseline registration phase, so an append during startup
+ *   cannot become the baseline and disappear until a watchdog fires. At
+ *   100ms interval the latency is imperceptible
  *   (~half a human reaction time), the CPU cost is trivial (one stat
  *   call every 100ms per tailer), and it's reliable on every fs/OS
  *   combination because it doesn't rely on kernel event delivery.
@@ -60,9 +61,6 @@ export class FileTailer<T> {
   // starts to show up as "typing feels sluggish" when submit →
   // feed-update takes noticeable wall time.
   private static readonly POLL_INTERVAL_MS = 100
-  // Stall watchdog window. 15s is ~150 missed polls — unambiguous death,
-  // never a slow disk. Cheap: one stat per window per tailer.
-  private static readonly WATCHDOG_MS = 15_000
   // Resume bootstrap intentionally reads a bounded tail slice instead
   // of the whole rollout. The goal is "show the recent context and
   // start following new appends", not "hydrate a megabyte-scale
@@ -74,23 +72,11 @@ export class FileTailer<T> {
   private static readonly BOOTSTRAP_TAIL_BYTES = 512 * 1024
   private reading = false
   private pendingRead = false
-  /**
-   * The stat listener MUST be stored and passed to unwatchFile on close.
-   * WHY: `unwatchFile(path)` with no listener removes EVERY stat-watcher
-   * for that path in the whole process (Node semantics). agent-code's
-   * replaceSession spawns the new session before killing the old one, and
-   * on an in-place resume both tail the SAME rollout file — so the old
-   * session's close was deterministically killing the new pane's watcher.
-   * That was the root cause of the "dead committed channel" / "prompt
-   * stuck in queue" bug family (agent-code residue plan 2026-07, P0):
-   * prompts landed in the rollout 12ms after submit and were never
-   * ingested because this tail was dead.
-   */
-  private statListener: ((curr: Stats, prev: Stats) => void) | null = null
-  /** Wall-clock of the last successful readNew kick — feeds the stall
-   *  watchdog below. */
-  private lastPollAt = Date.now()
-  private watchdog: ReturnType<typeof setInterval> | null = null
+  private poller: ReturnType<typeof setInterval> | null = null
+  private fileIdentity: string | null = null
+  private fileCtimeMs: number | null = null
+  private activeStream: ReadStream | null = null
+  private activeRead: Promise<void> | null = null
 
   constructor(
     private readonly filePath: string,
@@ -107,11 +93,7 @@ export class FileTailer<T> {
        * thousands of historical entries stream by.
        */
       bootstrapTailLines?: number
-      /**
-       * Stall-watchdog window override. Production default (15s) is
-       * unambiguous watcher death; tests shrink it so the self-heal
-       * path is exercisable in milliseconds. 0/undefined = default.
-       */
+      /** @deprecated Direct private polling no longer needs a watcher-stall watchdog. */
       watchdogMs?: number
     },
   ) {
@@ -121,66 +103,15 @@ export class FileTailer<T> {
     } else {
       // Begin reading whatever is already in the file during construction —
       // CC often writes several entries before the watcher would tick. The
-      // stream itself is asynchronous; the post-watch reconciliation below
-      // is what makes its handoff to polling race-free.
+      // stream itself is asynchronous; serialized timer ticks reconcile any
+      // append that lands while that initial stream is in flight.
       this.readNew()
     }
-
-    this.statListener = (curr, prev) => {
-      if (this.closed) return
-      this.lastPollAt = Date.now()
-      // Only act when the file has actually grown or its mtime
-      // moved. stat returns size=0 when the file briefly
-      // disappears (rare, but happens on some atomic-rename
-      // writers); we let the next tick pick it back up.
-      if (curr.size <= prev.size && curr.mtimeMs === prev.mtimeMs) {
-        return
-      }
-      this.readNew()
-    }
-    watchFile(
-      filePath,
-      { interval: FileTailer.POLL_INTERVAL_MS, persistent: true },
-      this.statListener,
-    )
-    // WHY reconcile once after registering the watcher: the initial read above is asynchronous
-    // despite its historical comment. A writer can append after that read captures stat.size but
-    // before watchFile establishes its first comparison baseline. In that narrow window the stream
-    // stops at the old size and the watcher treats the new size as its starting point, so neither
-    // path reports the append until the 15-second watchdog. A second serialized read bridges the
-    // handoff: it becomes pending while bootstrap I/O is active and observes the latest EOF when
-    // that read completes. Once this reconciliation drains, normal stat polling owns future growth.
-    this.readNew()
-
-    // Stall watchdog: if the file has grown past our offset but the stat
-    // watcher hasn't ticked in a whole watchdog window, the watcher is
-    // dead (the historical cause: another FileTailer on the same path
-    // closed with an unscoped unwatchFile — fixed above, but ANY future
-    // watcher-death recurrence self-heals here instead of silently
-    // killing the committed channel). Re-arm and surface a diagnostic so
-    // debug bundles show the event instead of an unexplained stale tail.
-    const watchdogMs = options?.watchdogMs || FileTailer.WATCHDOG_MS
-    this.watchdog = setInterval(() => {
-      if (this.closed || this.statListener === null) return
-      if (Date.now() - this.lastPollAt < watchdogMs) return
-      let size = 0
-      try {
-        size = statSync(this.filePath).size
-      } catch {
-        return // file briefly missing — next tick
-      }
-      if (size <= this.offset) return
-      unwatchFile(this.filePath, this.statListener)
-      watchFile(
-        this.filePath,
-        { interval: FileTailer.POLL_INTERVAL_MS, persistent: true },
-        this.statListener,
-      )
-      this.onError?.(new Error('tail-stalled: stat watcher dead with unread data; re-armed'))
-      this.readNew()
-    }, watchdogMs)
-    // Never hold the process open just for the watchdog.
-    this.watchdog.unref?.()
+    // WHY each tailer owns its timer: closing one session can never unregister another session's
+    // observer for the same rollout path, and there is no watcher-baseline handoff in which a write
+    // can disappear. The read serializer coalesces ticks while disk I/O is active.
+    this.poller = setInterval(() => this.readNew(), FileTailer.POLL_INTERVAL_MS)
+    this.poller.unref?.()
   }
 
   private bootstrapTail(maxLines: number): void {
@@ -194,6 +125,8 @@ export class FileTailer<T> {
     }
     if (stat.size <= 0) {
       this.offset = 0
+      this.fileIdentity = `${stat.dev}:${stat.ino}`
+      this.fileCtimeMs = stat.ctimeMs
       return
     }
 
@@ -233,13 +166,15 @@ export class FileTailer<T> {
     for (const line of recent) {
       try {
         const obj = JSON.parse(line) as T
-        this.onEntry(obj)
+        this.emitEntry(obj)
       } catch (err) {
-        this.onError?.(err as Error)
+        this.emitError(err as Error)
       }
     }
 
     this.offset = stat.size
+    this.fileIdentity = `${stat.dev}:${stat.ino}`
+    this.fileCtimeMs = stat.ctimeMs
     this.buffer = ''
   }
 
@@ -254,16 +189,44 @@ export class FileTailer<T> {
     }
     this.reading = true
 
-    let stat: ReturnType<typeof statSync>
+    let fd: number | null = null
+    let stat: ReturnType<typeof fstatSync>
     try {
-      stat = statSync(this.filePath)
+      // Open before fstat and give that same descriptor to the stream. An atomic rename between a
+      // path stat and createReadStream would otherwise let offset/identity describe the old inode
+      // while bytes came from the replacement.
+      fd = openSync(this.filePath, 'r')
+      stat = fstatSync(fd)
     } catch {
+      if (fd !== null) {
+        try { closeSync(fd) } catch { /* best-effort */ }
+      }
       // File temporarily missing — atomic-rename writers do this.
       // Skip and wait for the next poll tick.
       this.reading = false
       return
     }
+    const identity = `${stat.dev}:${stat.ino}`
+    if (
+      this.fileIdentity !== null &&
+      (
+        identity !== this.fileIdentity ||
+        stat.size < this.offset ||
+        // truncate+rewrite can return to exactly the old byte length between two polls. ctime is
+        // the only remaining evidence that the inode's contents changed at a non-growing offset.
+        (stat.size === this.offset && this.fileCtimeMs !== null && stat.ctimeMs !== this.fileCtimeMs)
+      )
+    ) {
+      // Rollouts are usually append-only, but log rotation and truncate-in-place both occur in real
+      // tooling. Offsets belong to one inode generation; carrying either the byte position or an
+      // unterminated fragment into the next generation silently skips or corrupts its first event.
+      this.offset = 0
+      this.buffer = ''
+    }
+    this.fileIdentity = identity
+    this.fileCtimeMs = stat.ctimeMs
     if (stat.size <= this.offset) {
+      closeSync(fd)
       this.reading = false
       // If a re-run was queued while we were between the guard and
       // here, we still need to honor it even though this stat was a
@@ -276,16 +239,22 @@ export class FileTailer<T> {
     }
 
     const stream = createReadStream(this.filePath, {
+      fd,
+      autoClose: true,
       start: this.offset,
       end: stat.size - 1,
       encoding: 'utf8',
     })
+    this.activeStream = stream
+    let settleActiveRead!: () => void
+    this.activeRead = new Promise<void>((resolve) => { settleActiveRead = resolve })
 
     let chunk = ''
     stream.on('data', d => {
-      chunk += d
+      if (!this.closed) chunk += d
     })
     stream.on('end', () => {
+      if (this.closed) return
       this.offset = stat.size
       this.buffer += chunk
       const lines = this.buffer.split('\n')
@@ -296,44 +265,57 @@ export class FileTailer<T> {
         if (!trimmed) continue
         try {
           const obj = JSON.parse(trimmed) as T
-          this.onEntry(obj)
+          this.emitEntry(obj)
         } catch (err) {
-          this.onError?.(err as Error)
+          this.emitError(err as Error)
         }
-      }
-      this.reading = false
-      // Drain any queued re-run. This is the load-bearing bit for
-      // serialization: when a write lands while we were reading the
-      // previous chunk, the watcher sets pendingRead but can't do
-      // anything else because reading was true. Now that we're done,
-      // we kick off the next read ourselves.
-      if (this.pendingRead) {
-        this.pendingRead = false
-        this.readNew()
       }
     })
     stream.on('error', err => {
+      if (!this.closed) this.emitError(err)
+    })
+    stream.on('close', () => {
       this.reading = false
-      this.onError?.(err)
-      // A failed read must not consume the one queued reconciliation above. The next read may
-      // succeed after an atomic rename or transient filesystem error and is the only path that can
-      // close the watcher-registration gap without waiting for the watchdog.
-      if (this.pendingRead) {
+      this.activeStream = null
+      this.activeRead = null
+      settleActiveRead()
+      if (!this.closed && this.pendingRead) {
         this.pendingRead = false
         this.readNew()
       }
     })
   }
 
-  async close(): Promise<void> {
-    this.closed = true
-    if (this.watchdog !== null) clearInterval(this.watchdog)
-    // Scoped unwatch — see statListener's WHY. Passing the listener is
-    // the entire fix; do not "simplify" back to unwatchFile(path).
-    if (this.statListener !== null) {
-      unwatchFile(this.filePath, this.statListener)
-      this.statListener = null
+  private emitEntry(entry: T): void {
+    try {
+      this.onEntry(entry)
+    } catch (error) {
+      this.emitError(error as Error)
     }
+  }
+
+  private emitError(error: Error): void {
+    try {
+      this.onError?.(error)
+    } catch {
+      // Consumer diagnostics must not strand `reading=true`; tail ownership remains ours.
+    }
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) {
+      await this.activeRead
+      return
+    }
+    this.closed = true
+    if (this.poller !== null) clearInterval(this.poller)
+    this.poller = null
+    const activeRead = this.activeRead
+    this.activeStream?.destroy()
+    // WHY close awaits the stream boundary: callers replace sessions by closing the old tailer and
+    // then trusting that no old callback can mutate the new session. Merely destroying the stream
+    // schedules close asynchronously and leaves a post-close callback race.
+    await activeRead
   }
 }
 
