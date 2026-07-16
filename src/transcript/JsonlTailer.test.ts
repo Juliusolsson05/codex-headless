@@ -65,6 +65,12 @@ describe('FileTailer scoped unwatch', () => {
     const diagnostics: string[] = []
     tail(file, seen, 200, e => diagnostics.push(e.message))
 
+    // Let construction's initial read and its post-watch reconciliation become idle. Killing the
+    // watcher before that handoff finishes does not model a dead established watcher: the queued
+    // reconciliation can legitimately observe the append without needing watchdog recovery.
+    expect(await waitFor(() => seen.includes(0), 1000)).toBe(true)
+    await new Promise(r => setTimeout(r, 250))
+
     // Simulate the legacy bug class from a third party: strip EVERY
     // watcher on the path (this is exactly what the unscoped
     // unwatchFile(path) used to do to innocent tailers).

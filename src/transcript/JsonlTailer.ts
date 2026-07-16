@@ -119,10 +119,10 @@ export class FileTailer<T> {
     if (bootstrapTailLines > 0) {
       this.bootstrapTail(bootstrapTailLines)
     } else {
-      // Read whatever is already in the file synchronously on
-      // construct — CC often writes several entries before the watcher
-      // would tick. This gives us a clean baseline offset before the
-      // poll loop starts.
+      // Begin reading whatever is already in the file during construction —
+      // CC often writes several entries before the watcher would tick. The
+      // stream itself is asynchronous; the post-watch reconciliation below
+      // is what makes its handoff to polling race-free.
       this.readNew()
     }
 
@@ -143,6 +143,14 @@ export class FileTailer<T> {
       { interval: FileTailer.POLL_INTERVAL_MS, persistent: true },
       this.statListener,
     )
+    // WHY reconcile once after registering the watcher: the initial read above is asynchronous
+    // despite its historical comment. A writer can append after that read captures stat.size but
+    // before watchFile establishes its first comparison baseline. In that narrow window the stream
+    // stops at the old size and the watcher treats the new size as its starting point, so neither
+    // path reports the append until the 15-second watchdog. A second serialized read bridges the
+    // handoff: it becomes pending while bootstrap I/O is active and observes the latest EOF when
+    // that read completes. Once this reconciliation drains, normal stat polling owns future growth.
+    this.readNew()
 
     // Stall watchdog: if the file has grown past our offset but the stat
     // watcher hasn't ticked in a whole watchdog window, the watcher is
@@ -307,6 +315,13 @@ export class FileTailer<T> {
     stream.on('error', err => {
       this.reading = false
       this.onError?.(err)
+      // A failed read must not consume the one queued reconciliation above. The next read may
+      // succeed after an atomic rename or transient filesystem error and is the only path that can
+      // close the watcher-registration gap without waiting for the watchdog.
+      if (this.pendingRead) {
+        this.pendingRead = false
+        this.readNew()
+      }
     })
   }
 
