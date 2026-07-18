@@ -1,0 +1,15 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    uses: Juliusolsson05/agent-code/.github/workflows/reusable-package-ci.yml@292f2db0693426e3df3159353def04469a726a8e
+    with:
+      node-versions: '["20.19.0", "24"]'

@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, renameSync, truncateSync, writeFileSync } from 'fs'
+import { appendFileSync, mkdtempSync, renameSync, rmSync, truncateSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -16,9 +16,12 @@ import { FileTailer } from './JsonlTailer.js'
 // were in the rollout 12ms after submit and never ingested.
 
 const openTailers: FileTailer<unknown>[] = []
+const temporaryDirectories: string[] = []
 
 function makeFile(): string {
-  const file = join(mkdtempSync(join(tmpdir(), 'tailer-test-')), 'rollout.jsonl')
+  const directory = mkdtempSync(join(tmpdir(), 'tailer-test-'))
+  temporaryDirectories.push(directory)
+  const file = join(directory, 'rollout.jsonl')
   writeFileSync(file, JSON.stringify({ seq: 0 }) + '\n')
   return file
 }
@@ -39,7 +42,16 @@ async function waitFor(pred: () => boolean, ms: number): Promise<boolean> {
 }
 
 afterEach(async () => {
-  while (openTailers.length > 0) await openTailers.pop()?.close()
+  try {
+    while (openTailers.length > 0) await openTailers.pop()?.close()
+  } finally {
+    // WHY cleanup is in finally rather than after close(): a watcher failure
+    // is exactly the scenario these tests exercise. Leaving the fixture behind
+    // when close throws makes later files depend on the order Vitest chose.
+    while (temporaryDirectories.length > 0) {
+      rmSync(temporaryDirectories.pop()!, { recursive: true, force: true })
+    }
+  }
 })
 
 describe('FileTailer polling ownership', () => {

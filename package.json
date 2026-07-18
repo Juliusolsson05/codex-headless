@@ -1,20 +1,31 @@
 {
   "name": "codex-headless",
   "version": "0.1.0",
-  "description": "Programmatically control OpenAI Codex through a headless terminal \u2014 structured JSON events, automated commands, async streaming API",
+  "description": "Programmatically control OpenAI Codex through a headless terminal — structured JSON events, automated commands, async streaming API",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist"
   ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
-    "build": "tsc",
-    "test:fresh-rollout-claim": "tsx scripts/test-fresh-rollout-claim.ts",
-    "test:resume-fork-candidate": "tsx scripts/test-resume-fork-candidate.ts",
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test:fresh-rollout-claim": "vitest run src/transcript/RolloutOwnership.system.test.ts -t fresh",
+    "test:resume-fork-candidate": "vitest run src/transcript/RolloutOwnership.system.test.ts -t resume",
     "debugger": "electron src/debugger/main.mjs",
     "upstream:check": "node scripts/check-upstream.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:core": "vitest run --project core",
+    "test:system": "vitest run --project system",
+    "test:live": "vitest run --config vitest.live.config.ts --passWithNoTests",
+    "test:coverage": "vitest run --coverage",
+    "test:package": "npm run build && node scripts/test-package.mjs",
+    "test:contract": "node scripts/check-test-contract.mjs",
+    "check": "npm run test:contract && npm run typecheck && npm test && npm run test:package"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -27,6 +38,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "electron": "^31.0.0",
     "tsx": "^4.21.0",
     "typescript": "^5.5.0",
