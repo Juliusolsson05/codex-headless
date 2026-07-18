@@ -14,8 +14,8 @@
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test:fresh-rollout-claim": "vitest run src/transcript/RolloutOwnership.system.test.ts -t fresh",
-    "test:resume-fork-candidate": "vitest run src/transcript/RolloutOwnership.system.test.ts -t resume",
+    "test:fresh-rollout-claim": "vitest run src/transcript/RolloutOwnership.test.ts -t fresh",
+    "test:resume-fork-candidate": "vitest run src/transcript/RolloutOwnership.test.ts -t resumed",
     "debugger": "electron src/debugger/main.mjs",
     "upstream:check": "node scripts/check-upstream.mjs",
     "test": "vitest run",

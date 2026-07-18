@@ -1,0 +1,17 @@
+name: Release package
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# WHY releases are tag-only: merging source proves readiness but must never
+# create a public artifact or choose a version on the maintainer's behalf.
+# The shared workflow additionally requires this tag to equal package.json's
+# version before it will attach the verified tarball to a GitHub Release.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: Juliusolsson05/agent-code/.github/workflows/reusable-package-release.yml@04071925e234eb9ec76f0b9c3a4daec58710e551
