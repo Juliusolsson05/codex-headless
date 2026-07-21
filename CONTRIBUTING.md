@@ -24,8 +24,8 @@ npm install
 npm run build
 ```
 
-`npm run build` runs `tsc`. `npm run debugger` launches a standalone
-Electron app for inspecting a live or recorded session.
+`npm run build` runs `tsc`. `npm run check` is the full gate CI runs:
+test contract, typecheck, tests, and a packaged-artifact check.
 
 ## Branch workflow
 
@@ -60,14 +60,24 @@ body.
 
 ## Testing
 
-There is currently no committed test suite. A record/replay harness used
-to live in `src/testing/`; it was removed because it was never fully
-thought through, and is preserved on the `archive/testing-harness`
-branch. A considered test setup is planned.
+`npm run check` is the gate — it runs the test contract, `tsc --noEmit`,
+the vitest suites, and a packaged-artifact check. Individual projects:
+`npm run test:core`, `npm run test:system`, `npm run test:live`.
 
-Until then, verify changes by hand against a real `codex` session — the
-`npm run debugger` app is the fastest way to do that — and describe in
-the PR exactly what you exercised.
+(An older record/replay harness lived in `src/testing/`; it was removed
+as never fully thought through and is preserved on the
+`archive/testing-harness` branch. Don't resurrect it without reading why
+it went.)
+
+For wire-shape work, capture against a real `codex` session using Agent
+Code's recorder — `src/main/recording/` plus
+`scripts/extract-rendering-recordings.mjs` in the agent-code repo — and
+describe in the PR exactly what you exercised. This package used to ship
+its own Electron debugger app for that; it was removed once the app's
+recorder became the capture path for every provider, and pulling a
+~100 MB Electron binary into three CI install jobs to serve one local
+tool stopped being worth it. Reach for the app's recorder, not a second
+capture stack here.
 
 ## Reporting bugs
 

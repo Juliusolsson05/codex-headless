@@ -16,7 +16,6 @@
     "typecheck": "tsc --noEmit",
     "test:fresh-rollout-claim": "vitest run src/transcript/RolloutOwnership.test.ts -t fresh",
     "test:resume-fork-candidate": "vitest run src/transcript/RolloutOwnership.test.ts -t resumed",
-    "debugger": "electron src/debugger/main.mjs",
     "upstream:check": "node scripts/check-upstream.mjs",
     "test": "vitest run",
     "test:core": "vitest run --project core",
@@ -39,7 +38,6 @@
   "devDependencies": {
     "@types/node": "^20.19.43",
     "@vitest/coverage-v8": "^4.1.10",
-    "electron": "^39.8.10",
     "tsx": "^4.23.1",
     "typescript": "^5.5.0",
     "undici-types": "^6.27.0",
