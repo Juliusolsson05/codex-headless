@@ -3,7 +3,9 @@
 // Derived from two sources:
 //   1. codex-rs/protocol/src/protocol.rs — the Rust enum definitions
 //      (RolloutItem, EventMsg, ResponseItem) are the source of truth
-//   2. Real rollout files captured via the debugger recording
+//   2. Real rollout files, originally captured with this package's own
+//      Electron debugger app (since removed — capture now goes through
+//      Agent Code's recorder, src/main/recording/ in that repo)
 //
 // The on-disk format is:
 //   { "timestamp": "<ISO 8601>", "type": "<tag>", "payload": {...} }

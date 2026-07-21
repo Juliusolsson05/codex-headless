@@ -136,7 +136,10 @@ const CODEX_ESC_HINT_RE = /esc to interrupt/
 // that…"), and including them silently ate streaming assistant blocks
 // — the card stayed blank during long replies even though the text
 // was on screen. Only list verbs that Codex's TUI actually emits as
-// tool-call chrome in recordings under codex-headless/recordings/*.
+// tool-call chrome in captured session recordings. (These were taken
+// with the old in-repo Electron debugger, whose output landed in
+// codex-headless/recordings/*; that tool is gone, so re-check this list
+// against a fresh capture from Agent Code's recorder, not that path.)
 const CODEX_TOOL_CALL_VERBS = [
   'Ran ',
   'Explored',

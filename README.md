@@ -147,7 +147,6 @@ src/
   parsers/            Pure-function TUI parsers (activity, approval, trust)
   proxy/              Plain-HTTP Responses proxy + Responses-API SSE adapter
   transcript/         Rollout JSONL tailing, session discovery, types
-  debugger/           Standalone Electron debugger app
 ```
 
 ## Status
