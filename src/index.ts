@@ -69,6 +69,7 @@ export {
 export {
   detectCodexTrustDialog,
   CODEX_TRUST_DIALOG_ACCEPT_KEYS,
+  CODEX_TRUST_DIALOG_DECLINE_KEYS,
   type CodexTrustDialogState,
 } from './parsers/TrustDialogParser.js'
 
