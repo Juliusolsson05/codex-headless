@@ -1,5 +1,6 @@
 import {
   CODEX_TRUST_DIALOG_ACCEPT_KEYS,
+  CODEX_TRUST_DIALOG_DECLINE_KEYS,
   type CodexTrustDialogState,
 } from '../parsers/TrustDialogParser.js'
 import { defineModule } from './core/contract.js'
@@ -26,13 +27,19 @@ import type { CodexConditionInputs, CodexTrustDialogCondition } from './types.js
 // the old freshness without re-typing the literals at the call site.
 //
 // `readonly` marks the template as not-for-mutation; the per-call clone is what
-// callers receive and may freely own. The accept keystroke is sourced from the
-// parser (CODEX_TRUST_DIALOG_ACCEPT_KEYS) so the keystroke contract with the
-// real Codex TUI lives in one place; the reject keystroke '2\r' is the literal
-// "Quit" menu-index keystroke.
+// callers receive and may freely own. BOTH keystrokes are now sourced from the
+// parser so the contract with the real Codex TUI lives in exactly one place.
+//
+// The bytes changed here, deliberately, and the "byte-for-byte wire contract"
+// note above no longer holds for this literal. Accept was '\r' (confirm
+// whatever is HIGHLIGHTED) and is now '1' (select "Yes, continue"
+// unconditionally); reject was '2\r' and is now '2', because upstream acts on
+// the digit immediately and the trailing Enter leaked into the next screen.
+// Both were verified against a live codex-cli 0.145.0 dialog. See the parser
+// for the full rationale.
 const TRUST_DIALOG_ACTIONS: readonly ConditionAction[] = [
   { kind: 'pty', id: 'accept', label: 'Trust folder', data: CODEX_TRUST_DIALOG_ACCEPT_KEYS },
-  { kind: 'pty', id: 'reject', label: 'Quit', data: '2\r' },
+  { kind: 'pty', id: 'reject', label: 'Quit', data: CODEX_TRUST_DIALOG_DECLINE_KEYS },
 ]
 
 // trustDialogModule — the headless-module form of the trust-dialog condition.
