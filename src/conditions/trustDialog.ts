@@ -9,10 +9,17 @@ import type { CodexConditionInputs, CodexTrustDialogCondition } from './types.js
 
 // The trust-dialog action TEMPLATE. This holds the action DATA only — every
 // `actions()` call clones it into a FRESH array of FRESH objects (see the module
-// below). The exact ids/labels/keystrokes/order here are a wire contract: the
-// migration is byte-for-byte (verified out-of-band by a throwaway byte-for-byte
-// comparison of the OLD and NEW serialized snapshots — not committed, per the
-// repo's no-committed-tests policy), so nothing in this literal may change.
+// below).
+//
+// The ids/labels/order are a wire contract and must not change casually. The
+// KEYSTROKES were also frozen on that basis, and that was wrong: they were
+// simply incorrect, and a frozen-bytes rule that preserves a bug is not a
+// contract worth keeping. They changed here deliberately, verified against a
+// live codex-cli 0.145.0 dialog — see the parser for the full rationale and
+// the commit for the blast-radius assessment (effectively nil: the remote
+// path matches actions against the live snapshot it just broadcast, and the
+// phone echoes back the action object it received rather than composing
+// bytes).
 //
 // WHY fresh-per-call and not just return this array directly.
 // The conditions-core isolation contract says an emitted snapshot's `actions`

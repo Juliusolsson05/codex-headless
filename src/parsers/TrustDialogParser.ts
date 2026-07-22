@@ -51,6 +51,16 @@ export type CodexTrustDialogState = {
 // already be broken today. Anchor on the stable question opener only.
 // Live-verified at 120/80/60/50 columns: these anchors survive wrapping,
 // because the paragraph wraps AFTER the opening phrase.
+//
+// The floor, measured rather than assumed: detection holds down to 46
+// columns and FAILS at 44, where the 44-character question phrase itself
+// wraps and this whole-screen substring test can no longer see it. It also
+// fails at rows <= 7, where the option rows clip off the bottom of the
+// viewport while the dialog is live and blocking. Both limits are inherited
+// from the previous implementation, not introduced here — the old marker
+// list failed at exactly the same widths — but they are real, so they are
+// written down instead of implied. Fixing them means matching on reflowed
+// text and reading beyond the viewport, which is a larger change than this.
 
 const QUESTION_RE = /Do you trust the contents of this directory/
 const YOU_ARE_IN_RE = /^\s*>\s*You are in\s+(.+?)\s*$/
