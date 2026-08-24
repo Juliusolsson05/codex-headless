@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "id": "concurrent-01491-alpha",
+  "provenance": {
+    "sourceBasename": "rollout-2026-08-24T12-01-07-01a03525-d640-7cf1-a3e6-af95f41483d7.jsonl",
+    "sourceSha256": "978b12a6d963f1f77e25fab4db57582ab6e188b076b2ffed356af9f28d344515",
+    "sessionRecordingId": "b50629c3-f4e3-438a-a765-08d8392fadce",
+    "cliVersion": "0.149.1",
+    "sessionClass": "fresh",
+    "originalLineCount": 14,
+    "userObservationCount": 2,
+    "originalUserObservations": [
+      {
+        "source": "response_item",
+        "originalLineIndex": 5,
+        "token": "RECORDED_CONCURRENT_01491_ALPHA_USER_1",
+        "characterCount": 2636
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 8,
+        "token": "RECORDED_CONCURRENT_01491_ALPHA_USER_2",
+        "characterCount": 566
+      }
+    ],
+    "transformation": "ownership-projection-v1"
+  },
+  "ownership": {
+    "localPromptToken": "RECORDED_CONCURRENT_01491_ALPHA_USER_2",
+    "expectedLegacyDecision": "hold",
+    "expectedTargetDecision": "accept",
+    "note": "Controlled Agent Code MCP sibling alpha, launched concurrently in the same CWD with a distinct prompt."
+  },
+  "lines": [
+    {
+      "timestamp": "2026-08-24T19:01:07.607Z",
+      "type": "session_meta",
+      "payload": {
+        "id": "recorded-thread-concurrent-01491-alpha",
+        "timestamp": "2026-08-24T19:01:07.607Z",
+        "cwd": "/recorded/worktree",
+        "originator": "codex-tui",
+        "cli_version": "0.149.1",
+        "source": "cli"
+      },
+      "_recordedLineIndex": 0
+    },
+    {
+      "timestamp": "2026-08-24T19:01:08.503Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "RECORDED_CONCURRENT_01491_ALPHA_USER_1"
+          }
+        ]
+      },
+      "_recordedLineIndex": 5
+    },
+    {
+      "timestamp": "2026-08-24T19:01:08.504Z",
+      "type": "turn_context",
+      "payload": {
+        "cwd": "/recorded/worktree"
+      },
+      "_recordedLineIndex": 7
+    },
+    {
+      "timestamp": "2026-08-24T19:01:08.519Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "RECORDED_CONCURRENT_01491_ALPHA_USER_2"
+          }
+        ]
+      },
+      "_recordedLineIndex": 8
+    }
+  ]
+}

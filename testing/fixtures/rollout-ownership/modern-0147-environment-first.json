@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "id": "modern-0147-environment-first",
+  "provenance": {
+    "sourceBasename": "rollout-2026-08-14T00-21-27-019ffd37-4c86-7e82-b81b-a93a1498a859.jsonl",
+    "sourceSha256": "a0013ad2d28774bb379e2fc2ef9fcbb41681788d1610953ddeee468cbe27f390",
+    "sessionRecordingId": null,
+    "cliVersion": "0.147.0",
+    "sessionClass": "fresh",
+    "originalLineCount": 45,
+    "userObservationCount": 2,
+    "originalUserObservations": [
+      {
+        "source": "response_item",
+        "originalLineIndex": 5,
+        "token": "RECORDED_MODERN_0147_ENVIRONMENT_FIRST_USER_1",
+        "characterCount": 475
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 8,
+        "token": "RECORDED_MODERN_0147_ENVIRONMENT_FIRST_USER_2",
+        "characterCount": 459
+      }
+    ],
+    "transformation": "ownership-projection-v1"
+  },
+  "ownership": {
+    "localPromptToken": "RECORDED_MODERN_0147_ENVIRONMENT_FIRST_USER_2",
+    "expectedLegacyDecision": "hold",
+    "expectedTargetDecision": "accept",
+    "note": "First captured version with no event_msg.user_message; injected environment context precedes the submitted prompt."
+  },
+  "lines": [
+    {
+      "timestamp": "2026-08-13T22:22:21.920Z",
+      "type": "session_meta",
+      "payload": {
+        "id": "recorded-thread-modern-0147-environment-first",
+        "timestamp": "2026-08-13T22:22:21.920Z",
+        "cwd": "/recorded/worktree",
+        "originator": "codex-tui",
+        "cli_version": "0.147.0",
+        "source": "cli"
+      },
+      "_recordedLineIndex": 0
+    },
+    {
+      "timestamp": "2026-08-13T22:22:22.275Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "RECORDED_MODERN_0147_ENVIRONMENT_FIRST_USER_1"
+          }
+        ]
+      },
+      "_recordedLineIndex": 5
+    },
+    {
+      "timestamp": "2026-08-13T22:22:22.278Z",
+      "type": "turn_context",
+      "payload": {
+        "cwd": "/recorded/worktree"
+      },
+      "_recordedLineIndex": 7
+    },
+    {
+      "timestamp": "2026-08-13T22:22:22.287Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "RECORDED_MODERN_0147_ENVIRONMENT_FIRST_USER_2"
+          }
+        ]
+      },
+      "_recordedLineIndex": 8
+    }
+  ]
+}

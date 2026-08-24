@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "id": "legacy-0145-event-user",
+  "provenance": {
+    "sourceBasename": "rollout-2026-07-23T18-39-26-019f8fd8-9f5b-7670-9282-513721a42591.jsonl",
+    "sourceSha256": "c18b592ae2f03cf51e40c2d199476d24669812880128fa60bea0f1875fb27aa3",
+    "sessionRecordingId": null,
+    "cliVersion": "0.145.0",
+    "sessionClass": "fresh",
+    "originalLineCount": 95,
+    "userObservationCount": 3,
+    "originalUserObservations": [
+      {
+        "source": "response_item",
+        "originalLineIndex": 5,
+        "token": "RECORDED_LEGACY_0145_EVENT_USER_USER_1",
+        "characterCount": 2630
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 8,
+        "token": "RECORDED_LEGACY_0145_EVENT_USER_USER_2",
+        "characterCount": 1263
+      },
+      {
+        "source": "event_msg",
+        "originalLineIndex": 9,
+        "token": "RECORDED_LEGACY_0145_EVENT_USER_USER_2",
+        "characterCount": 1263
+      }
+    ],
+    "transformation": "ownership-projection-v1"
+  },
+  "ownership": {
+    "localPromptToken": "RECORDED_LEGACY_0145_EVENT_USER_USER_2",
+    "expectedLegacyDecision": "accept",
+    "expectedTargetDecision": "accept",
+    "note": "Legacy Codex emits the submitted prompt as both response_item and event_msg.user_message; the event message made the old projection work."
+  },
+  "lines": [
+    {
+      "timestamp": "2026-07-23T16:39:26.712Z",
+      "type": "session_meta",
+      "payload": {
+        "id": "recorded-thread-legacy-0145-event-user",
+        "timestamp": "2026-07-23T16:39:26.712Z",
+        "cwd": "/recorded/worktree",
+        "originator": "codex-tui",
+        "cli_version": "0.145.0",
+        "source": "cli"
+      },
+      "_recordedLineIndex": 0
+    },
+    {
+      "timestamp": "2026-07-23T16:39:26.718Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "RECORDED_LEGACY_0145_EVENT_USER_USER_1"
+          }
+        ]
+      },
+      "_recordedLineIndex": 5
+    },
+    {
+      "timestamp": "2026-07-23T16:39:26.718Z",
+      "type": "turn_context",
+      "payload": {
+        "cwd": "/recorded/worktree"
+      },
+      "_recordedLineIndex": 7
+    },
+    {
+      "timestamp": "2026-07-23T16:39:26.724Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "RECORDED_LEGACY_0145_EVENT_USER_USER_2"
+          }
+        ]
+      },
+      "_recordedLineIndex": 8
+    },
+    {
+      "timestamp": "2026-07-23T16:39:26.724Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "user_message",
+        "message": "RECORDED_LEGACY_0145_EVENT_USER_USER_2"
+      },
+      "_recordedLineIndex": 9
+    }
+  ]
+}

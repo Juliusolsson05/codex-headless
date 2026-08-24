@@ -1,0 +1,240 @@
+{
+  "schemaVersion": 1,
+  "id": "modern-0149-large-bootstrap-first",
+  "provenance": {
+    "sourceBasename": "rollout-2026-08-23T16-51-39-01a03109-780e-7633-b173-5f88ca54d8a6.jsonl",
+    "sourceSha256": "47983f887b5a763a834c719ea01c3fa7d9e3ed9ef1905b90cef6414e2c1afcdd",
+    "sessionRecordingId": "dc734595-6426-4e49-bede-a07bd9651ca1",
+    "cliVersion": "0.149.0",
+    "sessionClass": "fresh",
+    "originalLineCount": 1077,
+    "userObservationCount": 7,
+    "originalUserObservations": [
+      {
+        "source": "response_item",
+        "originalLineIndex": 5,
+        "token": "RECORDED_MODERN_0149_LARGE_BOOTSTRAP_FIRST_USER_1",
+        "characterCount": 426
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 8,
+        "token": "RECORDED_MODERN_0149_LARGE_BOOTSTRAP_FIRST_USER_2",
+        "characterCount": 27159
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 155,
+        "token": "RECORDED_MODERN_0149_LARGE_BOOTSTRAP_FIRST_USER_3",
+        "characterCount": 67
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 397,
+        "token": "RECORDED_MODERN_0149_LARGE_BOOTSTRAP_FIRST_USER_4",
+        "characterCount": 120
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 506,
+        "token": "RECORDED_MODERN_0149_LARGE_BOOTSTRAP_FIRST_USER_5",
+        "characterCount": 21861
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 1062,
+        "token": "RECORDED_MODERN_0149_LARGE_BOOTSTRAP_FIRST_USER_6",
+        "characterCount": 481
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 1065,
+        "token": "RECORDED_MODERN_0149_LARGE_BOOTSTRAP_FIRST_USER_7",
+        "characterCount": 48
+      }
+    ],
+    "transformation": "ownership-projection-v1"
+  },
+  "ownership": {
+    "localPromptToken": "RECORDED_MODERN_0149_LARGE_BOOTSTRAP_FIRST_USER_2",
+    "expectedLegacyDecision": "hold",
+    "expectedTargetDecision": "accept",
+    "note": "Failed fresh Agent Code session with a large second role-user entry and zero committed session jsonl entries."
+  },
+  "lines": [
+    {
+      "timestamp": "2026-08-23T23:52:13.447Z",
+      "type": "session_meta",
+      "payload": {
+        "id": "recorded-thread-modern-0149-large-bootstrap-first",
+        "timestamp": "2026-08-23T23:52:13.447Z",
+        "cwd": "/recorded/worktree",
+        "originator": "codex-tui",
+        "cli_version": "0.149.0",
+        "source": "cli"
+      },
+      "_recordedLineIndex": 0
+    },
+    {
+      "timestamp": "2026-08-23T23:52:13.704Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "RECORDED_MODERN_0149_LARGE_BOOTSTRAP_FIRST_USER_1"
+          }
+        ]
+      },
+      "_recordedLineIndex": 5
+    },
+    {
+      "timestamp": "2026-08-23T23:52:13.705Z",
+      "type": "turn_context",
+      "payload": {
+        "cwd": "/recorded/worktree"
+      },
+      "_recordedLineIndex": 7
+    },
+    {
+      "timestamp": "2026-08-23T23:52:13.724Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "RECORDED_MODERN_0149_LARGE_BOOTSTRAP_FIRST_USER_2"
+          }
+        ]
+      },
+      "_recordedLineIndex": 8
+    },
+    {
+      "timestamp": "2026-08-23T23:54:51.647Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "RECORDED_MODERN_0149_LARGE_BOOTSTRAP_FIRST_USER_3"
+          }
+        ]
+      },
+      "_recordedLineIndex": 155
+    },
+    {
+      "timestamp": "2026-08-23T23:58:35.435Z",
+      "type": "turn_context",
+      "payload": {
+        "cwd": "/recorded/worktree"
+      },
+      "_recordedLineIndex": 237
+    },
+    {
+      "timestamp": "2026-08-24T00:09:19.591Z",
+      "type": "turn_context",
+      "payload": {
+        "cwd": "/recorded/worktree"
+      },
+      "_recordedLineIndex": 396
+    },
+    {
+      "timestamp": "2026-08-24T00:09:19.609Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "RECORDED_MODERN_0149_LARGE_BOOTSTRAP_FIRST_USER_4"
+          }
+        ]
+      },
+      "_recordedLineIndex": 397
+    },
+    {
+      "timestamp": "2026-08-24T00:15:18.731Z",
+      "type": "turn_context",
+      "payload": {
+        "cwd": "/recorded/worktree"
+      },
+      "_recordedLineIndex": 505
+    },
+    {
+      "timestamp": "2026-08-24T00:15:18.744Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "RECORDED_MODERN_0149_LARGE_BOOTSTRAP_FIRST_USER_5"
+          }
+        ]
+      },
+      "_recordedLineIndex": 506
+    },
+    {
+      "timestamp": "2026-08-24T00:19:02.442Z",
+      "type": "turn_context",
+      "payload": {
+        "cwd": "/recorded/worktree"
+      },
+      "_recordedLineIndex": 633
+    },
+    {
+      "timestamp": "2026-08-24T00:25:32.980Z",
+      "type": "turn_context",
+      "payload": {
+        "cwd": "/recorded/worktree"
+      },
+      "_recordedLineIndex": 884
+    },
+    {
+      "timestamp": "2026-08-24T17:41:18.364Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "RECORDED_MODERN_0149_LARGE_BOOTSTRAP_FIRST_USER_6"
+          }
+        ]
+      },
+      "_recordedLineIndex": 1062
+    },
+    {
+      "timestamp": "2026-08-24T17:41:18.368Z",
+      "type": "turn_context",
+      "payload": {
+        "cwd": "/recorded/worktree"
+      },
+      "_recordedLineIndex": 1064
+    },
+    {
+      "timestamp": "2026-08-24T17:41:18.416Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "RECORDED_MODERN_0149_LARGE_BOOTSTRAP_FIRST_USER_7"
+          }
+        ]
+      },
+      "_recordedLineIndex": 1065
+    }
+  ]
+}

@@ -1,0 +1,174 @@
+{
+  "schemaVersion": 1,
+  "id": "subagent-0149-exact-attachment",
+  "provenance": {
+    "sourceBasename": "rollout-2026-08-23T12-36-14-01a0301f-a116-7e71-bd1a-d5598fe80157.jsonl",
+    "sourceSha256": "b2920108163ddc9af1baae526852f9d8602468903fd28dd98fba825f68cfebc7",
+    "sessionRecordingId": "1e53c93f-a9fa-4ea8-bb6f-888e9c9b8482",
+    "cliVersion": "0.149.0",
+    "sessionClass": "subagent",
+    "originalLineCount": 600,
+    "userObservationCount": 4,
+    "originalUserObservations": [
+      {
+        "source": "response_item",
+        "originalLineIndex": 1,
+        "token": "RECORDED_SUBAGENT_0149_EXACT_ATTACHMENT_USER_1",
+        "characterCount": 40
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 5,
+        "token": "RECORDED_SUBAGENT_0149_EXACT_ATTACHMENT_USER_2",
+        "characterCount": 84
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 9,
+        "token": "RECORDED_SUBAGENT_0149_EXACT_ATTACHMENT_USER_3",
+        "characterCount": 1895
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 15,
+        "token": "RECORDED_SUBAGENT_0149_EXACT_ATTACHMENT_USER_4",
+        "characterCount": 5909
+      }
+    ],
+    "transformation": "ownership-projection-v1"
+  },
+  "ownership": {
+    "localPromptToken": null,
+    "expectedLegacyDecision": "not-applicable",
+    "expectedTargetDecision": "not-applicable",
+    "note": "Working Codex 0.149 subagent attached by exact provider identity; guards the non-fresh ownership path."
+  },
+  "lines": [
+    {
+      "timestamp": "2026-08-23T19:36:14.396Z",
+      "type": "session_meta",
+      "payload": {
+        "id": "recorded-thread-subagent-0149-exact-attachment",
+        "timestamp": "2026-08-23T19:36:14.396Z",
+        "cwd": "/recorded/worktree",
+        "originator": "codex-tui",
+        "cli_version": "0.149.0",
+        "source": {
+          "subagent": {
+            "thread_spawn": {
+              "parent_thread_id": "recorded-parent-thread",
+              "depth": 1,
+              "agent_path": "/recorded/agent",
+              "agent_nickname": "recorded-agent",
+              "agent_role": null
+            }
+          }
+        },
+        "forked_from_id": "recorded-parent-thread",
+        "agent_nickname": "recorded-agent",
+        "agent_path": "/recorded/agent"
+      },
+      "_recordedLineIndex": 0
+    },
+    {
+      "timestamp": "2026-08-23T19:36:14.396Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "RECORDED_SUBAGENT_0149_EXACT_ATTACHMENT_USER_1"
+          }
+        ]
+      },
+      "_recordedLineIndex": 1
+    },
+    {
+      "timestamp": "2026-08-23T19:36:14.396Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "RECORDED_SUBAGENT_0149_EXACT_ATTACHMENT_USER_2"
+          }
+        ]
+      },
+      "_recordedLineIndex": 5
+    },
+    {
+      "timestamp": "2026-08-23T19:36:14.396Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "RECORDED_SUBAGENT_0149_EXACT_ATTACHMENT_USER_3"
+          }
+        ]
+      },
+      "_recordedLineIndex": 9
+    },
+    {
+      "timestamp": "2026-08-23T19:36:14.892Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "RECORDED_SUBAGENT_0149_EXACT_ATTACHMENT_USER_4"
+          }
+        ]
+      },
+      "_recordedLineIndex": 15
+    },
+    {
+      "timestamp": "2026-08-23T19:36:14.896Z",
+      "type": "turn_context",
+      "payload": {
+        "cwd": "/recorded/worktree"
+      },
+      "_recordedLineIndex": 17
+    },
+    {
+      "timestamp": "2026-08-23T19:44:41.273Z",
+      "type": "turn_context",
+      "payload": {
+        "cwd": "/recorded/worktree"
+      },
+      "_recordedLineIndex": 275
+    },
+    {
+      "timestamp": "2026-08-23T20:30:12.242Z",
+      "type": "turn_context",
+      "payload": {
+        "cwd": "/recorded/worktree"
+      },
+      "_recordedLineIndex": 293
+    },
+    {
+      "timestamp": "2026-08-23T20:39:10.701Z",
+      "type": "turn_context",
+      "payload": {
+        "cwd": "/recorded/worktree"
+      },
+      "_recordedLineIndex": 319
+    },
+    {
+      "timestamp": "2026-08-23T20:46:30.843Z",
+      "type": "turn_context",
+      "payload": {
+        "cwd": "/recorded/worktree"
+      },
+      "_recordedLineIndex": 565
+    }
+  ]
+}
