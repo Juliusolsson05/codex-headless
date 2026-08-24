@@ -113,6 +113,62 @@ describe('recorded fresh rollout ownership corpus', () => {
     })
   })
 
+  it('returns to hold when the later recorded ownership evidence is removed or changed', () => {
+    const fixture = loadFixture('modern-0149-agents-first')
+    const prompt = promptFromFixture(fixture)
+    const candidate = candidateFromFixture(fixture)
+    const withoutMatch = {
+      ...candidate,
+      userMessages: candidate.userMessages.filter(
+        message => message.normalized !== prompt.normalized,
+      ),
+    }
+    const withChangedMatch = {
+      ...candidate,
+      userMessages: candidate.userMessages.map(message =>
+        message.normalized === prompt.normalized
+          ? {
+              ...message,
+              text: `${message.text}_CHANGED`,
+              normalized: `${message.normalized}_CHANGED`,
+            }
+          : message,
+      ),
+    }
+
+    expect(decide(fixture, [withoutMatch])).toMatchObject({ type: 'hold' })
+    expect(decide(fixture, [withChangedMatch])).toMatchObject({ type: 'hold' })
+  })
+
+  it('fails closed when both recorded sibling candidates carry the same local prompt', () => {
+    const alpha = loadFixture('concurrent-01491-alpha')
+    const beta = loadFixture('concurrent-01491-beta')
+    const alphaPrompt = promptFromFixture(alpha)
+    const betaPrompt = promptFromFixture(beta)
+    const alphaCandidate = candidateFromFixture(alpha)
+    const betaCandidate = candidateFromFixture(beta)
+    const collidingBeta = {
+      ...betaCandidate,
+      userMessages: betaCandidate.userMessages.map(message =>
+        message.normalized === betaPrompt.normalized
+          ? {
+              ...message,
+              text: alphaPrompt.text,
+              normalized: alphaPrompt.normalized,
+            }
+          : message,
+      ),
+    }
+
+    expect(decide(alpha, [alphaCandidate, collidingBeta])).toMatchObject({
+      type: 'ambiguous',
+      filePaths: [
+        '/recorded/concurrent-01491-alpha.jsonl',
+        '/recorded/concurrent-01491-beta.jsonl',
+      ],
+    })
+  })
+
   it('diagnoses the later real match without exposing recorded text', () => {
     const fixture = loadFixture('modern-0149-agents-first')
     const candidate = candidateFromFixture(fixture)

@@ -266,9 +266,21 @@ export function decideFreshRolloutClaim(options: {
     prompt: SubmittedPrompt
   }> = []
   for (const candidate of sameCwd) {
-    if (!candidate.normalizedFirstUserMessage) continue
+    // WHY ownership searches every durable user observation instead of trying
+    // to identify and skip bootstrap messages: current Codex serializes
+    // injected AGENTS/environment context as ordinary role-user response items
+    // before the actual prompt, and that bootstrap vocabulary is not a stable
+    // protocol. Exact equality with a prompt written through THIS PTY is the
+    // positive ownership proof. We still collapse to one match per candidate,
+    // so duplicated event_msg/response_item representations of a legacy prompt
+    // cannot manufacture ambiguity within one rollout.
+    const observedUserMessages = new Set(
+      candidate.userMessages
+        .map(message => message.normalized)
+        .filter(normalized => normalized.length > 0),
+    )
     const prompt = prompts.find(
-      item => item.normalized === candidate.normalizedFirstUserMessage,
+      item => observedUserMessages.has(item.normalized),
     )
     if (prompt) matches.push({ candidate, prompt })
   }
@@ -276,7 +288,7 @@ export function decideFreshRolloutClaim(options: {
   if (matches.length === 0) {
     return {
       type: 'hold',
-      reason: 'same-cwd candidates exist but none match a local submitted prompt',
+      reason: 'same-cwd candidates exist but no durable user observation matches a local submitted prompt',
     }
   }
 

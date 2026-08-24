@@ -257,9 +257,10 @@ export class CodexHeadless extends EventEmitter {
   // same first JSONL and then permanently capture the sibling's
   // provider id. The prompt bytes are one of the few signals that are
   // private to THIS headless instance, so the fresh tailer requires a
-  // candidate rollout's first real user message to match a prompt that
-  // passed through this instance before it starts tailing committed
-  // transcript lines.
+  // candidate rollout to contain a durable user observation matching a prompt
+  // that passed through this instance before it starts tailing committed
+  // transcript lines. We deliberately do not assume the first role-user item
+  // is real input: Codex 0.147+ writes injected startup context first.
   private submittedPrompts: SubmittedPrompt[] = []
   private freshRolloutCandidates = new Map<string, FreshRolloutCandidate>()
   private freshRolloutClaimTask: Promise<void> = Promise.resolve()
