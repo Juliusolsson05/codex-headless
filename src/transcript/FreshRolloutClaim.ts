@@ -22,8 +22,45 @@ export type FreshRolloutCandidate = {
   filePath: string
   threadId: string | null
   cwd: string | null
+  cliVersion: string | null
+  userMessages: FreshRolloutUserMessage[]
+  /**
+   * WHY this legacy projection remains during the instrumentation stage:
+   * Stage 0 must make the failed decision observable without changing it. The
+   * claimant therefore continues to compare exactly the value it compared
+   * before, while `userMessages` records the complete ordered evidence that
+   * later fixture stages will use to replace this lossy projection.
+   */
   firstUserMessage: string | null
   normalizedFirstUserMessage: string | null
+}
+
+export type FreshRolloutUserMessage = {
+  source: 'event_msg' | 'response_item'
+  lineIndex: number
+  text: string
+  normalized: string
+}
+
+export type FreshRolloutClaimEvidenceSnapshot = {
+  localPromptCount: number
+  localPromptFingerprints: string[]
+  candidateCount: number
+  sameCwdCandidateCount: number
+  candidates: Array<{
+    filePath: string
+    threadId: string | null
+    cliVersion: string | null
+    cwdMatches: boolean
+    selectedLegacyFingerprint: string | null
+    userMessages: Array<{
+      source: FreshRolloutUserMessage['source']
+      lineIndex: number
+      fingerprint: string
+      matchesLocalPrompt: boolean
+      selectedByLegacyProjection: boolean
+    }>
+  }>
 }
 
 export type FreshRolloutClaimDecision =
@@ -73,8 +110,9 @@ export function parseFreshRolloutCandidate(
   let turnContextCwd: string | null = null
   let eventUserText: string | null = null
   let replayUserText: string | null = null
+  const userMessages: FreshRolloutUserMessage[] = []
 
-  for (const rawLine of text.split('\n')) {
+  for (const [lineIndex, rawLine] of text.split('\n').entries()) {
     const trimmed = rawLine.trim()
     if (!trimmed) continue
     let parsed: CodexRolloutLine
@@ -97,13 +135,33 @@ export function parseFreshRolloutCandidate(
       continue
     }
 
-    if (isCodexEventMsg(parsed) && !eventUserText) {
-      eventUserText = extractEventUserMessageText(parsed)
+    if (isCodexEventMsg(parsed)) {
+      const userText = extractEventUserMessageText(parsed)
+      if (userText !== null) {
+        const normalized = normalizePromptForOwnership(userText)
+        userMessages.push({
+          source: 'event_msg',
+          lineIndex,
+          text: userText,
+          normalized,
+        })
+        if (!eventUserText) eventUserText = userText
+      }
       continue
     }
 
-    if (isCodexResponseItem(parsed) && !replayUserText) {
-      replayUserText = extractReplayUserMessageText(parsed.payload)
+    if (isCodexResponseItem(parsed)) {
+      const userText = extractReplayUserMessageText(parsed.payload)
+      if (userText !== null) {
+        const normalized = normalizePromptForOwnership(userText)
+        userMessages.push({
+          source: 'response_item',
+          lineIndex,
+          text: userText,
+          normalized,
+        })
+        if (!replayUserText) replayUserText = userText
+      }
     }
   }
 
@@ -114,10 +172,62 @@ export function parseFreshRolloutCandidate(
     filePath,
     threadId: sessionMeta?.id ?? null,
     cwd: cwd ?? null,
+    cliVersion: sessionMeta?.cli_version ?? null,
+    userMessages,
     firstUserMessage: firstUserMessage ?? null,
     normalizedFirstUserMessage: firstUserMessage
       ? normalizePromptForOwnership(firstUserMessage)
       : null,
+  }
+}
+
+export function summarizeFreshRolloutClaimEvidence(options: {
+  ownCwd: string
+  prompts: readonly SubmittedPrompt[]
+  candidates: Iterable<FreshRolloutCandidate>
+  normalizeCwd: (cwd: string) => string
+  fingerprint: (normalizedText: string) => string
+}): FreshRolloutClaimEvidenceSnapshot {
+  const ownCwd = options.normalizeCwd(options.ownCwd)
+  const candidates = Array.from(options.candidates)
+  const localPromptFingerprints = options.prompts
+    .filter(prompt => prompt.normalized.length > 0)
+    .map(prompt => options.fingerprint(prompt.normalized))
+  const localPrompts = new Set(options.prompts.map(prompt => prompt.normalized))
+
+  // WHY diagnostics describe every ordered user observation instead of only
+  // the claimant's projection: the 0.149 regression is invisible if telemetry
+  // repeats the same lossy "first user message" assumption as the decision.
+  // Equality is reported through a per-process salted fingerprint so bundles
+  // reveal the ownership relationship without adding prompt/bootstrap text.
+  const described = candidates.map(candidate => {
+    const cwdMatches = candidate.cwd !== null &&
+      options.normalizeCwd(candidate.cwd) === ownCwd
+    return {
+      filePath: candidate.filePath,
+      threadId: candidate.threadId,
+      cliVersion: candidate.cliVersion,
+      cwdMatches,
+      selectedLegacyFingerprint: candidate.normalizedFirstUserMessage
+        ? options.fingerprint(candidate.normalizedFirstUserMessage)
+        : null,
+      userMessages: candidate.userMessages.map(message => ({
+        source: message.source,
+        lineIndex: message.lineIndex,
+        fingerprint: options.fingerprint(message.normalized),
+        matchesLocalPrompt: localPrompts.has(message.normalized),
+        selectedByLegacyProjection:
+          message.normalized === candidate.normalizedFirstUserMessage,
+      })),
+    }
+  })
+
+  return {
+    localPromptCount: localPromptFingerprints.length,
+    localPromptFingerprints,
+    candidateCount: candidates.length,
+    sameCwdCandidateCount: described.filter(candidate => candidate.cwdMatches).length,
+    candidates: described,
   }
 }
 

@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events'
+import { createHmac, randomBytes } from 'crypto'
 import type { IPty } from 'node-pty'
 import { mkdir, readdir, readFile, stat } from 'fs/promises'
 import { realpathSync } from 'fs'
@@ -15,7 +16,9 @@ import {
   extractSubmittedPromptFromWrite,
   normalizePromptForOwnership,
   parseFreshRolloutCandidate,
+  summarizeFreshRolloutClaimEvidence,
   type FreshRolloutCandidate,
+  type FreshRolloutClaimEvidenceSnapshot,
   type SubmittedPrompt,
 } from './transcript/FreshRolloutClaim.js'
 import {
@@ -135,16 +138,26 @@ export type CodexConditionsEvent = {
   snapshot: CodexConditionSnapshot
 }
 export type CodexExitEvent = { type: 'exit'; ts: number; exitCode: number; signal?: number }
-export type CodexRolloutDiagnostic = {
-  type: 'resume-fork-ignored'
-  ts: number
-  message: string
-  candidatePath: string
-  initialPath: string
-  reason: 'missing-lineage' | 'insufficient-lineage-overlap'
-  lineageOverlap: number
-  requiredOverlap: number
-}
+export type CodexRolloutDiagnostic =
+  | {
+      type: 'resume-fork-ignored'
+      ts: number
+      message: string
+      candidatePath: string
+      initialPath: string
+      reason: 'missing-lineage' | 'insufficient-lineage-overlap'
+      lineageOverlap: number
+      requiredOverlap: number
+    }
+  | {
+      type: 'fresh-rollout-ownership-decision'
+      ts: number
+      changedPath: string | null
+      decision: 'hold' | 'reject' | 'accept' | 'ambiguous'
+      reason: string
+      tailStarted: boolean
+      evidence: FreshRolloutClaimEvidenceSnapshot
+    }
 
 export type CodexHeadlessEvent =
   | CodexActivityEvent
@@ -251,6 +264,12 @@ export class CodexHeadless extends EventEmitter {
   private freshRolloutCandidates = new Map<string, FreshRolloutCandidate>()
   private freshRolloutClaimTask: Promise<void> = Promise.resolve()
   private freshRolloutStopTail: (() => Promise<void>) | null = null
+  // WHY the diagnostic fingerprint key is random per headless lifetime: a
+  // stable unsalted digest would make short prompts in exported debug bundles
+  // vulnerable to dictionary recovery. We need equality within one ownership
+  // incident, not identity across sessions, so an ephemeral HMAC preserves the
+  // useful relationship while deliberately preventing cross-run correlation.
+  private readonly freshRolloutDiagnosticKey = randomBytes(32)
   private lastActivity: string | null = null
   // See ClaudeCodeHeadless.idleDebounceTimer for the rationale —
   // briefly empty bottom-working-row snapshots between TUI redraws
@@ -1081,6 +1100,28 @@ export class CodexHeadless extends EventEmitter {
       prompts: this.submittedPrompts,
       candidates: this.freshRolloutCandidates.values(),
       normalizeCwd,
+    })
+
+    const evidence = summarizeFreshRolloutClaimEvidence({
+      ownCwd: this.cwd,
+      prompts: this.submittedPrompts,
+      candidates: this.freshRolloutCandidates.values(),
+      normalizeCwd,
+      fingerprint: normalizedText => createHmac(
+        'sha256',
+        this.freshRolloutDiagnosticKey,
+      ).update(normalizedText).digest('hex'),
+    })
+    this.emit('rollout-diagnostic', {
+      type: 'fresh-rollout-ownership-decision',
+      ts: Date.now(),
+      changedPath: changedPath ?? null,
+      decision: decision.type,
+      reason: 'reason' in decision
+        ? decision.reason
+        : 'one same-cwd rollout candidate uniquely matched a local submitted prompt',
+      tailStarted: decision.type === 'accept',
+      evidence,
     })
 
     if (decision.type === 'accept') {

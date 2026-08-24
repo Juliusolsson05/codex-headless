@@ -17,6 +17,7 @@ export {
   type CodexTrustDialogEvent,
   type CodexConditionsEvent,
   type CodexExitEvent,
+  type CodexRolloutDiagnostic,
 } from './CodexHeadless.js'
 
 export type {

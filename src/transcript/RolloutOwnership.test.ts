@@ -33,6 +33,15 @@ function freshCandidate(
     filePath,
     threadId: filePath,
     cwd: candidateCwd,
+    cliVersion: 'test',
+    userMessages: message
+      ? [{
+          source: 'event_msg',
+          lineIndex: 1,
+          text: message,
+          normalized: normalizePromptForOwnership(message),
+        }]
+      : [],
     firstUserMessage: message,
     normalizedFirstUserMessage: message
       ? normalizePromptForOwnership(message)
