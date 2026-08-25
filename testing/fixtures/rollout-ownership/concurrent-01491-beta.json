@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "id": "concurrent-01491-beta",
   "provenance": {
     "sourceLabel": "recorded-source-5ac3a3571ba99f12",
@@ -75,7 +75,130 @@
         ]
       }
     ],
-    "transformation": "ownership-projection-v2"
+    "lineageWireShape": [
+      {
+        "originalLineIndex": 1,
+        "type": "event_msg",
+        "payloadType": "task_started",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-concurrent-01491-beta-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 2,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-concurrent-01491-beta-1"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 3,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-concurrent-01491-beta-2"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 4,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-concurrent-01491-beta-3"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 5,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-concurrent-01491-beta-4"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 7,
+        "type": "turn_context",
+        "payloadType": null,
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-concurrent-01491-beta-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 8,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-concurrent-01491-beta-5"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 9,
+        "type": "event_msg",
+        "payloadType": "item_completed",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-concurrent-01491-beta-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 10,
+        "type": "event_msg",
+        "payloadType": "item_completed",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-concurrent-01491-beta-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 11,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-concurrent-01491-beta-6"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 13,
+        "type": "event_msg",
+        "payloadType": "task_complete",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-concurrent-01491-beta-0"
+          }
+        ]
+      }
+    ],
+    "transformation": "ownership-projection-v3"
   },
   "ownership": {
     "localPromptToken": "",
@@ -98,11 +221,51 @@
       "_recordedLineIndex": 0
     },
     {
+      "timestamp": "2026-08-24T19:01:07.342Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "task_started",
+        "turn_id": "recorded-lineage-concurrent-01491-beta-0"
+      },
+      "_recordedLineIndex": 1
+    },
+    {
+      "timestamp": "2026-08-24T19:01:08.055Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "developer",
+        "id": "recorded-lineage-concurrent-01491-beta-1"
+      },
+      "_recordedLineIndex": 2
+    },
+    {
+      "timestamp": "2026-08-24T19:01:08.055Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "developer",
+        "id": "recorded-lineage-concurrent-01491-beta-2"
+      },
+      "_recordedLineIndex": 3
+    },
+    {
+      "timestamp": "2026-08-24T19:01:08.055Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "developer",
+        "id": "recorded-lineage-concurrent-01491-beta-3"
+      },
+      "_recordedLineIndex": 4
+    },
+    {
       "timestamp": "2026-08-24T19:01:08.056Z",
       "type": "response_item",
       "payload": {
         "type": "message",
         "role": "user",
+        "id": "recorded-lineage-concurrent-01491-beta-4",
         "content": [
           {
             "type": "input_text",
@@ -120,7 +283,8 @@
       "timestamp": "2026-08-24T19:01:08.060Z",
       "type": "turn_context",
       "payload": {
-        "cwd": "/recorded/worktree"
+        "cwd": "/recorded/worktree",
+        "turn_id": "recorded-lineage-concurrent-01491-beta-0"
       },
       "_recordedLineIndex": 7
     },
@@ -130,6 +294,7 @@
       "payload": {
         "type": "message",
         "role": "user",
+        "id": "recorded-lineage-concurrent-01491-beta-5",
         "content": [
           {
             "type": "input_text",
@@ -138,6 +303,43 @@
         ]
       },
       "_recordedLineIndex": 8
+    },
+    {
+      "timestamp": "2026-08-24T19:01:08.077Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "item_completed",
+        "turn_id": "recorded-lineage-concurrent-01491-beta-0"
+      },
+      "_recordedLineIndex": 9
+    },
+    {
+      "timestamp": "2026-08-24T19:01:10.281Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "item_completed",
+        "turn_id": "recorded-lineage-concurrent-01491-beta-0"
+      },
+      "_recordedLineIndex": 10
+    },
+    {
+      "timestamp": "2026-08-24T19:01:10.283Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "assistant",
+        "id": "recorded-lineage-concurrent-01491-beta-6"
+      },
+      "_recordedLineIndex": 11
+    },
+    {
+      "timestamp": "2026-08-24T19:01:10.302Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "task_complete",
+        "turn_id": "recorded-lineage-concurrent-01491-beta-0"
+      },
+      "_recordedLineIndex": 13
     }
   ]
 }

@@ -1,3 +1,4 @@
+import { createHmac, randomBytes } from 'node:crypto'
 import { statSync } from 'node:fs'
 import { mkdir, open } from 'node:fs/promises'
 
@@ -14,7 +15,7 @@ import {
 // API. A dev process can load two compiled copies during hot reload; accepting
 // a v1 registry here would mix the old raw-evidence coordinator with the new
 // HMAC/tombstone semantics and silently recreate split-brain ownership.
-const REGISTRY_SCHEMA_VERSION = 2
+const REGISTRY_SCHEMA_VERSION = 3
 const REGISTRY_SYMBOL = Symbol.for(
   'codex-headless.fresh-rollout-ownership-coordinator-registry',
 )
@@ -44,6 +45,7 @@ type RootEntry = {
   starting: Promise<void> | null
   stopping: Promise<void> | null
   stopWatcherMaintenance: (() => void) | null
+  retentionTimer: ReturnType<typeof setTimeout> | null
   maintenanceQueue: Promise<void>
   readQueue: Promise<void>
   referenceCount: number
@@ -52,6 +54,7 @@ type RootEntry = {
 
 type Registry = {
   schemaVersion: number
+  hmacKey: Buffer
   roots: Map<string, RootEntry>
 }
 
@@ -79,6 +82,7 @@ function getRegistry(): Registry {
 
   const created: Registry = {
     schemaVersion: REGISTRY_SCHEMA_VERSION,
+    hmacKey: randomBytes(32),
     roots: new Map(),
   }
   globalWithRegistry[REGISTRY_SYMBOL] = created
@@ -94,7 +98,14 @@ export async function acquireFreshRolloutCoordinator(options: {
   await mkdir(options.sessionsRoot, { recursive: true })
   const root = options.normalizePath(options.sessionsRoot)
   const registry = getRegistry()
-  let entry = registry.roots.get(root)
+  // WHY the raw sessions root is needed only by the live watcher. Keeping it
+  // as a global Map key leaked every private CODEX_HOME for the process
+  // lifetime even after all candidate evidence was scrubbed.
+  const rootFingerprint = createHmac('sha256', registry.hmacKey)
+    .update('sessions-root\0')
+    .update(root)
+    .digest('hex')
+  let entry = registry.roots.get(rootFingerprint)
   if (!entry) {
     entry = {
       coordinator: new FreshRolloutOwnershipCoordinator({
@@ -105,12 +116,13 @@ export async function acquireFreshRolloutCoordinator(options: {
       starting: null,
       stopping: null,
       stopWatcherMaintenance: null,
+      retentionTimer: null,
       maintenanceQueue: Promise.resolve(),
       readQueue: Promise.resolve(),
       referenceCount: 0,
       errorListeners: new Set(),
     }
-    registry.roots.set(root, entry)
+    registry.roots.set(rootFingerprint, entry)
   }
 
   if (entry.stopping) await entry.stopping
@@ -156,10 +168,29 @@ async function stopRootWatcher(entry: RootEntry): Promise<void> {
     await entry.maintenanceQueue
     await entry.readQueue
     entry.coordinator.compactInactiveState()
+    scheduleInactiveRetention(entry)
   })().finally(() => {
     entry.stopping = null
   })
   await entry.stopping
+}
+
+function scheduleInactiveRetention(entry: RootEntry): void {
+  if (entry.retentionTimer) clearTimeout(entry.retentionTimer)
+  entry.retentionTimer = null
+  const delay = entry.coordinator.millisecondsUntilInactiveExpiry()
+  if (delay === null) return
+
+  // WHY this timer begins only after watcher admission/read drain: an earlier
+  // queued observation can legitimately take longer than the grace interval.
+  // Once drained, retaining each stopped prompt HMAC until its generation
+  // window closes protects provider flushes that occur before parent PTY kill.
+  entry.retentionTimer = setTimeout(() => {
+    entry.retentionTimer = null
+    entry.coordinator.expireInactiveParticipants()
+    scheduleInactiveRetention(entry)
+  }, Math.max(1, delay))
+  entry.retentionTimer.unref?.()
 }
 
 async function ensureWatcher(root: string, entry: RootEntry): Promise<void> {

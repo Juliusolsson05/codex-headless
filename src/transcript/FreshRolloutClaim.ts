@@ -11,6 +11,7 @@ import {
   isCodexResponseItem,
   isCodexSessionMeta,
 } from './TranscriptTypes.js'
+import { collectRolloutLineageIds } from './ResumeForkCandidate.js'
 
 export type SubmittedPrompt = {
   text: string
@@ -24,6 +25,7 @@ export type FreshRolloutCandidate = {
   cwd: string | null
   cliVersion: string | null
   userMessages: FreshRolloutUserMessage[]
+  lineageIds: string[]
   /**
    * WHY this legacy projection remains during the instrumentation stage:
    * Stage 0 must make the failed decision observable without changing it. The
@@ -90,6 +92,8 @@ export function parseFreshRolloutCandidate(
   let eventUserText: string | null = null
   let replayUserText: string | null = null
   const userMessages: FreshRolloutUserMessage[] = []
+  const lineageIds = new Set<string>()
+  collectRolloutLineageIds(text, lineageIds, 8000)
 
   for (const [lineIndex, rawLine] of text.split('\n').entries()) {
     const trimmed = rawLine.trim()
@@ -153,6 +157,7 @@ export function parseFreshRolloutCandidate(
     cwd: cwd ?? null,
     cliVersion: sessionMeta?.cli_version ?? null,
     userMessages,
+    lineageIds: [...lineageIds],
     firstUserMessage: firstUserMessage ?? null,
     normalizedFirstUserMessage: firstUserMessage
       ? normalizePromptForOwnership(firstUserMessage)

@@ -1,10 +1,9 @@
 import { EventEmitter } from 'events'
 import { randomUUID } from 'crypto'
 import type { IPty } from 'node-pty'
-import { mkdir, readFile, stat } from 'fs/promises'
+import { mkdir, readFile } from 'fs/promises'
 import { realpathSync } from 'fs'
 import { resolve } from 'path'
-import { watch } from 'chokidar'
 
 import {
   HeadlessTerminal,
@@ -17,6 +16,7 @@ import {
 import type {
   FreshRolloutParticipantDecision,
   FreshRolloutParticipantHandle,
+  ResumeRolloutParticipantHandle,
 } from './transcript/FreshRolloutOwnershipCoordinator.js'
 import {
   acquireFreshRolloutCoordinator,
@@ -24,7 +24,6 @@ import {
 } from './transcript/FreshRolloutOwnershipCoordinatorRegistry.js'
 import {
   collectRolloutLineageIds,
-  decideResumeForkCandidate,
 } from './transcript/ResumeForkCandidate.js'
 import {
   detectCodexActivity,
@@ -72,7 +71,6 @@ import {
 } from './transcript/TranscriptTypes.js'
 import { getCodexSessionsDir } from './transcript/ProjectDir.js'
 import {
-  CODEX_ROLLOUT_FILENAME_RE,
   findCodexRolloutPathByThreadId,
 } from './transcript/RolloutLocator.js'
 
@@ -228,23 +226,18 @@ function normalizeCwd(cwd: string): string {
 export class CodexHeadless extends EventEmitter {
   private static readonly RESUME_BOOTSTRAP_TAIL_LINES = 200
   private static readonly RESUME_FORK_WATCH_MS = 120000
-  // How much of a candidate rollout to read when checking it for the
-  // fork lineage. Generous on purpose: Codex prepends large synthetic
-  // bootstrap entries (AGENTS.md preamble, environment_context) to a
-  // reconstructed history, and the copied item ids we match against
-  // sit after them — a small prefix could miss every shared id and
-  // false-negative a real fork. Reads only happen on fresh-file
-  // events inside the bounded resume window, so 4 MiB is cheap.
-  private static readonly ROLLOUT_CANDIDATE_READ_BYTES = 4 * 1024 * 1024
   // A candidate same-cwd rollout must share at least this many item
   // ids with the resumed file before we accept it as a fork of the
   // resumed session (rather than an unrelated sibling agent). See
-  // isResumeForkCandidate.
+  // the shared ownership coordinator's lineage graph.
   private static readonly RESUME_LINEAGE_MIN_OVERLAP = 3
   private readonly terminal: HeadlessTerminal
   private readonly cwd: string
   private readonly resumeThreadId: string | null
   private stopRolloutTail: (() => Promise<void>) | null = null
+  private stopPromise: Promise<void> | null = null
+  private cleanupPromise: Promise<void> | null = null
+  private stopRequested = false
   private activeRolloutPath: string | null = null
   private tailedRolloutPaths = new Set<string>()
   // WHY fresh sessions register with the shared ownership coordinator:
@@ -678,6 +671,11 @@ export class CodexHeadless extends EventEmitter {
     this.terminal.on('exit', ({ exitCode, signal }) => {
       this.emit('exit', { exitCode, signal })
       this.emit('event', { type: 'exit', ts: Date.now(), exitCode, signal })
+      // WHY exit can race start() while its rollout acquisition is awaiting
+      // filesystem readiness. Mark the lifecycle terminal before cleanup so a
+      // tail returned afterwards is closed locally instead of being published
+      // onto an already-dead headless instance.
+      this.stopRequested = true
       void this.cleanup()
     })
   }
@@ -865,6 +863,7 @@ export class CodexHeadless extends EventEmitter {
    */
   async start(): Promise<{ sessionsDir: string }> {
     const sessionsDir = getCodexSessionsDir()
+    let acquiredStop: () => Promise<void>
 
     if (this.resumeThreadId) {
       // First try: locate the existing rollout file by thread id. The
@@ -875,7 +874,7 @@ export class CodexHeadless extends EventEmitter {
         this.resumeThreadId,
       )
       if (rolloutPath) {
-        this.stopRolloutTail = await this.tailResumeRolloutFile(
+        acquiredStop = await this.tailResumeRolloutFile(
           sessionsDir,
           rolloutPath,
         )
@@ -895,11 +894,23 @@ export class CodexHeadless extends EventEmitter {
             `Codex resume: rollout file for thread ${this.resumeThreadId} not found under ${sessionsDir}; falling back to new-file watcher`,
           ),
         )
-        this.stopRolloutTail = await this.tailNewRolloutFile(sessionsDir)
+        acquiredStop = await this.tailNewRolloutFile(sessionsDir)
       }
     } else {
-      this.stopRolloutTail = await this.tailNewRolloutFile(sessionsDir)
+      acquiredStop = await this.tailNewRolloutFile(sessionsDir)
     }
+
+    if (this.stopRequested) {
+      // WHY SessionManager deliberately stops once before start settles and
+      // once afterwards. The first call cannot close a resource that the
+      // awaited acquisition has not returned yet, and the second call joins
+      // the same idempotent stop promise. Close the late acquisition here,
+      // before publishing it on the instance, so that cancellation cannot
+      // leak a coordinator participant or path lease between those calls.
+      try { await acquiredStop() } catch { /* best-effort */ }
+      return { sessionsDir }
+    }
+    this.stopRolloutTail = acquiredStop
 
     // Tailer is wired — let PTY data flow into the headless terminal
     // mirror. See HeadlessTerminal file header for why this is split
@@ -1015,15 +1026,37 @@ export class CodexHeadless extends EventEmitter {
   // --- Cleanup ---
 
   async stop(): Promise<void> {
-    this.terminal.dispose()
-    await this.cleanup()
+    this.stopRequested = true
+    if (!this.stopPromise) {
+      // WHY SessionManager intentionally issues a pre-start and post-start
+      // stop during cancellation. Those calls may overlap. Sharing one promise
+      // prevents the second call from interpreting an already-taken tail as a
+      // clean close and retiring its lease while the first close is still live.
+      this.stopPromise = (async () => {
+        this.terminal.dispose()
+        await this.cleanup()
+      })()
+    }
+    await this.stopPromise
   }
 
   private async cleanup(): Promise<void> {
-    if (this.stopRolloutTail) {
-      try { await this.stopRolloutTail() } catch { /* best-effort */ }
-      this.stopRolloutTail = null
+    if (this.cleanupPromise) {
+      await this.cleanupPromise
+      return
     }
+    const stopRolloutTail = this.stopRolloutTail
+    this.stopRolloutTail = null
+    if (!stopRolloutTail) return
+
+    // WHY terminal exit and explicit stop are independent callers. Publishing
+    // this promise before awaiting makes them join the same physical close;
+    // otherwise stop() can observe a null tail and return while the exit path
+    // is still draining the watcher and retiring its lease.
+    this.cleanupPromise = (async () => {
+      try { await stopRolloutTail() } catch { /* best-effort */ }
+    })()
+    await this.cleanupPromise
   }
 
   // --- Rollout file tailing ---
@@ -1083,24 +1116,20 @@ export class CodexHeadless extends EventEmitter {
    * transcript channel was dead forever because this class was pinned
    * to the stale file.
    *
-   * We therefore keep the existing tail and, for a bounded window,
-   * watch for a NEW rollout whose early metadata says it belongs to
-   * the same cwd. When such a fork appears we switch tails. We do not
-   * watch forever: after the initial resume decision, long-lived
-   * same-cwd rollouts are much more likely to be unrelated sibling
-   * agents than late resume forks. The window is intentionally long
-   * enough to cover Codex startup/auth/model latency, but finite so a
-   * parent orchestration session does not keep stealing child files
-   * later in the day.
+   * We therefore keep the existing tail and, for a bounded window, register
+   * its copied item IDs in the same coordinator that owns fresh prompts. When
+   * a new candidate shares enough lineage, that stronger edge is leased before
+   * copied user history can be mistaken for a fresh prompt. One common watcher
+   * transports both evidence kinds; callback order is no longer policy.
    *
    * This is still not a perfect identity proof. Codex does not expose
    * a parent/resume id in every forked file, and Agent Code can spawn
    * multiple Codex sessions in the same cwd. The stronger long-term
    * fix is for Codex to write a stable resume lineage id into
    * `session_meta` or for Agent Code to get the provider session id
-   * over an explicit API. Until then, "new after resume + same cwd +
-   * bounded watch + switch once" is the narrowest practical repair
-   * for the permanent committed-channel outage.
+   * over an explicit API. Until then, "new after resume + same cwd + copied
+   * item lineage + bounded watch + switch once" is the narrowest practical
+   * repair for the permanent committed-channel outage.
    */
   private async tailResumeRolloutFile(
     sessionsDir: string,
@@ -1123,17 +1152,17 @@ export class CodexHeadless extends EventEmitter {
 
     let stopped = false
     let currentStop: (() => Promise<void>) | null = null
-    let watcherStop: (() => Promise<void>) | null = null
-    let priorTailCloseFailed = false
+    let currentPath = initialPath
+    let resumeParticipant: ResumeRolloutParticipantHandle | null = null
+    let switchQueue = Promise.resolve()
+    let cleanupPromise: Promise<void> | null = null
     let initialTailOpenAttempted = false
-    const watchStartedAt = Date.now()
 
     let lineageIds: Set<string>
     try {
       // Fingerprint the resumed file's existing conversation so the
-      // fork watcher can tell a genuine reconstruction of THIS session
-      // apart from an unrelated sibling agent that merely shares the
-      // cwd. See isResumeForkCandidate / readRolloutLineageIds.
+      // shared coordinator can tell a genuine reconstruction of THIS session
+      // apart from an unrelated sibling agent that merely shares the cwd.
       lineageIds = await this.readRolloutLineageIds(initialPath)
       initialTailOpenAttempted = true
       currentStop = this.tailFile(initialPath)
@@ -1154,20 +1183,9 @@ export class CodexHeadless extends EventEmitter {
       if (stopped) return
       if (this.activeRolloutPath === filePath) return
       if (this.tailedRolloutPaths.has(filePath)) return
-      if (!acquisition.coordinator.reservePath({
-        ownerId: this.freshRolloutParticipantId,
-        filePath,
-        kind: 'resume-lineage',
-        proofIdentity: this.resumeThreadId ?? undefined,
-      })) {
-        this.emit(
-          'rollout-error',
-          new Error(
-            'Codex resume fork path is already leased by another live session',
-          ),
-        )
-        return
-      }
+      // The coordinator installs the resume-lineage lease before invoking this
+      // callback. Reserving again here would recreate two policy owners and
+      // allow a fresh callback to win between lineage proof and tail startup.
       // Open the new tail BEFORE closing the stale one: a gap would
       // drop any entry written in between. The brief overlap is safe
       // — a forked rollout begins with this session's copied history,
@@ -1177,6 +1195,7 @@ export class CodexHeadless extends EventEmitter {
       // first to avoid the overlap would trade a harmless duplicate
       // (deduped) for a real lost-entry window.
       const previous = currentStop
+      const previousPath = currentPath
       let nextStop: () => Promise<void>
       try {
         nextStop = this.tailFile(filePath)
@@ -1187,7 +1206,7 @@ export class CodexHeadless extends EventEmitter {
         acquisition.coordinator.retirePathLease(
           this.freshRolloutParticipantId,
           filePath,
-          true,
+          false,
         )
         this.emit(
           'rollout-error',
@@ -1196,6 +1215,7 @@ export class CodexHeadless extends EventEmitter {
         return
       }
       currentStop = nextStop
+      currentPath = filePath
       // A successful tail switch is NOT an error. It used to emit
       // `rollout-error`, which the Agent Code parent surfaces as a
       // transcript failure ("transcript unavailable: …") even though
@@ -1205,24 +1225,42 @@ export class CodexHeadless extends EventEmitter {
       // non-error diagnostic event is tracked separately in #11; until
       // then this switch is observable through the `rollout-entry`
       // stream that immediately resumes from the new file.
+      let previousClosedCleanly = true
       if (previous) {
-        try { await previous() } catch { priorTailCloseFailed = true }
+        try { await previous() } catch { previousClosedCleanly = false }
       }
-      if (watcherStop) {
-        try { await watcherStop() } catch { /* best-effort watcher close */ }
-        watcherStop = null
-      }
+      acquisition.coordinator.retirePathLease(
+        this.freshRolloutParticipantId,
+        previousPath,
+        previousClosedCleanly,
+      )
+      resumeParticipant?.unregister()
+      resumeParticipant = null
     }
 
     try {
-      watcherStop = await this.watchResumeForkRollout(sessionsDir, {
-        startedAt: watchStartedAt,
-        initialPath,
+      resumeParticipant = acquisition.coordinator.registerResumeParticipant({
+        participantId: this.freshRolloutParticipantId,
+        cwd: this.cwd,
         lineageIds,
-        onCandidate: switchTo,
+        requiredOverlapLimit: CodexHeadless.RESUME_LINEAGE_MIN_OVERLAP,
+        onLease: lease => {
+          // WHY switches serialize even though the graph emits one mutual
+          // singleton: stop can race callback delivery. The queue lets cleanup
+          // revoke admission, then wait for any already-admitted switch before
+          // deciding whether the current physical tail closed cleanly.
+          switchQueue = switchQueue
+            .then(() => switchTo(lease.filePath))
+            .catch(error => {
+              this.emit(
+                'rollout-error',
+                error instanceof Error ? error : new Error(String(error)),
+              )
+            })
+        },
       })
     } catch (error) {
-      let clean = !priorTailCloseFailed
+      let clean = true
       try { await currentStop?.() } catch { clean = false }
       acquisition.coordinator.retireOwnerLeases(
         this.freshRolloutParticipantId,
@@ -1233,31 +1271,37 @@ export class CodexHeadless extends EventEmitter {
     }
 
     const timeout = setTimeout(() => {
-      if (!watcherStop) return
-      const stop = watcherStop
-      watcherStop = null
-      void stop()
+      resumeParticipant?.unregister()
+      resumeParticipant = null
     }, CodexHeadless.RESUME_FORK_WATCH_MS)
 
-    return async () => {
-      stopped = true
-      clearTimeout(timeout)
-      const stopWatcher = watcherStop
-      const stopTail = currentStop
-      watcherStop = null
-      currentStop = null
-      if (stopWatcher) {
-        try { await stopWatcher() } catch { /* best-effort watcher close */ }
+    return () => {
+      if (!cleanupPromise) {
+        cleanupPromise = (async () => {
+          stopped = true
+          clearTimeout(timeout)
+          resumeParticipant?.unregister()
+          resumeParticipant = null
+          await switchQueue
+          const stopTail = currentStop
+          currentStop = null
+          let cleanTailClose = true
+          if (stopTail) {
+            try { await stopTail() } catch { cleanTailClose = false }
+          }
+          acquisition.coordinator.retirePathLease(
+            this.freshRolloutParticipantId,
+            currentPath,
+            cleanTailClose,
+          )
+          acquisition.coordinator.retireOwnerLeases(
+            this.freshRolloutParticipantId,
+            cleanTailClose,
+          )
+          await acquisition.release()
+        })()
       }
-      let cleanTailClose = !priorTailCloseFailed
-      if (stopTail) {
-        try { await stopTail() } catch { cleanTailClose = false }
-      }
-      acquisition.coordinator.retireOwnerLeases(
-        this.freshRolloutParticipantId,
-        cleanTailClose,
-      )
-      await acquisition.release()
+      return cleanupPromise
     }
   }
 
@@ -1272,141 +1316,12 @@ export class CodexHeadless extends EventEmitter {
     })
   }
 
-  private async watchResumeForkRollout(
-    sessionsDir: string,
-    options: {
-      startedAt: number
-      initialPath: string
-      lineageIds: ReadonlySet<string>
-      onCandidate: (filePath: string) => Promise<void>
-    },
-  ): Promise<() => Promise<void>> {
-    let evaluating = false
-    let closed = false
-    const pending = new Set<string>()
-    // A single watcher with ignoreInitial:false. Every rollout file —
-    // those already on disk at attach time AND those created later —
-    // is fed through isResumeForkCandidate, whose mtime guard rejects
-    // anything older than the resume attach.
-    //
-    // The earlier two-phase design (prime an `existing` set, then
-    // watch only for files NOT in it) had a real hole: a reconstructed
-    // fork created during the priming scan was recorded as
-    // pre-existing and then skipped forever — the exact committed-
-    // channel outage this watcher exists to catch. Letting the mtime
-    // guard, not watcher ordering, decide freshness closes that
-    // window. ignoreInitial:false replays the on-disk tree once; old
-    // files are rejected cheaply by the stat-only mtime guard before
-    // any file read.
-    const watcher = watch(sessionsDir, {
-      persistent: true,
-      ignoreInitial: false,
-      depth: 4,
-    })
-
-    const drain = async (): Promise<void> => {
-      if (evaluating || closed) return
-      evaluating = true
-      try {
-        for (;;) {
-          const next = pending.values().next().value as string | undefined
-          if (!next || closed) break
-          pending.delete(next)
-          if (await this.isResumeForkCandidate(next, options)) {
-            await options.onCandidate(next)
-            break
-          }
-        }
-      } finally {
-        evaluating = false
-      }
-    }
-
-    watcher.on('add', (filePath: string) => {
-      if (closed) return
-      const name = filePath.split('/').pop() ?? ''
-      if (!CODEX_ROLLOUT_FILENAME_RE.test(name)) return
-      if (filePath === options.initialPath) return
-      if (this.tailedRolloutPaths.has(filePath)) return
-      pending.add(filePath)
-      void drain()
-    })
-    watcher.on('error', (err: unknown) => this.emit('rollout-error', err instanceof Error ? err : new Error(String(err))))
-
-    return async () => {
-      closed = true
-      pending.clear()
-      await watcher.close()
-    }
-  }
-
-  private async isResumeForkCandidate(
-    filePath: string,
-    options: {
-      startedAt: number
-      initialPath: string
-      lineageIds: ReadonlySet<string>
-    },
-  ): Promise<boolean> {
-    if (filePath === options.initialPath) return false
-    if (this.tailedRolloutPaths.has(filePath)) return false
-    let st: Awaited<ReturnType<typeof stat>>
-    try {
-      st = await stat(filePath)
-    } catch {
-      return false
-    }
-    if (!st.isFile()) return false
-    // New-file events can be delivered a little late, but they
-    // should not point at a rollout that predates the resume attach.
-    // That guard is what keeps a resumed parent from adopting some
-    // old same-cwd transcript just because chokidar replayed an add.
-    if (st.mtimeMs < options.startedAt - 5000) return false
-
-    let text: string
-    try {
-      const raw = await readFile(filePath)
-      text = raw.subarray(0, CodexHeadless.ROLLOUT_CANDIDATE_READ_BYTES).toString('utf8')
-    } catch {
-      return false
-    }
-
-    // Two independent signals decide whether this new same-period rollout is
-    // a fork of THE SESSION WE RESUMED, vs an unrelated Codex agent that
-    // merely runs in the same directory. The helper deliberately classifies
-    // rejected same-cwd siblings as diagnostics, not fatal rollout errors:
-    // orchestration creates exactly those siblings, and poisoning the error
-    // channel makes the renderer hide an otherwise healthy transcript.
-    const decision = decideResumeForkCandidate({
-      ownCwd: this.cwd,
-      candidateText: text,
-      initialPath: options.initialPath,
-      candidatePath: filePath,
-      lineageIds: options.lineageIds,
-      requiredOverlapLimit: CodexHeadless.RESUME_LINEAGE_MIN_OVERLAP,
-      normalizeCwd,
-    })
-
-    if (decision.type === 'accept') return true
-    if (decision.message && decision.reason !== 'cwd-mismatch') {
-      this.emit('rollout-diagnostic', {
-        type: 'resume-fork-ignored',
-        ts: Date.now(),
-        reason: decision.reason,
-        lineageOverlap: decision.lineageOverlap,
-        requiredOverlap: decision.requiredOverlap,
-      })
-    }
-    return false
-  }
-
   /**
    * Fingerprint a rollout file's existing conversation as the set of
-   * opaque item ids it contains. Used by isResumeForkCandidate to
-   * recognise a reconstructed fork of the resumed session — a fork
-   * copies these ids, an unrelated session does not. Best-effort:
-   * a read failure yields an empty set, which downgrades the fork
-   * check to cwd-only rather than breaking resume.
+   * opaque item ids it contains. The shared coordinator uses them to recognise
+   * a reconstructed fork — a fork copies these ids, while an unrelated session
+   * does not. Best-effort: an empty set keeps tailing the exact file and cannot
+   * claim a candidate by CWD alone.
    */
   private async readRolloutLineageIds(filePath: string): Promise<Set<string>> {
     const ids = new Set<string>()
@@ -1414,7 +1329,7 @@ export class CodexHeadless extends EventEmitter {
       const text = await readFile(filePath, 'utf8')
       collectRolloutLineageIds(text, ids, 8000)
     } catch {
-      /* best-effort — empty set falls back to cwd-only matching */
+      /* best-effort — empty lineage leaves the exact tail in place */
     }
     return ids
   }

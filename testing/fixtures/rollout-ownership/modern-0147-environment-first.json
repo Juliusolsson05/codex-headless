@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "id": "modern-0147-environment-first",
   "provenance": {
     "sourceLabel": "recorded-source-43dd8a6229b8c9b3",
@@ -63,7 +63,467 @@
         ]
       }
     ],
-    "transformation": "ownership-projection-v2"
+    "lineageWireShape": [
+      {
+        "originalLineIndex": 1,
+        "type": "event_msg",
+        "payloadType": "task_started",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 2,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-1"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 3,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-2"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 4,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-3"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 5,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-4"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 7,
+        "type": "turn_context",
+        "payloadType": null,
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 8,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-5"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 9,
+        "type": "event_msg",
+        "payloadType": "item_completed",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 10,
+        "type": "event_msg",
+        "payloadType": "item_completed",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 11,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-6"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 12,
+        "type": "event_msg",
+        "payloadType": "item_completed",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 13,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-7"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 14,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-8"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-9"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 15,
+        "type": "event_msg",
+        "payloadType": "item_completed",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 16,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-10"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-9"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 18,
+        "type": "event_msg",
+        "payloadType": "item_completed",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 19,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-11"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 20,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-12"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-13"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 21,
+        "type": "event_msg",
+        "payloadType": "item_completed",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 22,
+        "type": "event_msg",
+        "payloadType": "item_completed",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 23,
+        "type": "event_msg",
+        "payloadType": "item_completed",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 24,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-14"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-13"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 26,
+        "type": "event_msg",
+        "payloadType": "item_completed",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 27,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-15"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 28,
+        "type": "event_msg",
+        "payloadType": "item_completed",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 29,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-16"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 30,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-17"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-18"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 31,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-19"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-18"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 33,
+        "type": "event_msg",
+        "payloadType": "item_completed",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 34,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-20"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 35,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-21"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-22"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 36,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-23"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-22"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 38,
+        "type": "event_msg",
+        "payloadType": "item_completed",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 39,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-24"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 40,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-25"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-26"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 41,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-27"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-26"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 43,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-28"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 44,
+        "type": "event_msg",
+        "payloadType": "turn_aborted",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-modern-0147-environment-first-0"
+          }
+        ]
+      }
+    ],
+    "transformation": "ownership-projection-v3"
   },
   "ownership": {
     "localPromptToken": "",
@@ -86,11 +546,51 @@
       "_recordedLineIndex": 0
     },
     {
+      "timestamp": "2026-08-13T22:22:21.922Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "task_started",
+        "turn_id": "recorded-lineage-modern-0147-environment-first-0"
+      },
+      "_recordedLineIndex": 1
+    },
+    {
+      "timestamp": "2026-08-13T22:22:22.275Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "developer",
+        "id": "recorded-lineage-modern-0147-environment-first-1"
+      },
+      "_recordedLineIndex": 2
+    },
+    {
+      "timestamp": "2026-08-13T22:22:22.275Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "developer",
+        "id": "recorded-lineage-modern-0147-environment-first-2"
+      },
+      "_recordedLineIndex": 3
+    },
+    {
+      "timestamp": "2026-08-13T22:22:22.275Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "developer",
+        "id": "recorded-lineage-modern-0147-environment-first-3"
+      },
+      "_recordedLineIndex": 4
+    },
+    {
       "timestamp": "2026-08-13T22:22:22.275Z",
       "type": "response_item",
       "payload": {
         "type": "message",
         "role": "user",
+        "id": "recorded-lineage-modern-0147-environment-first-4",
         "content": [
           {
             "type": "input_text",
@@ -104,7 +604,8 @@
       "timestamp": "2026-08-13T22:22:22.278Z",
       "type": "turn_context",
       "payload": {
-        "cwd": "/recorded/worktree"
+        "cwd": "/recorded/worktree",
+        "turn_id": "recorded-lineage-modern-0147-environment-first-0"
       },
       "_recordedLineIndex": 7
     },
@@ -114,6 +615,7 @@
       "payload": {
         "type": "message",
         "role": "user",
+        "id": "recorded-lineage-modern-0147-environment-first-5",
         "content": [
           {
             "type": "input_text",
@@ -122,6 +624,298 @@
         ]
       },
       "_recordedLineIndex": 8
+    },
+    {
+      "timestamp": "2026-08-13T22:22:22.287Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "item_completed",
+        "turn_id": "recorded-lineage-modern-0147-environment-first-0"
+      },
+      "_recordedLineIndex": 9
+    },
+    {
+      "timestamp": "2026-08-13T22:22:31.984Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "item_completed",
+        "turn_id": "recorded-lineage-modern-0147-environment-first-0"
+      },
+      "_recordedLineIndex": 10
+    },
+    {
+      "timestamp": "2026-08-13T22:22:32.038Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-modern-0147-environment-first-6"
+      },
+      "_recordedLineIndex": 11
+    },
+    {
+      "timestamp": "2026-08-13T22:22:33.243Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "item_completed",
+        "turn_id": "recorded-lineage-modern-0147-environment-first-0"
+      },
+      "_recordedLineIndex": 12
+    },
+    {
+      "timestamp": "2026-08-13T22:22:33.245Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "assistant",
+        "id": "recorded-lineage-modern-0147-environment-first-7"
+      },
+      "_recordedLineIndex": 13
+    },
+    {
+      "timestamp": "2026-08-13T22:22:34.177Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-modern-0147-environment-first-8",
+        "call_id": "recorded-lineage-modern-0147-environment-first-9"
+      },
+      "_recordedLineIndex": 14
+    },
+    {
+      "timestamp": "2026-08-13T22:22:34.650Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "item_completed",
+        "turn_id": "recorded-lineage-modern-0147-environment-first-0"
+      },
+      "_recordedLineIndex": 15
+    },
+    {
+      "timestamp": "2026-08-13T22:22:34.655Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "id": "recorded-lineage-modern-0147-environment-first-10",
+        "call_id": "recorded-lineage-modern-0147-environment-first-9"
+      },
+      "_recordedLineIndex": 16
+    },
+    {
+      "timestamp": "2026-08-13T22:22:37.919Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "item_completed",
+        "turn_id": "recorded-lineage-modern-0147-environment-first-0"
+      },
+      "_recordedLineIndex": 18
+    },
+    {
+      "timestamp": "2026-08-13T22:22:37.921Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-modern-0147-environment-first-11"
+      },
+      "_recordedLineIndex": 19
+    },
+    {
+      "timestamp": "2026-08-13T22:22:41.330Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-modern-0147-environment-first-12",
+        "call_id": "recorded-lineage-modern-0147-environment-first-13"
+      },
+      "_recordedLineIndex": 20
+    },
+    {
+      "timestamp": "2026-08-13T22:22:41.414Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "item_completed",
+        "turn_id": "recorded-lineage-modern-0147-environment-first-0"
+      },
+      "_recordedLineIndex": 21
+    },
+    {
+      "timestamp": "2026-08-13T22:22:41.533Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "item_completed",
+        "turn_id": "recorded-lineage-modern-0147-environment-first-0"
+      },
+      "_recordedLineIndex": 22
+    },
+    {
+      "timestamp": "2026-08-13T22:22:50.082Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "item_completed",
+        "turn_id": "recorded-lineage-modern-0147-environment-first-0"
+      },
+      "_recordedLineIndex": 23
+    },
+    {
+      "timestamp": "2026-08-13T22:22:50.092Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "id": "recorded-lineage-modern-0147-environment-first-14",
+        "call_id": "recorded-lineage-modern-0147-environment-first-13"
+      },
+      "_recordedLineIndex": 24
+    },
+    {
+      "timestamp": "2026-08-13T22:22:55.747Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "item_completed",
+        "turn_id": "recorded-lineage-modern-0147-environment-first-0"
+      },
+      "_recordedLineIndex": 26
+    },
+    {
+      "timestamp": "2026-08-13T22:22:55.750Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-modern-0147-environment-first-15"
+      },
+      "_recordedLineIndex": 27
+    },
+    {
+      "timestamp": "2026-08-13T22:22:57.769Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "item_completed",
+        "turn_id": "recorded-lineage-modern-0147-environment-first-0"
+      },
+      "_recordedLineIndex": 28
+    },
+    {
+      "timestamp": "2026-08-13T22:22:57.774Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "assistant",
+        "id": "recorded-lineage-modern-0147-environment-first-16"
+      },
+      "_recordedLineIndex": 29
+    },
+    {
+      "timestamp": "2026-08-13T22:22:58.012Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-modern-0147-environment-first-17",
+        "call_id": "recorded-lineage-modern-0147-environment-first-18"
+      },
+      "_recordedLineIndex": 30
+    },
+    {
+      "timestamp": "2026-08-13T22:22:58.069Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "id": "recorded-lineage-modern-0147-environment-first-19",
+        "call_id": "recorded-lineage-modern-0147-environment-first-18"
+      },
+      "_recordedLineIndex": 31
+    },
+    {
+      "timestamp": "2026-08-13T22:22:59.925Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "item_completed",
+        "turn_id": "recorded-lineage-modern-0147-environment-first-0"
+      },
+      "_recordedLineIndex": 33
+    },
+    {
+      "timestamp": "2026-08-13T22:22:59.927Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-modern-0147-environment-first-20"
+      },
+      "_recordedLineIndex": 34
+    },
+    {
+      "timestamp": "2026-08-13T22:23:02.255Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-modern-0147-environment-first-21",
+        "call_id": "recorded-lineage-modern-0147-environment-first-22"
+      },
+      "_recordedLineIndex": 35
+    },
+    {
+      "timestamp": "2026-08-13T22:23:02.302Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "id": "recorded-lineage-modern-0147-environment-first-23",
+        "call_id": "recorded-lineage-modern-0147-environment-first-22"
+      },
+      "_recordedLineIndex": 36
+    },
+    {
+      "timestamp": "2026-08-13T22:23:04.588Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "item_completed",
+        "turn_id": "recorded-lineage-modern-0147-environment-first-0"
+      },
+      "_recordedLineIndex": 38
+    },
+    {
+      "timestamp": "2026-08-13T22:23:04.595Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-modern-0147-environment-first-24"
+      },
+      "_recordedLineIndex": 39
+    },
+    {
+      "timestamp": "2026-08-13T22:23:07.563Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-modern-0147-environment-first-25",
+        "call_id": "recorded-lineage-modern-0147-environment-first-26"
+      },
+      "_recordedLineIndex": 40
+    },
+    {
+      "timestamp": "2026-08-13T22:23:16.064Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "id": "recorded-lineage-modern-0147-environment-first-27",
+        "call_id": "recorded-lineage-modern-0147-environment-first-26"
+      },
+      "_recordedLineIndex": 41
+    },
+    {
+      "timestamp": "2026-08-13T22:23:16.089Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "developer",
+        "id": "recorded-lineage-modern-0147-environment-first-28"
+      },
+      "_recordedLineIndex": 43
+    },
+    {
+      "timestamp": "2026-08-13T22:23:16.099Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "turn_aborted",
+        "turn_id": "recorded-lineage-modern-0147-environment-first-0"
+      },
+      "_recordedLineIndex": 44
     }
   ]
 }

@@ -24,7 +24,7 @@ import { decideLegacyFreshRollout } from './LegacyFreshRolloutOracle.js'
 import { findCodexRolloutPathByThreadId } from './RolloutLocator.js'
 
 type RecordedOwnershipFixture = {
-  schemaVersion: 2
+  schemaVersion: 3
   id: string
   provenance: {
     sourceLabel: string

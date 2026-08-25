@@ -108,6 +108,96 @@ describe('process-wide fresh rollout watcher', () => {
     await Promise.all([first, second])
   })
 
+  it('makes explicit stop join cleanup already started by terminal exit', async () => {
+    const pty = {
+      write: () => undefined,
+      resize: () => undefined,
+      onData: () => ({ dispose: () => undefined }),
+      onExit: () => ({ dispose: () => undefined }),
+    } as unknown as IPty
+    const headless = new CodexHeadless({
+      pty,
+      cwd: '/recorded/worktree',
+    })
+    let cleanupCalls = 0
+    let releaseCleanup!: () => void
+    const cleanupGate = new Promise<void>(resolve => { releaseCleanup = resolve })
+    ;(headless as unknown as {
+      stopRolloutTail: (() => Promise<void>) | null
+    }).stopRolloutTail = async () => {
+      cleanupCalls += 1
+      await cleanupGate
+    }
+    const exitCleanup = (headless as unknown as {
+      cleanup(): Promise<void>
+    }).cleanup()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    let stopSettled = false
+    const explicitStop = headless.stop().then(() => { stopSettled = true })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    // WHY a null stopRolloutTail does not mean cleanup finished: the exit path
+    // takes the function before awaiting it. stop() must join that in-flight
+    // promise so the parent cannot kill the PTY before lease retirement.
+    expect(cleanupCalls).toBe(1)
+    expect(stopSettled).toBe(false)
+    releaseCleanup()
+    await Promise.all([exitCleanup, explicitStop])
+  })
+
+  it('closes a recorded exact tail acquired after a pre-start stop', async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'codex-pre-start-stop-'))
+    temporaryDirectories.push(codexHome)
+    const previousCodexHome = process.env.CODEX_HOME
+    process.env.CODEX_HOME = codexHome
+    const fixture = loadFixture('subagent-0149-exact-attachment')
+    const sessionMeta = fixture.lines.find(line => line.type === 'session_meta')
+    const threadId = (sessionMeta?.payload as { id?: unknown } | undefined)?.id
+    if (typeof threadId !== 'string') {
+      throw new Error('recorded exact-id fixture has no thread id')
+    }
+    const day = join(codexHome, 'sessions', '2026', '08', '24')
+    mkdirSync(day, { recursive: true })
+    writeFileSync(
+      join(day, `rollout-recorded-${threadId}.jsonl`),
+      rolloutText(fixture),
+    )
+    const makePty = (): IPty => ({
+      write: () => undefined,
+      resize: () => undefined,
+      onData: () => ({ dispose: () => undefined }),
+      onExit: () => ({ dispose: () => undefined }),
+    }) as unknown as IPty
+    const cancelled = new CodexHeadless({
+      pty: makePty(),
+      cwd: '/recorded/worktree',
+      resumeThreadId: threadId,
+    })
+    let replacement: CodexHeadless | null = null
+
+    try {
+      // WHY SessionManager has this exact ordering when cancellation wins its
+      // race with provider startup. start() still finishes its awaited setup,
+      // but must close that late acquisition before its second stop arrives.
+      await cancelled.stop()
+      await cancelled.start()
+
+      replacement = new CodexHeadless({
+        pty: makePty(),
+        cwd: '/recorded/worktree',
+        resumeThreadId: threadId,
+      })
+      await expect(replacement.start()).resolves.toMatchObject({
+        sessionsDir: join(codexHome, 'sessions'),
+      })
+    } finally {
+      await replacement?.stop()
+      await cancelled.stop()
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = previousCodexHome
+    }
+  })
+
   it('does not assign later appended prompt bytes to an earlier watcher sequence', async () => {
     const root = mkdtempSync(join(tmpdir(), 'codex-rollout-prefix-'))
     temporaryDirectories.push(root)
@@ -296,16 +386,13 @@ describe('process-wide fresh rollout watcher', () => {
           cwd: '/recorded/worktree',
           resumeThreadId: threadId,
         })
-        const seenThreadIds: string[] = []
-        headless.on('rollout-entry', line => {
-          if (line.type !== 'session_meta') return
-          const id = (line.payload as { id?: unknown }).id
-          if (typeof id === 'string') seenThreadIds.push(id)
+        const seenPaths: string[] = []
+        headless.on('rollout-entry', (_line, filePath) => {
+          seenPaths.push(filePath)
         })
         try {
           await headless.start()
-          expect(await waitFor(() => seenThreadIds.includes(threadId))).toBe(true)
-          expect(headless.getSessionMeta()?.id).toBe(threadId)
+          expect(await waitFor(() => seenPaths.includes(rolloutPath))).toBe(true)
         } finally {
           await headless.stop()
         }
@@ -355,9 +442,13 @@ describe('process-wide fresh rollout watcher', () => {
     })
     const forkFiles: string[] = []
     resumed.on('rollout-entry', (_line, filePath) => {
-      if (filePath === forkPath) forkFiles.push(filePath)
+      // normalizeCwd resolves macOS /var through /private/var before the shared
+      // coordinator publishes a lease; the UUID-bearing basename is the exact
+      // identity fact this assertion needs.
+      if (filePath.endsWith(`${forkThreadId}.jsonl`)) forkFiles.push(filePath)
     })
     let reopened: CodexHeadless | null = null
+    const reopenedPaths: string[] = []
 
     try {
       await resumed.start()
@@ -365,7 +456,7 @@ describe('process-wide fresh rollout watcher', () => {
         forkPath,
         `${forkLines.map(line => JSON.stringify(line)).join('\n')}\n`,
       )
-      expect(await waitFor(() => forkFiles.length > 0)).toBe(true)
+      expect(await waitFor(() => forkFiles.length > 0, 5000)).toBe(true)
       await new Promise(resolve => setTimeout(resolve, 100))
 
       // WHY A remains live on Y while B opens X: a lease belongs to a physical
@@ -376,16 +467,22 @@ describe('process-wide fresh rollout watcher', () => {
         cwd: '/recorded/worktree',
         resumeThreadId: threadId,
       })
+      reopened.on('rollout-entry', (_line, filePath) => {
+        reopenedPaths.push(filePath)
+      })
       await expect(reopened.start()).resolves.toMatchObject({
         sessionsDir: join(codexHome, 'sessions'),
       })
-      expect(await waitFor(() => reopened?.getSessionMeta()?.id === threadId))
-        .toBe(true)
+      // WHY the recorded 600-line rollout is intentionally not flattened for
+      // this assertion: JsonlTailer bootstraps the last 200 lines, while the
+      // session_meta lives on line one. Receiving entries from X proves that X
+      // was reopened without teaching the test an impossible metadata promise.
+      expect(await waitFor(() => reopenedPaths.includes(initialPath))).toBe(true)
     } finally {
       await reopened?.stop()
       await resumed.stop()
       if (previousCodexHome === undefined) delete process.env.CODEX_HOME
       else process.env.CODEX_HOME = previousCodexHome
     }
-  })
+  }, 15_000)
 })

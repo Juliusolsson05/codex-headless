@@ -16,6 +16,10 @@ export type FreshRolloutParticipantHandle = {
   unregister(): void
 }
 
+export type ResumeRolloutParticipantHandle = {
+  unregister(): void
+}
+
 export type FreshRolloutCandidateObservation = {
   filePath: string
   candidateFingerprint: string
@@ -72,12 +76,26 @@ type Participant = {
   leasedCandidateFingerprint: string | null
 }
 
+type ResumeParticipant = {
+  id: string
+  fingerprint: string
+  cwdFingerprint: string
+  registeredAtMs: number
+  lineageFingerprints: Set<string>
+  requiredOverlapLimit: number
+  onLease: ((lease: FreshRolloutLease) => void) | null
+  active: boolean
+  withdrawnAtMs: number | null
+  leasedCandidateFingerprint: string | null
+}
+
 type CandidateState = {
   fingerprint: string
   filePath: string | null
   cwdFingerprint: string | null
   threadFingerprint: string | null
   messageFirstObservedAt: Map<string, number>
+  lineageFingerprints: Set<string>
   historicalContenders: Set<string>
   quarantined: boolean
   blocked: boolean
@@ -104,6 +122,7 @@ export class FreshRolloutOwnershipCoordinator {
   private sequence = 0
   private readonly hmacKey = randomBytes(32)
   private readonly participants = new Map<string, Participant>()
+  private readonly resumeParticipants = new Map<string, ResumeParticipant>()
   private readonly candidates = new Map<string, CandidateState>()
   private readonly pathLeases = new Map<string, PathLease>()
   private readonly candidateRevisions = new Map<string, number>()
@@ -166,10 +185,59 @@ export class FreshRolloutOwnershipCoordinator {
         participant.onLease = null
         participant.onDecision = null
 
-        // WHY prompt HMACs remain only until the root's admitted reads drain: a
-        // rollout event generated while this PTY was alive can arrive after
-        // stop. The tombstone must still contend with an identical live sibling,
-        // but callbacks and raw text are cleared immediately.
+        // WHY prompt HMACs remain through both the admitted-read drain and the
+        // bounded provider-flush grace: a rollout generated while this PTY was
+        // alive can be created after stop. The tombstone must still contend
+        // with an identical live sibling, but callbacks and raw text are
+        // cleared immediately.
+        this.recompute()
+      },
+    }
+  }
+
+  registerResumeParticipant(options: {
+    participantId: string
+    cwd: string
+    lineageIds: ReadonlySet<string>
+    requiredOverlapLimit: number
+    onLease: (lease: FreshRolloutLease) => void
+  }): ResumeRolloutParticipantHandle {
+    if (this.resumeParticipants.has(options.participantId)) {
+      throw new Error(
+        `Resume rollout participant ${options.participantId} is already registered`,
+      )
+    }
+    const participant: ResumeParticipant = {
+      id: options.participantId,
+      fingerprint: this.fingerprint('participant', options.participantId),
+      cwdFingerprint: this.fingerprint(
+        'cwd',
+        this.options.normalizeCwd(options.cwd),
+      ),
+      registeredAtMs: Date.now(),
+      // WHY raw Codex item IDs never enter the process-global graph: overlap
+      // equality is sufficient to prove copied history. Domain-separated HMACs
+      // preserve that equality without retaining provider identifiers.
+      lineageFingerprints: new Set(
+        [...options.lineageIds]
+          .filter(Boolean)
+          .map(id => this.fingerprint('lineage', id)),
+      ),
+      requiredOverlapLimit: options.requiredOverlapLimit,
+      onLease: options.onLease,
+      active: true,
+      withdrawnAtMs: null,
+      leasedCandidateFingerprint: null,
+    }
+    this.resumeParticipants.set(participant.id, participant)
+    this.recompute()
+
+    return {
+      unregister: () => {
+        if (!participant.active) return
+        participant.active = false
+        participant.withdrawnAtMs = Date.now()
+        participant.onLease = null
         this.recompute()
       },
     }
@@ -234,6 +302,11 @@ export class FreshRolloutOwnershipCoordinator {
         .filter(Boolean)
         .map(normalized => this.fingerprint('prompt', normalized)),
     )
+    const lineageFingerprints = new Set(
+      candidate.lineageIds
+        .filter(Boolean)
+        .map(id => this.fingerprint('lineage', id)),
+    )
     const previous = this.candidates.get(candidateFingerprint)
 
     if (!previous) {
@@ -245,6 +318,7 @@ export class FreshRolloutOwnershipCoordinator {
         messageFirstObservedAt: new Map(
           [...messages].map(message => [message, observation.sequence]),
         ),
+        lineageFingerprints,
         historicalContenders: new Set(),
         quarantined: options.readCapExceeded === true,
         blocked: false,
@@ -267,6 +341,8 @@ export class FreshRolloutOwnershipCoordinator {
 
     const lostEvidence = [...previous.messageFirstObservedAt.keys()]
       .some(message => !messages.has(message))
+    const lostLineageEvidence = [...previous.lineageFingerprints]
+      .some(lineage => !lineageFingerprints.has(lineage))
     const cwdChanged = previous.cwdFingerprint !== null &&
       cwdFingerprint !== null && previous.cwdFingerprint !== cwdFingerprint
     const threadChanged = previous.threadFingerprint !== null &&
@@ -274,7 +350,12 @@ export class FreshRolloutOwnershipCoordinator {
     const generationChanged = previous.generationId !== null &&
       observation.generationId !== null &&
       previous.generationId !== observation.generationId
-    if (lostEvidence || cwdChanged || threadChanged || generationChanged) {
+    if (lostEvidence || lostLineageEvidence || cwdChanged || threadChanged ||
+      generationChanged) {
+      // WHY rollout prefixes are append-only evidence. Losing a copied ID while
+      // keeping the same inode/path means truncation or replacement; retaining
+      // the old HMAC would allow a later resume owner to lease from history no
+      // longer present in the physical file.
       previous.quarantined = true
       this.recompute()
       return
@@ -288,6 +369,9 @@ export class FreshRolloutOwnershipCoordinator {
       if (!previous.messageFirstObservedAt.has(message)) {
         previous.messageFirstObservedAt.set(message, observation.sequence)
       }
+    }
+    for (const lineageFingerprint of lineageFingerprints) {
+      previous.lineageFingerprints.add(lineageFingerprint)
     }
     this.recompute()
   }
@@ -355,28 +439,70 @@ export class FreshRolloutOwnershipCoordinator {
     lease.ownerId = null
   }
 
-  compactInactiveState(): void {
+  compactInactiveState(nowMs = Date.now()): void {
     // WHY compaction happens only after the root watcher and admitted reads have
     // drained: until then, an inactive prompt HMAC can still prove that a late
-    // event belongs to the stopped PTY and must block a sibling. Once drained,
-    // causal prefix snapshots make those participants unnecessary.
-    for (const [participantId, participant] of this.participants) {
-      if (!participant.active) this.participants.delete(participantId)
-    }
+    // event belongs to the stopped PTY and must block a sibling. Draining is not
+    // enough to delete that proof, however: Codex can flush a brand-new file
+    // only after its PTY has closed. Keep the content-safe tombstone through the
+    // provider's bounded file-arrival grace, then remove it on the timer-driven
+    // pass. That makes teardown order irrelevant without retaining raw prompts.
+    this.expireInactiveParticipants(nowMs)
     for (const candidate of this.candidates.values()) {
       candidate.filePath = null
       if (candidate.quarantined || candidate.blocked || candidate.leased) {
         candidate.cwdFingerprint = null
         candidate.threadFingerprint = null
         candidate.messageFirstObservedAt.clear()
+        candidate.lineageFingerprints.clear()
       }
     }
+  }
+
+  expireInactiveParticipants(nowMs = Date.now()): void {
+    for (const [participantId, participant] of this.participants) {
+      if (participant.active || participant.withdrawnAtMs === null) continue
+      if (participant.withdrawnAtMs + PARTICIPANT_FILE_GRACE_MS > nowMs) {
+        continue
+      }
+      this.participants.delete(participantId)
+    }
+    for (const [participantId, participant] of this.resumeParticipants) {
+      if (participant.active || participant.withdrawnAtMs === null) continue
+      if (participant.withdrawnAtMs + PARTICIPANT_FILE_GRACE_MS > nowMs) {
+        continue
+      }
+      this.resumeParticipants.delete(participantId)
+    }
+  }
+
+  millisecondsUntilInactiveExpiry(nowMs = Date.now()): number | null {
+    let minimum: number | null = null
+    for (const participant of this.participants.values()) {
+      if (participant.active || participant.withdrawnAtMs === null) continue
+      const remaining = Math.max(
+        0,
+        participant.withdrawnAtMs + PARTICIPANT_FILE_GRACE_MS - nowMs,
+      )
+      minimum = minimum === null ? remaining : Math.min(minimum, remaining)
+    }
+    for (const participant of this.resumeParticipants.values()) {
+      if (participant.active || participant.withdrawnAtMs === null) continue
+      const remaining = Math.max(
+        0,
+        participant.withdrawnAtMs + PARTICIPANT_FILE_GRACE_MS - nowMs,
+      )
+      minimum = minimum === null ? remaining : Math.min(minimum, remaining)
+    }
+    return minimum
   }
 
   inspect(): FreshRolloutOwnershipInspection {
     return {
       activeParticipantCount: [...this.participants.values()]
-        .filter(participant => participant.active).length,
+        .filter(participant => participant.active).length +
+        [...this.resumeParticipants.values()]
+          .filter(participant => participant.active).length,
       observedCandidateCount: this.candidates.size,
       leasedPathCount: this.pathLeases.size,
       historicallyContestedPathCount: [...this.candidates.values()]
@@ -397,12 +523,21 @@ export class FreshRolloutOwnershipCoordinator {
         hasDecisionCallback: participant.onDecision !== null,
         active: participant.active,
       })),
+      resumeParticipants: [...this.resumeParticipants.values()]
+        .map(participant => ({
+          id: participant.id,
+          cwdFingerprint: participant.cwdFingerprint,
+          lineageFingerprints: [...participant.lineageFingerprints],
+          hasLeaseCallback: participant.onLease !== null,
+          active: participant.active,
+        })),
       candidates: [...this.candidates.values()].map(candidate => ({
         fingerprint: candidate.fingerprint,
         hasRawPath: candidate.filePath !== null,
         cwdFingerprint: candidate.cwdFingerprint,
         threadFingerprint: candidate.threadFingerprint,
         messageFingerprints: [...candidate.messageFirstObservedAt.keys()],
+        lineageFingerprints: [...candidate.lineageFingerprints],
         blocked: candidate.blocked,
         quarantined: candidate.quarantined,
       })),
@@ -432,6 +567,103 @@ export class FreshRolloutOwnershipCoordinator {
   }
 
   private recomputeOnce(): void {
+    const activeResumeEdges = new Map<string, Set<string>>()
+    const resumeCandidateEdges = new Map<string, Set<string>>()
+
+    // WHY lineage runs before prompt equality: a reconstructed fork carries
+    // copied user messages and copied opaque item IDs in the same durable
+    // prefix. Prompt equality alone would misclassify that history as a fresh
+    // sibling. Copied provider IDs are stronger ownership evidence, so one
+    // graph must reserve their candidate before fresh edges are considered.
+    for (const participant of this.resumeParticipants.values()) {
+      if (participant.leasedCandidateFingerprint) continue
+      const requiredOverlap = Math.min(
+        participant.requiredOverlapLimit,
+        participant.lineageFingerprints.size,
+      )
+      if (requiredOverlap <= 0) continue
+      for (const [candidateFingerprint, candidate] of this.candidates) {
+        if (candidate.quarantined || candidate.blocked || candidate.leased ||
+          this.pathLeases.has(candidateFingerprint) ||
+          candidate.cwdFingerprint !== participant.cwdFingerprint) {
+          continue
+        }
+        if (!this.participantGenerationWindowContains(participant, candidate)) {
+          continue
+        }
+        let overlap = 0
+        for (const lineage of candidate.lineageFingerprints) {
+          if (participant.lineageFingerprints.has(lineage)) overlap += 1
+          if (overlap >= requiredOverlap) break
+        }
+        if (overlap < requiredOverlap) continue
+
+        let claimantIds = resumeCandidateEdges.get(candidateFingerprint)
+        if (!claimantIds) {
+          claimantIds = new Set()
+          resumeCandidateEdges.set(candidateFingerprint, claimantIds)
+        }
+        claimantIds.add(participant.id)
+        if (participant.active) {
+          let candidateIds = activeResumeEdges.get(participant.id)
+          if (!candidateIds) {
+            candidateIds = new Set()
+            activeResumeEdges.set(participant.id, candidateIds)
+          }
+          candidateIds.add(candidateFingerprint)
+        }
+      }
+    }
+
+    for (const [candidateFingerprint, claimantIds] of resumeCandidateEdges) {
+      const candidate = this.candidates.get(candidateFingerprint)
+      if (!candidate) continue
+      for (const claimantId of claimantIds) {
+        const claimant = this.resumeParticipants.get(claimantId)
+        if (claimant) candidate.historicalContenders.add(claimant.fingerprint)
+      }
+      const includesInactiveOwner = [...claimantIds].some(
+        claimantId => !this.resumeParticipants.get(claimantId)?.active,
+      )
+      if (claimantIds.size > 1 || includesInactiveOwner) candidate.blocked = true
+    }
+
+    const resumeCallbacks: Array<{
+      participant: ResumeParticipant
+      lease: FreshRolloutLease
+    }> = []
+    for (const [participantId, candidateFingerprints] of activeResumeEdges) {
+      if (candidateFingerprints.size !== 1) continue
+      const [candidateFingerprint] = candidateFingerprints
+      const claimantIds = resumeCandidateEdges.get(candidateFingerprint)
+      if (!claimantIds || claimantIds.size !== 1) continue
+      const participant = this.resumeParticipants.get(participantId)
+      const candidate = this.candidates.get(candidateFingerprint)
+      if (!participant?.active || participant.leasedCandidateFingerprint ||
+        !candidate || candidate.blocked || candidate.quarantined ||
+        candidate.leased || !candidate.filePath ||
+        this.pathLeases.has(candidateFingerprint)) {
+        continue
+      }
+
+      participant.leasedCandidateFingerprint = candidateFingerprint
+      candidate.leased = true
+      this.pathLeases.set(candidateFingerprint, {
+        ownerId: participantId,
+        kind: 'resume-lineage',
+        proofFingerprint: participant.fingerprint,
+        status: 'active',
+      })
+      resumeCallbacks.push({
+        participant,
+        lease: {
+          participantId,
+          filePath: candidate.filePath,
+          candidateFingerprint,
+        },
+      })
+    }
+
     const activeParticipantEdges = new Map<string, Set<string>>()
     const candidateEdges = new Map<string, Set<string>>()
 
@@ -440,6 +672,7 @@ export class FreshRolloutOwnershipCoordinator {
       for (const [candidateFingerprint, candidate] of this.candidates) {
         if (candidate.quarantined || candidate.blocked || candidate.leased ||
           this.pathLeases.has(candidateFingerprint) ||
+          resumeCandidateEdges.has(candidateFingerprint) ||
           candidate.cwdFingerprint !== participant.cwdFingerprint) {
           continue
         }
@@ -530,6 +763,17 @@ export class FreshRolloutOwnershipCoordinator {
 
     this.publishDecisions(activeParticipantEdges, candidateEdges)
 
+    for (const { participant, lease } of resumeCallbacks) {
+      try {
+        participant.onLease?.(lease)
+      } catch {
+        participant.active = false
+        participant.withdrawnAtMs = Date.now()
+        participant.onLease = null
+        this.retireOwnerLeases(participant.id, false)
+      }
+    }
+
     for (const { participant, lease } of callbacks) {
       try {
         participant.onLease?.(lease)
@@ -550,6 +794,7 @@ export class FreshRolloutOwnershipCoordinator {
       candidate.cwdFingerprint = null
       candidate.threadFingerprint = null
       candidate.messageFirstObservedAt.clear()
+      candidate.lineageFingerprints.clear()
     }
   }
 
@@ -639,11 +884,25 @@ export class FreshRolloutOwnershipCoordinator {
     candidate: CandidateState,
   ): boolean {
     if (participant.withdrawnAtMs === null) return false
+    return this.participantGenerationWindowContains(participant, candidate)
+  }
+
+  private participantGenerationWindowContains(
+    participant: Pick<
+      Participant | ResumeParticipant,
+      'active' | 'registeredAtMs' | 'withdrawnAtMs'
+    >,
+    candidate: CandidateState,
+  ): boolean {
     const generationAtMs = candidate.birthtimeMs ??
       candidate.generationObservedAtMs
-    return generationAtMs <=
-        participant.withdrawnAtMs + PARTICIPANT_FILE_GRACE_MS &&
-      generationAtMs >= participant.registeredAtMs - PARTICIPANT_FILE_GRACE_MS
+    if (generationAtMs <
+      participant.registeredAtMs - PARTICIPANT_FILE_GRACE_MS) {
+      return false
+    }
+    if (participant.active) return true
+    return participant.withdrawnAtMs !== null && generationAtMs <=
+      participant.withdrawnAtMs + PARTICIPANT_FILE_GRACE_MS
   }
 
   private fingerprint(domain: string, value: string): string {

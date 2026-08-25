@@ -99,6 +99,13 @@ function buildFixture(source: FixtureSource, raw: string) {
       )
     }
   }
+  const lineageTokenByValue = collectLineageValues(raw)
+    .reduce((tokens, value) => {
+      if (!tokens.has(value)) {
+        tokens.set(value, `recorded-lineage-${source.id}-${tokens.size}`)
+      }
+      return tokens
+    }, new Map<string, string>())
 
   const localObservation = source.localPromptObservationIndex === null
     ? null
@@ -125,6 +132,7 @@ function buildFixture(source: FixtureSource, raw: string) {
         item.parsed,
         item.originalLineIndex,
         tokenByNormalizedText,
+        lineageTokenByValue,
         source.id,
       )
       return sanitized ? [sanitized] : []
@@ -151,6 +159,17 @@ function buildFixture(source: FixtureSource, raw: string) {
     throw new Error(
       `${source.id}: sanitization changed ordered user wire shape`,
     )
+  }
+  const sourceLineageShape = collectLineageWireShape(
+    raw,
+    value => lineageTokenByValue.get(value) ?? null,
+  )
+  const fixtureLineageShape = collectLineageWireShape(
+    fixtureText,
+    value => value,
+  )
+  if (JSON.stringify(sourceLineageShape) !== JSON.stringify(fixtureLineageShape)) {
+    throw new Error(`${source.id}: sanitization changed copied-lineage wire shape`)
   }
 
   if (source.expectedLegacyDecision !== 'not-applicable') {
@@ -220,7 +239,7 @@ function buildFixture(source: FixtureSource, raw: string) {
   }
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     id: source.id,
     provenance: {
       // WHY the committed projection keeps only an opaque source label: Codex
@@ -244,7 +263,8 @@ function buildFixture(source: FixtureSource, raw: string) {
         characterCount: message.text.length,
       })),
       wireShape: sourceShape,
-      transformation: 'ownership-projection-v2',
+      lineageWireShape: sourceLineageShape,
+      transformation: 'ownership-projection-v3',
     },
     ownership: {
       localPromptToken,
@@ -260,6 +280,7 @@ function sanitizeOwnershipLine(
   line: JsonRecord,
   originalLineIndex: number,
   tokenByNormalizedText: Map<string, string>,
+  lineageTokenByValue: Map<string, string>,
   fixtureId: string,
 ): JsonRecord | null {
   const type = typeof line.type === 'string' ? line.type : null
@@ -296,11 +317,13 @@ function sanitizeOwnershipLine(
     }
   }
 
+  const lineage = sanitizeLineageFields(payload, lineageTokenByValue)
+
   if (type === 'turn_context' && typeof payload.cwd === 'string') {
     return {
       timestamp,
       type,
-      payload: { cwd: '/recorded/worktree' },
+      payload: { cwd: '/recorded/worktree', ...lineage },
       _recordedLineIndex: originalLineIndex,
     }
   }
@@ -316,6 +339,7 @@ function sanitizeOwnershipLine(
       payload: {
         type: 'user_message',
         message: sanitizeTextAtom(text, token, true),
+        ...lineage,
       },
       _recordedLineIndex: originalLineIndex,
     }
@@ -348,6 +372,7 @@ function sanitizeOwnershipLine(
       payload: {
         type: 'message',
         role: 'user',
+        ...lineage,
         content: records.map(item => {
           const originalText = item?.text as string
           const placeToken = !tokenPlaced && originalText.length > 0
@@ -362,7 +387,48 @@ function sanitizeOwnershipLine(
     }
   }
 
-  return null
+  if (Object.keys(lineage).length === 0) return null
+  return {
+    timestamp,
+    type,
+    payload: {
+      ...(typeof payload.type === 'string' ? { type: payload.type } : {}),
+      ...(typeof payload.role === 'string' ? { role: payload.role } : {}),
+      ...lineage,
+    },
+    _recordedLineIndex: originalLineIndex,
+  }
+}
+
+function sanitizeLineageFields(
+  payload: JsonRecord,
+  lineageTokenByValue: Map<string, string>,
+): JsonRecord {
+  const fields: JsonRecord = {}
+  for (const key of ['id', 'call_id', 'turn_id'] as const) {
+    const value = payload[key]
+    if (typeof value !== 'string' || value.length === 0) continue
+    const token = lineageTokenByValue.get(value)
+    if (!token) throw new Error(`lineage field ${key} lacked a recorded token`)
+    fields[key] = token
+  }
+  return fields
+}
+
+function collectLineageValues(text: string): string[] {
+  const values: string[] = []
+  for (const rawLine of text.split('\n')) {
+    if (!rawLine.trim()) continue
+    const line = JSON.parse(rawLine) as JsonRecord
+    if (line.type === 'session_meta') continue
+    const payload = asRecord(line.payload)
+    if (!payload) continue
+    for (const key of ['id', 'call_id', 'turn_id'] as const) {
+      const value = payload[key]
+      if (typeof value === 'string' && value.length > 0) values.push(value)
+    }
+  }
+  return values
 }
 
 function sanitizeSessionSource(source: unknown): unknown {
@@ -493,6 +559,37 @@ function collectOwnershipWireShape(
         }]
       }
       return []
+    })
+}
+
+function collectLineageWireShape(
+  text: string,
+  equalityClass: (value: string) => string | null,
+) {
+  return text
+    .split('\n')
+    .map((rawLine, parsedLineIndex) => ({ rawLine, parsedLineIndex }))
+    .filter(item => item.rawLine.trim().length > 0)
+    .flatMap(item => {
+      const line = JSON.parse(item.rawLine) as JsonRecord
+      if (line.type === 'session_meta') return []
+      const payload = asRecord(line.payload)
+      if (!payload) return []
+      const fields = (['id', 'call_id', 'turn_id'] as const)
+        .flatMap(key => {
+          const value = payload[key]
+          if (typeof value !== 'string' || value.length === 0) return []
+          return [{ key, equalityClass: equalityClass(value) }]
+        })
+      if (fields.length === 0) return []
+      return [{
+        originalLineIndex: typeof line._recordedLineIndex === 'number'
+          ? line._recordedLineIndex
+          : item.parsedLineIndex,
+        type: line.type,
+        payloadType: typeof payload.type === 'string' ? payload.type : null,
+        fields,
+      }]
     })
 }
 

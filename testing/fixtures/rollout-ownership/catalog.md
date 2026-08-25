@@ -3,8 +3,8 @@
 These fixtures are sanitized projections of real Codex rollout files, not
 plausible JSON written to fit the claimant. They preserve the facts ownership
 uses: session class, CLI version, line order, user-message transport, equality
-between duplicated messages, the locally submitted prompt, and the old/new
-claim decision.
+between duplicated messages, copied-lineage ID equality, the locally submitted
+prompt, and the old/new claim decision.
 
 Raw prompt, bootstrap, path, agent, and thread text is replaced. Every fixture
 stores an opaque source label, SHA-256, original line/user counts, original user
@@ -78,10 +78,11 @@ captured. A minimal source entry is:
 ```
 
 Generation and `--verify` run the production parser over the private source and
-sanitized projection, then compare ordered transport/equality signatures and
-the legacy decision. Verification fails if the source hash or projection drifts,
-if a pinned live prefix is shorter than recorded, if a private path survives,
-or if complete recorded user text leaks into the fixture.
+sanitized projection, then compare ordered prompt transport/equality and
+copied-lineage field/equality signatures plus the legacy decision. Verification
+fails if the source hash or projection drifts, if a pinned live prefix is
+shorter than recorded, if a private path survives, or if complete recorded user
+text leaks into the fixture.
 
 ## What these fixtures do not decide
 

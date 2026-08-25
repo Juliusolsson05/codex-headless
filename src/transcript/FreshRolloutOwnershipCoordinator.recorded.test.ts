@@ -285,19 +285,7 @@ describe('recorded process-wide fresh rollout ownership', () => {
     const fresh = register(owner, 'fresh-sibling', freshLeases)
     fresh.registerPrompt(copiedPrompt)
 
-    // The cast states the Stage 11 boundary before implementation exists. It
-    // keeps this red checkpoint executable instead of making TypeScript failure
-    // the only evidence that the old coordinator lacks lineage arbitration.
-    const resumeOwner = owner as FreshRolloutOwnershipCoordinator & {
-      registerResumeParticipant(options: {
-        participantId: string
-        cwd: string
-        lineageIds: ReadonlySet<string>
-        requiredOverlapLimit: number
-        onLease: (lease: FreshRolloutLease) => void
-      }): { unregister(): void }
-    }
-    resumeOwner.registerResumeParticipant({
+    owner.registerResumeParticipant({
       participantId: 'resume-owner',
       cwd: '/recorded/worktree',
       lineageIds,
@@ -312,6 +300,79 @@ describe('recorded process-wide fresh rollout ownership', () => {
       participantId: 'resume-owner',
       filePath: candidate.filePath,
     }])
+  })
+
+  it('does not let an unrelated resume claimant starve a recorded fresh rollout', () => {
+    const resumeFixture = loadFixture('subagent-0149-exact-attachment')
+    const freshFixture = loadFixture('modern-0149-agents-first')
+    const freshCandidate = candidateFromFixture(freshFixture)
+    const resumeLineageIds = new Set<string>()
+    collectRolloutLineageIds(
+      resumeFixture.lines.map(line => JSON.stringify(line)).join('\n'),
+      resumeLineageIds,
+      8000,
+    )
+    const owner = coordinator()
+    const resumeLeases: FreshRolloutLease[] = []
+    const freshLeases: FreshRolloutLease[] = []
+    owner.registerResumeParticipant({
+      participantId: 'unrelated-resume',
+      cwd: '/recorded/worktree',
+      lineageIds: resumeLineageIds,
+      requiredOverlapLimit: 3,
+      onLease: lease => resumeLeases.push(lease),
+    })
+    const fresh = register(owner, 'independent-fresh', freshLeases)
+    fresh.registerPrompt(promptFromFixture(freshFixture))
+
+    // WHY a resume participant is not a root-wide lock: only copied lineage is
+    // stronger than prompt equality. Treating its mere presence as precedence
+    // would trade the crosswire bug for silent starvation of unrelated PTYs.
+    owner.observeCandidate(freshCandidate)
+
+    expect(resumeLeases).toEqual([])
+    expect(freshLeases).toMatchObject([{
+      participantId: 'independent-fresh',
+      filePath: freshCandidate.filePath,
+    }])
+  })
+
+  it('holds a recorded lineage candidate claimed by two resume participants', () => {
+    const fixture = loadFixture('subagent-0149-exact-attachment')
+    const candidate = candidateFromFixture(fixture)
+    const lineageIds = new Set<string>()
+    collectRolloutLineageIds(
+      fixture.lines.map(line => JSON.stringify(line)).join('\n'),
+      lineageIds,
+      8000,
+    )
+    const owner = coordinator()
+    const firstLeases: FreshRolloutLease[] = []
+    const secondLeases: FreshRolloutLease[] = []
+    for (const [participantId, leases] of [
+      ['resume-first', firstLeases],
+      ['resume-second', secondLeases],
+    ] as const) {
+      owner.registerResumeParticipant({
+        participantId,
+        cwd: '/recorded/worktree',
+        lineageIds,
+        requiredOverlapLimit: 3,
+        onLease: lease => leases.push(lease),
+      })
+    }
+
+    // WHY copied provider IDs prove lineage but do not distinguish two local
+    // owners with the same history. Scheduling either callback would recreate
+    // the same process-order identity bug fixed for equal fresh prompts.
+    owner.observeCandidate(candidate)
+
+    expect(firstLeases).toEqual([])
+    expect(secondLeases).toEqual([])
+    expect(owner.inspect()).toMatchObject({
+      historicallyContestedPathCount: 1,
+      leasedPathCount: 0,
+    })
   })
 
   it('leases when a later immutable prefix first reveals the recorded prompt', () => {
@@ -336,6 +397,27 @@ describe('recorded process-wide fresh rollout ownership', () => {
       participantId: 'growing-prefix',
       filePath: candidate.filePath,
     }])
+  })
+
+  it('quarantines a recorded prefix that loses previously observed lineage', () => {
+    const fixture = loadFixture('subagent-0149-exact-attachment')
+    const candidate = candidateFromFixture(fixture)
+    if (candidate.lineageIds.length === 0) {
+      throw new Error('recorded exact fixture has no lineage ids')
+    }
+    const owner = coordinator()
+    owner.observeCandidate(candidate)
+
+    // WHY the second observation retains the real recording's cwd, thread,
+    // prompts, and path while removing only copied IDs. JSONL is append-only;
+    // this shape therefore represents a physical truncation/rewrite, not a
+    // plausible new provider format that should inherit the older proof.
+    owner.observeCandidate({ ...candidate, lineageIds: [] })
+
+    expect(owner.inspect()).toMatchObject({
+      quarantinedPathCount: 1,
+      leasedPathCount: 0,
+    })
   })
 
   it('allows exact identity to reopen a cleanly retired path but not overlap it', () => {
@@ -441,7 +523,7 @@ describe('recorded process-wide fresh rollout ownership', () => {
     owner.observeCandidate(candidate)
     handle.unregister()
     owner.retireOwnerLeases('retention-owner', true)
-    owner.compactInactiveState()
+    owner.compactInactiveState(Date.now() + 6000)
 
     const retained = JSON.stringify(owner.inspectRetentionForTesting())
     expect(retained).not.toContain(prompt)

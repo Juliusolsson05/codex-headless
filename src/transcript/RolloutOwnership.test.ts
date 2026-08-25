@@ -34,6 +34,7 @@ function freshCandidate(
     threadId: filePath,
     cwd: candidateCwd,
     cliVersion: 'test',
+    lineageIds: [],
     userMessages: message
       ? [{
           source: 'event_msg',
