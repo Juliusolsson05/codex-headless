@@ -60,6 +60,49 @@ function prepareRecordedResume(options: {
   })
 }
 
+async function prepareRecordedCapabilityFixture(): Promise<{
+  codexHome: string
+  cwd: string
+  generationId: string
+  preparation: CodexResumeRolloutPreparation
+  rolloutPath: string
+  threadId: string
+}> {
+  // WHY capability tests need the same durable proof as the implementation:
+  // constructing a plausible options literal would test our imagination and
+  // would entirely skip locator validation, exact-path reservation, generation
+  // binding, and copied-lineage registration. This helper starts from the real
+  // recorded exact-resume corpus and returns the capability the public factory
+  // actually creates, so the opacity boundary is exercised around real state.
+  const codexHome = mkdtempSync(join(tmpdir(), 'codex-resume-capability-'))
+  temporaryDirectories.push(codexHome)
+  const cwd = '/recorded/worktree'
+  const fixture = loadFixture('subagent-0149-exact-attachment')
+  const sessionMeta = fixture.lines.find(line => line.type === 'session_meta')
+  const threadId = (sessionMeta?.payload as { id?: unknown } | undefined)?.id
+  if (typeof threadId !== 'string') {
+    throw new Error('recorded exact-id fixture has no thread id')
+  }
+  const day = join(codexHome, 'sessions', '2026', '08', '24')
+  mkdirSync(day, { recursive: true })
+  const rolloutPath = join(day, `rollout-recorded-${threadId}.jsonl`)
+  writeFileSync(rolloutPath, rolloutText(fixture))
+  const rolloutStat = statSync(rolloutPath)
+  const preparation = await prepareRecordedResume({
+    codexHome,
+    cwd,
+    resumeThreadId: threadId,
+  })
+  return {
+    codexHome,
+    cwd,
+    generationId: `${rolloutStat.dev}:${rolloutStat.ino}`,
+    preparation,
+    rolloutPath,
+    threadId,
+  }
+}
+
 async function waitFor(predicate: () => boolean, ms = 3000): Promise<boolean> {
   const deadline = Date.now() + ms
   while (Date.now() < deadline) {
@@ -1193,6 +1236,133 @@ describe('process-wide fresh rollout watcher', () => {
     }
   })
 
+  describe('recorded resume rollout capability boundary', () => {
+    it('keeps ownership state out of enumerable and serialized surfaces', async () => {
+      const recorded = await prepareRecordedCapabilityFixture()
+
+      try {
+        const serialized = JSON.stringify(recorded.preparation)
+        const sensitiveValues = [
+          recorded.codexHome,
+          recorded.cwd,
+          recorded.generationId,
+          recorded.rolloutPath,
+          recorded.threadId,
+        ]
+
+        // WHY TypeScript `private` is not a privacy boundary in emitted JS. A
+        // preparation is routinely stored across the pre-spawn rollback window,
+        // where generic loggers, object spread, and diagnostic serialization can
+        // inspect it. The capability may expose explicit behavior (`dispose`),
+        // but none of the recorded path/identity/lineage state may be an own key
+        // or silently become part of a crash bundle.
+        expect({
+          ownKeys: Reflect.ownKeys(recorded.preparation).map(String),
+          serialized,
+          serializedSensitiveValues: sensitiveValues.filter(value =>
+            serialized.includes(value),
+          ),
+        }).toEqual({
+          ownKeys: [],
+          serialized: '{}',
+          serializedSensitiveValues: [],
+        })
+      } finally {
+        await recorded.preparation.dispose(true)
+      }
+    })
+
+    it('rejects reflective construction outside the public factory', async () => {
+      const recorded = await prepareRecordedCapabilityFixture()
+
+      try {
+        const runtimeConstructor = (
+          recorded.preparation as unknown as { constructor: new (...args: unknown[]) => unknown }
+        ).constructor
+
+        // WHY hiding the class from the root export is insufficient: any holder
+        // of one genuine object can recover `.constructor` and call it. Use the
+        // real recorded path/generation in the attack so a passing test proves a
+        // runtime construction token, not merely validation of nonsense input.
+        expect(() => Reflect.construct(runtimeConstructor, [{
+          sessionsDir: join(recorded.codexHome, 'sessions'),
+          initialPath: recorded.rolloutPath,
+          initialGenerationId: recorded.generationId,
+          resumeThreadId: recorded.threadId,
+          cwd: recorded.cwd,
+          acquisition: null,
+        }])).toThrow(/prepareCodexResumeRollout|factory|capability/i)
+      } finally {
+        await recorded.preparation.dispose(true)
+      }
+    })
+
+    it('rejects plain-object and genuine-prototype forgeries before startup', async () => {
+      const recorded = await prepareRecordedCapabilityFixture()
+      const accepted: CodexHeadless[] = []
+      const duckForgery = {
+        ownerId: 'forged-recorded-owner',
+        sessionsDir: join(recorded.codexHome, 'sessions'),
+        initialPath: recorded.rolloutPath,
+        initialGenerationId: recorded.generationId,
+        resumeThreadId: recorded.threadId,
+        cwd: recorded.cwd,
+        dispose: async () => undefined,
+      } as unknown as CodexResumeRolloutPreparation
+      const prototypeForgery = Object.create(
+        Object.getPrototypeOf(recorded.preparation) as object,
+      ) as CodexResumeRolloutPreparation
+      const outcomes: string[] = []
+
+      try {
+        for (const forgery of [duckForgery, prototypeForgery]) {
+          try {
+            accepted.push(new CodexHeadless({
+              pty: inertPty(),
+              cwd: recorded.cwd,
+              resumeThreadId: recorded.threadId,
+              resumeRolloutPreparation: forgery,
+            }))
+            outcomes.push('accepted')
+          } catch {
+            outcomes.push('rejected')
+          }
+        }
+
+        // WHY `instanceof` alone is forgeable with Object.create, while shape
+        // checks accept the duck object. Rejection must happen in the constructor
+        // before HeadlessTerminal allocates resources; waiting until start would
+        // let an untrusted object participate in rollback and lease retirement.
+        expect(outcomes).toEqual(['rejected', 'rejected'])
+      } finally {
+        await Promise.all(accepted.map(headless => headless.stop()))
+        await recorded.preparation.dispose(true)
+      }
+    })
+
+    it('preserves parent rollback by reopening after factory capability disposal', async () => {
+      const recorded = await prepareRecordedCapabilityFixture()
+      let replacement: CodexResumeRolloutPreparation | null = null
+
+      try {
+        // WHY opacity cannot make cleanup package-private. The parent owns this
+        // exact reservation until PTY construction and event wiring hand it to
+        // CodexHeadless, so public idempotent disposal is the one operation the
+        // capability must retain even after every state field becomes hidden.
+        await recorded.preparation.dispose(true)
+        replacement = await prepareRecordedResume({
+          codexHome: recorded.codexHome,
+          cwd: recorded.cwd,
+          resumeThreadId: recorded.threadId,
+        })
+        expect(replacement).toBeDefined()
+      } finally {
+        await replacement?.dispose(true)
+        await recorded.preparation.dispose(true)
+      }
+    })
+  })
+
   it('routes the recorded subagent through exact identity before tailing', async () => {
     const codexHome = mkdtempSync(join(tmpdir(), 'codex-exact-owner-'))
     temporaryDirectories.push(codexHome)
@@ -1332,46 +1502,50 @@ describe('process-wide fresh rollout watcher', () => {
       cwd: '/recorded/worktree',
       resumeThreadId: threadId,
     })
-
-    writeFileSync(
-      forkPath,
-      `${forkLines.map(line => JSON.stringify(line)).join('\n')}\n`,
-    )
-    expect(await waitFor(() =>
-      (preparation as unknown as { pendingLeases: unknown[] })
-        .pendingLeases.length === 1,
-    5000)).toBe(true)
-    const inodeA = statSync(forkPath)
-    const generationA = `${inodeA.dev}:${inodeA.ino}`
-    const pendingLease = (preparation as unknown as {
-      pendingLeases: Array<{ generationId?: string }>
-    }).pendingLeases[0]
-    expect(pendingLease?.generationId).toBe(generationA)
-
-    renameSync(forkPath, `${forkPath}.inode-a`)
-    const replacementSentinel = 'replacement-generation-must-not-commit'
-    writeFileSync(
-      forkPath,
-      `${forkLines.map(line => JSON.stringify(line)).join('\n')}\n` +
-        `${JSON.stringify({
-          timestamp: '2026-08-25T00:00:00.000Z',
-          type: 'event_msg',
-          payload: { type: 'agent_message', message: replacementSentinel },
-        })}\n`,
-    )
-    const seenMessages: string[] = []
-    const headless = new CodexHeadless({
-      pty: inertPty(),
-      cwd: '/recorded/worktree',
-      resumeThreadId: threadId,
-      resumeRolloutPreparation: preparation,
+    const monitor = await acquireFreshRolloutCoordinator({
+      sessionsRoot: join(codexHome, 'sessions'),
+      normalizeCwd: normalizeRolloutOwnershipPath,
+      normalizePath: normalizeRolloutOwnershipPath,
+      onError: () => undefined,
     })
-    headless.on('rollout-entry', line => {
-      const message = (line.payload as { message?: unknown } | undefined)?.message
-      if (typeof message === 'string') seenMessages.push(message)
-    })
+    let headless: CodexHeadless | null = null
 
     try {
+      writeFileSync(
+        forkPath,
+        `${forkLines.map(line => JSON.stringify(line)).join('\n')}\n`,
+      )
+      // WHY looking into `preparation.pendingLeases` made the privacy test
+      // self-defeating: it required the supposedly opaque capability to retain
+      // enumerable mutable internals. The second coordinator lease is the public
+      // ownership fact we need—X was reserved exactly and Y was lineage-leased—
+      // and proves the callback is buffered before CodexHeadless consumes it.
+      expect(await waitFor(() =>
+        monitor.coordinator.inspect().leasedPathCount === 2,
+      5000)).toBe(true)
+
+      renameSync(forkPath, `${forkPath}.inode-a`)
+      const replacementSentinel = 'replacement-generation-must-not-commit'
+      writeFileSync(
+        forkPath,
+        `${forkLines.map(line => JSON.stringify(line)).join('\n')}\n` +
+          `${JSON.stringify({
+            timestamp: '2026-08-25T00:00:00.000Z',
+            type: 'event_msg',
+            payload: { type: 'agent_message', message: replacementSentinel },
+          })}\n`,
+      )
+      const seenMessages: string[] = []
+      headless = new CodexHeadless({
+        pty: inertPty(),
+        cwd: '/recorded/worktree',
+        resumeThreadId: threadId,
+        resumeRolloutPreparation: preparation,
+      })
+      headless.on('rollout-entry', line => {
+        const message = (line.payload as { message?: unknown } | undefined)?.message
+        if (typeof message === 'string') seenMessages.push(message)
+      })
       await headless.start()
       await new Promise(resolve => setTimeout(resolve, 500))
       // WHY the lineage proof was buffered before CodexHeadless existed. That
@@ -1379,7 +1553,9 @@ describe('process-wide fresh rollout watcher', () => {
       // pathname-only lease currently loses the watcher's verified generation.
       expect(seenMessages).not.toContain(replacementSentinel)
     } finally {
-      await headless.stop()
+      await headless?.stop()
+      await preparation.dispose(true)
+      await monitor.release()
       if (previousCodexHome === undefined) delete process.env.CODEX_HOME
       else process.env.CODEX_HOME = previousCodexHome
     }
