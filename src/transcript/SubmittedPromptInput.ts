@@ -1,6 +1,5 @@
 import type { StableTerminalFrame } from '../terminal/HeadlessTerminal.js'
 import {
-  createCodex01491PromptInputProfile,
   isIssuedCodexPromptInputProfile,
   type CodexPromptInputProfile,
 } from './prompt-input/CodexPromptInputProfile.js'
@@ -198,6 +197,8 @@ export class SubmittedPromptInput {
       const cols = Math.max(140, ...rowTexts.map(row => [...row].length))
       frame = {
         generation: this.strictFrameGeneration,
+        layoutEpoch: 0,
+        providerLayoutEpoch: 0,
         cols,
         rows: rowTexts.map(text => ({
           text,
@@ -363,39 +364,19 @@ export class SubmittedPromptInput {
 }
 
 function compatibilityProfile(value: unknown): CodexPromptInputProfile | null {
-  if (isIssuedCodexPromptInputProfile(value)) return value
-  if (typeof value !== 'object' || value === null) return null
-  const profile = value as {
-    cliVersion?: unknown
-    upstreamTag?: unknown
-    configClass?: unknown
-    configOverrides?: unknown
-  }
-  if (profile.upstreamTag !== 'rust-v0.149.1' ||
-    profile.configClass !== 'recorded-default-01491' ||
-    !Array.isArray(profile.configOverrides) ||
-    profile.configOverrides.length !== 0 ||
-    typeof profile.cliVersion !== 'string') {
-    return null
-  }
-  try {
-    return createCodex01491PromptInputProfile({
-      cliVersion: profile.cliVersion,
-    })
-  } catch {
-    return null
-  }
+  // WHY a fixture description is evidence about one past recording, not
+  // authority over a live launch. The previous compatibility path upgraded a
+  // caller-authored lookalike into WeakSet-backed capability merely because its
+  // fields resembled the catalog. Only config/read attestation may issue the
+  // profile; the legacy facade can consume a genuine instance but never mint it.
+  return isIssuedCodexPromptInputProfile(value) ? value : null
 }
 
 function compatibilityProfileKey(value: unknown): string {
   if (isIssuedCodexPromptInputProfile(value)) {
     return `issued:${value.cliVersion}:${value.configOverrides.join('\u0000')}`
   }
-  try {
-    return `recorded:${JSON.stringify(value)}`
-  } catch {
-    return 'recorded:unserializable'
-  }
+  return 'unissued'
 }
 
 function longestMarkerPrefixSuffix(value: string, marker: string): string {

@@ -513,7 +513,10 @@ export class FreshRolloutOwnershipCoordinator {
     lease.ownerId = null
   }
 
-  compactInactiveState(nowMs = Date.now()): void {
+  compactInactiveState(
+    nowMs = Date.now(),
+    retainUnresolvedTransport = true,
+  ): void {
     // WHY compaction happens only after the root watcher and admitted reads have
     // drained: until then, an inactive prompt HMAC can still prove that a late
     // event belongs to the stopped PTY and must block a sibling. Draining is not
@@ -523,14 +526,71 @@ export class FreshRolloutOwnershipCoordinator {
     // pass. That makes teardown order irrelevant without retaining raw prompts.
     this.expireInactiveParticipants(nowMs)
     for (const candidate of this.candidates.values()) {
-      candidate.filePath = null
-      if (candidate.quarantined || candidate.blocked || candidate.leased) {
+      const terminal = this.candidateIsTerminal(candidate)
+      const keepForRescan = retainUnresolvedTransport &&
+        !terminal && this.activeParticipantCanStillUse(candidate)
+      // WHY unresolved and terminal candidates have opposite transport needs.
+      // A live participant may acquire new prompt/lineage evidence from a later
+      // append even when chokidar omitted that append, so its pathname is the
+      // poller's bounded recovery capability. A blocked/quarantined/leased
+      // candidate can never become a different ownership decision; retaining
+      // its UUID-bearing path buys no correctness and violates the privacy
+      // boundary. Final watcher shutdown passes false because no rescan remains.
+      if (!keepForRescan) candidate.filePath = null
+      if (terminal) {
         candidate.cwdFingerprint = null
         candidate.threadFingerprint = null
         candidate.messageFirstObservedAt.clear()
         candidate.lineageFingerprints.clear()
       }
     }
+  }
+
+  /**
+   * Whether the watcher must keep this pathname in its bounded rescan set.
+   *
+   * WHY the registry asks policy instead of duplicating it: only this graph can
+   * distinguish a candidate that may gain evidence for a live participant from
+   * one whose blocked/quarantined/leased state is terminal. Returning one bit
+   * exposes no path, provider id, prompt, or equality fingerprint.
+   */
+  requiresCandidateRescan(filePath: string): boolean {
+    const fingerprint = this.fingerprint(
+      'path',
+      this.options.normalizePath(filePath),
+    )
+    if (this.pathLeases.has(fingerprint)) return false
+    const candidate = this.candidates.get(fingerprint)
+    if (!candidate) {
+      return [...this.participants.values()].some(participant =>
+        participant.active && !participant.leasedCandidateFingerprint,
+      ) || [...this.resumeParticipants.values()].some(participant =>
+        participant.active && !participant.leasedCandidateFingerprint &&
+          participant.requiredOverlapLimit > 0 &&
+          participant.lineageFingerprints.size > 0,
+      )
+    }
+    return !this.candidateIsTerminal(candidate) &&
+      this.activeParticipantCanStillUse(candidate)
+  }
+
+  /**
+   * Tell transport whether a delayed event refers to an irreversible candidate.
+   *
+   * WHY this is separate from `requiresCandidateRescan`: a newly observed path
+   * can arrive just before its participant registers, so absence of an active
+   * claimant is not enough to discard the first read. Terminal ownership state
+   * is different—it cannot be reversed by callback order and may be evicted
+   * immediately after any delayed callback finishes.
+   */
+  isCandidateTransportTerminal(filePath: string): boolean {
+    const fingerprint = this.fingerprint(
+      'path',
+      this.options.normalizePath(filePath),
+    )
+    if (this.pathLeases.has(fingerprint)) return true
+    const candidate = this.candidates.get(fingerprint)
+    return candidate ? this.candidateIsTerminal(candidate) : false
   }
 
   expireInactiveParticipants(nowMs = Date.now()): void {
@@ -590,7 +650,11 @@ export class FreshRolloutOwnershipCoordinator {
   inspectRetentionForTesting(): unknown {
     return {
       participants: [...this.participants.values()].map(participant => ({
-        id: participant.id,
+        // WHY caller-owned ids are raw cross-session identity, just like paths
+        // and provider thread ids. The process-keyed HMAC is sufficient to prove
+        // retention/compaction equality without shipping a diagnostic identity
+        // store through this deep-importable testing projection.
+        fingerprint: participant.fingerprint,
         cwdFingerprint: participant.cwdFingerprint,
         promptFingerprints: [...participant.prompts.keys()],
         hasLeaseCallback: participant.onLease !== null,
@@ -599,7 +663,7 @@ export class FreshRolloutOwnershipCoordinator {
       })),
       resumeParticipants: [...this.resumeParticipants.values()]
         .map(participant => ({
-          id: participant.id,
+          fingerprint: participant.fingerprint,
           cwdFingerprint: participant.cwdFingerprint,
           lineageFingerprints: [...participant.lineageFingerprints],
           hasLeaseCallback: participant.onLease !== null,
@@ -1006,6 +1070,30 @@ export class FreshRolloutOwnershipCoordinator {
     if (participant.active) return true
     return participant.withdrawnAtMs !== null && generationAtMs <=
       participant.withdrawnAtMs + PARTICIPANT_FILE_GRACE_MS
+  }
+
+  private candidateIsTerminal(candidate: CandidateState): boolean {
+    return candidate.blocked || candidate.quarantined || candidate.leased ||
+      this.pathLeases.has(candidate.fingerprint)
+  }
+
+  private activeParticipantCanStillUse(candidate: CandidateState): boolean {
+    const cwdMayMatch = (participantCwdFingerprint: string): boolean =>
+      candidate.cwdFingerprint === null ||
+      candidate.cwdFingerprint === participantCwdFingerprint
+    const freshCanUse = [...this.participants.values()].some(participant =>
+      participant.active && !participant.leasedCandidateFingerprint &&
+        cwdMayMatch(participant.cwdFingerprint) &&
+        this.participantGenerationWindowContains(participant, candidate),
+    )
+    if (freshCanUse) return true
+    return [...this.resumeParticipants.values()].some(participant =>
+      participant.active && !participant.leasedCandidateFingerprint &&
+        participant.requiredOverlapLimit > 0 &&
+        participant.lineageFingerprints.size > 0 &&
+        cwdMayMatch(participant.cwdFingerprint) &&
+        this.participantGenerationWindowContains(participant, candidate),
+    )
   }
 
   private fingerprint(domain: string, value: string): string {

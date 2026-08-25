@@ -1212,16 +1212,19 @@ export class CodexHeadless extends EventEmitter {
     let currentPath = initialPath
     let switchQueue = Promise.resolve()
     let cleanupPromise: Promise<void> | null = null
-    let initialTailOpenAttempted = false
 
     try {
-      initialTailOpenAttempted = true
       currentStop = this.tailFile(initialPath, initialGenerationId)
     } catch (error) {
       // WHY preparation owns cleanup here: exact reservation and lineage
       // registration happened before this object existed. Splitting rollback
       // between two owners is how failed constructors leave phantom leases.
-      await preparation.dispose(!initialTailOpenAttempted)
+      // A synchronous throw means tailFile never returned its stop authority.
+      // FileTailer validates open+fstat before constructing its poll timer, so
+      // there is no physical tail to overlap and exact X is cleanly retryable.
+      // Asynchronous close failures still flow through the returned stop closure
+      // below and remain conservatively tombstoned.
+      await preparation.dispose(true)
       throw error
     }
 
@@ -1255,7 +1258,11 @@ export class CodexHeadless extends EventEmitter {
         // The new path was reserved before opening to preserve at-most-one
         // tail. Retire only that failed switch: the original tail remains live
         // and must keep its own active lease.
-        preparation.retirePathLease(filePath, false)
+        // WHY this is a clean retirement: tailFile did not return a stop closure,
+        // and its generation-bound constructor validates the descriptor before
+        // publishing any timer or instance field. X may have a live tail, but Y
+        // has none; conflating their resources permanently bricks a safe Y retry.
+        preparation.retirePathLease(filePath, true)
         this.emit(
           'rollout-error',
           error instanceof Error ? error : new Error(String(error)),
@@ -1759,13 +1766,30 @@ export class CodexHeadless extends EventEmitter {
           // coordinator has already installed an irreversible path lease before
           // invoking us. CodexHeadless owns I/O, while the transcript layer owns
           // identity; neither renderer nor parent adapter gets a second policy.
-          if (!lease.generationId) {
-            throw new Error('Codex fresh lease has no verified rollout generation')
+          try {
+            if (!lease.generationId) {
+              throw new Error('Codex fresh lease has no verified rollout generation')
+            }
+            this.freshRolloutStopTail = this.tailFile(
+              lease.filePath,
+              lease.generationId,
+            )
+          } catch (error) {
+            // WHY the coordinator cannot infer this from an arbitrary throwing
+            // onLease callback: another consumer could open a resource and then
+            // throw. Here CodexHeadless owns the exact transaction. A synchronous
+            // throw before tailFile returns means no stop closure, poller, or
+            // published activeRolloutPath exists, so this one path is cleanly
+            // retryable. Rethrowing still withdraws the failed participant; the
+            // coordinator's generic uncertain rollback sees an already-retired
+            // lease and cannot downgrade it to a tombstone.
+            acquisition.coordinator.retirePathLease(
+              this.freshRolloutParticipantId,
+              lease.filePath,
+              true,
+            )
+            throw error
           }
-          this.freshRolloutStopTail = this.tailFile(
-            lease.filePath,
-            lease.generationId,
-          )
           const state = latestDecision
           if (!state) return
           const {

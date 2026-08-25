@@ -16,6 +16,11 @@ const HISTORY_FOOTER = /^\s{2}reverse-i-search:/i
 const COMPLETION_FOOTER = /^\s{2}Press enter to insert or esc to close\s*$/i
 const QUEUE_FOOTER = /^  tab to queue(?: message)?\s+\d+% context left\s*$/i
 const IDLE_FOOTER = /^  \S.*\s·\s.+$/u
+// Codex 0.149.1 renders Vim mode as a distinct right-hand status atom, with a
+// run of layout padding before the atom and no content after it. A cwd ending
+// in `/Vim: Insert` is part of the left status value and has neither boundary.
+// Keeping this anchored is critical: paths and drafts are attacker-controlled.
+const VIM_STATUS_SUFFIX = / {2,}Vim: (?:Insert|Normal)$/u
 
 /**
  * Classify only Codex 0.149.1's current bottom pane.
@@ -39,52 +44,53 @@ export function classifyCodex01491ComposerSurface(
   if (HISTORY_FOOTER.test(bottom)) return { kind: 'history-search' }
   if (COMPLETION_FOOTER.test(bottom)) return { kind: 'completion-popup' }
 
-  const visibleBottom = rows.slice(Math.max(0, lastNonBlank - 14), lastNonBlank + 1)
-  const visibleBottomText = visibleBottom.join('\n')
-  if (/\bVim:\s+(?:Insert|Normal)\b/u.test(visibleBottomText)) {
-    // WHY `/vim` can change the live editor after launch even though the issued
-    // profile forces a non-Vim startup and removes the configurable toggle key.
-    // The provider advertises that drift in the bottom status; treating it as a
-    // normal composer would reinterpret modal commands as literal prompt text.
-    return { kind: 'unknown' }
+  const composerRow = findComposerRow(rows, lastNonBlank)
+  if (composerRow >= 0) {
+    const separatorRow = rows.findIndex((row, index) =>
+      index > composerRow && row.trim() === '',
+    )
+    if (separatorRow >= 0 && separatorRow <= lastNonBlank) {
+      const footerRows = rows
+        .slice(separatorRow + 1, lastNonBlank + 1)
+        .filter(row => row.trim() !== '')
+
+      // WHY draft text and cwd text are attacker-controlled, so sentinel words
+      // cannot be interpreted until the surrounding bottom pane proves what
+      // owns them. A primary composer has exactly one anchored provider footer;
+      // genuine trust/approval overlays have option rows plus their own footer
+      // and therefore fall through to modal classification below.
+      if (footerRows.length === 1 &&
+        (IDLE_FOOTER.test(bottom) || QUEUE_FOOTER.test(bottom))) {
+        if (VIM_STATUS_SUFFIX.test(bottom)) {
+          // WHY `/vim` can change the live editor after launch even though the
+          // issued profile forces a non-Vim startup. Only the provider's
+          // right-separated footer atom proves that drift; the same words in a
+          // cwd or draft remain ordinary content.
+          return { kind: 'unknown' }
+        }
+
+        const draftRows = rows.slice(composerRow, separatorRow)
+        const draftText = extractDraftText(draftRows, frame.cols)
+        if (draftText === null) return { kind: 'unknown' }
+
+        return {
+          kind: 'primary-composer',
+          draftText,
+          queueWithTab: QUEUE_FOOTER.test(bottom),
+        }
+      }
+    }
   }
-  if (isKnownNonComposerModal(visibleBottomText)) {
+
+  // Modal sentinels are consulted only after the bottom pane has failed the
+  // complete composer/footer structure. Searching before this point lets a
+  // normal prompt containing trust prose revoke its own submission evidence.
+  const visibleBottom = rows.slice(Math.max(0, lastNonBlank - 14), lastNonBlank + 1)
+  if (isKnownNonComposerModal(visibleBottom.join('\n'))) {
     return { kind: 'non-composer-modal' }
   }
 
-  const composerRow = findComposerRow(rows, lastNonBlank)
-  if (composerRow < 0) return { kind: 'unknown' }
-
-  const separatorRow = rows.findIndex((row, index) => index > composerRow && row.trim() === '')
-  if (separatorRow < 0 || separatorRow > lastNonBlank) return { kind: 'unknown' }
-
-  const footerRows = rows
-    .slice(separatorRow + 1, lastNonBlank + 1)
-    .filter(row => row.trim() !== '')
-
-  // WHY primary composer chrome has one summary/status row in the recorded
-  // 0.149.1 layouts. Multiple nonblank rows below the draft are an overlay or
-  // popup we have not classified. Guessing "still composer" would route Enter
-  // or Tab through controls that get first refusal upstream.
-  if (footerRows.length !== 1 ||
-    (!IDLE_FOOTER.test(bottom) && !QUEUE_FOOTER.test(bottom))) {
-    // WHY position alone is not enough: once the composer disappears, a user
-    // message can scroll to the physical bottom and contain its own `›` plus
-    // blank line. Requiring one of the two recorded provider footers prevents
-    // that transcript shape from becoming Enter evidence. The footer remains
-    // structural rather than semantic—its path/model text is never retained.
-    return { kind: 'unknown' }
-  }
-
-  const draftRows = rows.slice(composerRow, separatorRow)
-  const draftText = extractDraftText(draftRows, frame.cols)
-  if (draftText === null) return { kind: 'unknown' }
-
-  return {
-    kind: 'primary-composer',
-    draftText,
-    queueWithTab: QUEUE_FOOTER.test(bottom),
-  }
+  return { kind: 'unknown' }
 }
 
 function findComposerRow(rows: readonly string[], lastNonBlank: number): number {

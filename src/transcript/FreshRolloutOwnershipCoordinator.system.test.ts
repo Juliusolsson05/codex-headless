@@ -36,6 +36,24 @@ type RecordedOwnershipFixture = {
 const fixtureRoot = fileURLToPath(
   new URL('../../testing/fixtures/rollout-ownership/', import.meta.url),
 )
+const promptProfileAppServerFixture = fileURLToPath(new URL(
+  '../../testing/fixtures/prompt-input/codex-01491-app-server-fixture.mjs',
+  import.meta.url,
+))
+const recordedPromptProfilePreparation =
+  await codexHeadlessApi.prepareCodex01491PromptInputProfile({
+    binary: process.execPath,
+    cwd: process.cwd(),
+    baseArgs: [promptProfileAppServerFixture],
+    env: {
+      ...process.env,
+      CODEX_PROFILE_FIXTURE_MODE: 'recorded-safe',
+    },
+  })
+if (!recordedPromptProfilePreparation.ok) {
+  throw new Error('recorded config/read profile fixture was refused')
+}
+const recordedPromptProfile = recordedPromptProfilePreparation.profile
 const temporaryDirectories: string[] = []
 
 function loadFixture(id: string): RecordedOwnershipFixture {
@@ -159,9 +177,7 @@ function recordedPromptInputProfile() {
   // with frozen highest-precedence launch overrides. System tests must cross
   // that same authority boundary; a caller-authored "default keymap" claim
   // would recreate the configuration ambiguity the repair intentionally closes.
-  return codexHeadlessApi.createCodex01491PromptInputProfile({
-    cliVersion: 'codex-cli 0.149.1',
-  })
+  return recordedPromptProfile
 }
 
 async function waitForComposerFrame(
@@ -1355,26 +1371,22 @@ describe('process-wide fresh rollout watcher', () => {
       }
     })
 
-    it('rejects reflective construction outside the public factory', async () => {
+    it('does not expose an internal constructor through the public handle', async () => {
       const recorded = await prepareRecordedCapabilityFixture()
 
       try {
-        const runtimeConstructor = (
-          recorded.preparation as unknown as { constructor: new (...args: unknown[]) => unknown }
-        ).constructor
+        const runtimeConstructor = Reflect.get(
+          recorded.preparation,
+          'constructor',
+        )
 
-        // WHY hiding the class from the root export is insufficient: any holder
-        // of one genuine object can recover `.constructor` and call it. Use the
-        // real recorded path/generation in the attack so a passing test proves a
-        // runtime construction token, not merely validation of nonsense input.
-        expect(() => Reflect.construct(runtimeConstructor, [{
-          sessionsDir: join(recorded.codexHome, 'sessions'),
-          initialPath: recorded.rolloutPath,
-          initialGenerationId: recorded.generationId,
-          resumeThreadId: recorded.threadId,
-          cwd: recorded.cwd,
-          acquisition: null,
-        }])).toThrow(/prepareCodexResumeRollout|factory|capability/i)
+        // WHY an unexported class plus a construction token was still a wider
+        // surface than necessary: a genuine class instance reveals its
+        // constructor through Object.prototype. The public rollback capability
+        // is now null-rooted, so reflection cannot even reach the internal
+        // controller constructor; prototype-copy forgeries remain covered by
+        // the issuer/WeakMap test below.
+        expect(runtimeConstructor).toBeUndefined()
       } finally {
         await recorded.preparation.dispose(true)
       }
@@ -1534,9 +1546,11 @@ describe('process-wide fresh rollout watcher', () => {
       cwd: '/recorded/worktree',
       resumeThreadId: threadId,
     })
-    expect((preparation as unknown as { initialGenerationId?: string })
-      .initialGenerationId).toBe(generationA)
 
+    // WHY the generation is intentionally not readable from the public
+    // rollback handle. The recorded behavioral proof is stronger: preparation
+    // observes inode A, the test replaces only that inode, and start must reject
+    // B. Reading an internal getter here would make privacy itself a test API.
     renameSync(rolloutPath, `${rolloutPath}.inode-a`)
     writeFileSync(rolloutPath, rolloutText(fixture))
     const inodeB = statSync(rolloutPath)

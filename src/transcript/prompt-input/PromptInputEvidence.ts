@@ -1,6 +1,9 @@
+import { createHmac, randomBytes } from 'node:crypto'
+
 import type { StableTerminalFrame } from '../../terminal/HeadlessTerminal.js'
 import {
   classifyCodex01491ComposerSurface,
+  type Codex01491ComposerSurface,
 } from './Codex01491ComposerSurface.js'
 import {
   isIssuedCodexPromptInputProfile,
@@ -27,8 +30,10 @@ export type PromptInputObservation = {
  */
 export class PromptInputEvidence {
   private readonly profile: CodexPromptInputProfile | null
+  private readonly revisionKey = randomBytes(32)
   private latestFrameGeneration = 0
   private refreshAfterGeneration = -1
+  private refreshAfterComposerRevision: string | null = null
   private profileInvalidated = false
 
   constructor(profile: CodexPromptInputProfile | null | undefined) {
@@ -52,17 +57,17 @@ export class PromptInputEvidence {
         // WHY the frame is a pre-write snapshot. If this chunk contains edits
         // before Tab, the rendered draft is already stale by the instant Tab
         // routes, even though both bytes share one consumer write call.
-        this.notePotentialComposerMutation(frame)
+        this.notePotentialComposerMutation(frame, surface)
         return []
       }
       if (surface.kind !== 'primary-composer' || !surface.queueWithTab) {
         // WHY completion panes consume Tab before the normal composer. A draft
         // or transcript can literally contain "tab to queue"; only the final
         // anchored footer in the classified primary pane proves queue routing.
-        this.notePotentialComposerMutation(frame)
+        this.notePotentialComposerMutation(frame, surface)
         return []
       }
-      if (!this.frameIsFresh(frame)) return []
+      if (!this.frameIsFresh(frame, surface)) return []
       const prompt = nonEmptyPrompt(surface.draftText)
       if (!prompt) return []
       this.resetAfterSubmission(frame)
@@ -70,7 +75,8 @@ export class PromptInputEvidence {
     }
 
     if (hasEnter) {
-      if (surface.kind !== 'primary-composer' || !this.frameIsFresh(frame)) {
+      if (surface.kind !== 'primary-composer' ||
+        !this.frameIsFresh(frame, surface)) {
         // WHY Enter confirms approvals, accepts history previews, and inserts
         // popup selections. None of those actions submit the underlying draft.
         return []
@@ -119,28 +125,90 @@ export class PromptInputEvidence {
       return []
     }
 
-    if (canMutateComposer(data)) this.notePotentialComposerMutation(frame)
+    if (canMutateComposer(data)) {
+      this.notePotentialComposerMutation(frame, surface)
+    }
     return []
   }
 
-  private notePotentialComposerMutation(frame: StableTerminalFrame | null): void {
+  private notePotentialComposerMutation(
+    frame: StableTerminalFrame | null,
+    surface: Codex01491ComposerSurface,
+  ): void {
     // WHY a pre-write frame necessarily predates this edit. Submission may use
-    // only a later provider render, never the stale frame that was current when
-    // the edit byte left Agent Code.
+    // only a later provider render whose composer value or logical cursor has
+    // changed, never an unrelated status/redraw generation. The keyed digest
+    // keeps that equality fact without retaining another copy of prompt text.
     this.refreshAfterGeneration = Math.max(
       this.refreshAfterGeneration,
       frame?.generation ?? this.latestFrameGeneration,
     )
+    this.refreshAfterComposerRevision = frame &&
+      frameLayoutIsProviderRendered(frame) &&
+      surface.kind === 'primary-composer'
+      ? this.composerRevision(frame, surface)
+      : null
   }
 
-  private frameIsFresh(frame: StableTerminalFrame | null): frame is StableTerminalFrame {
-    return frame !== null && frame.generation > this.refreshAfterGeneration
+  private frameIsFresh(
+    frame: StableTerminalFrame | null,
+    surface: Codex01491ComposerSurface,
+  ): frame is StableTerminalFrame {
+    if (!frame || !frameLayoutIsProviderRendered(frame) ||
+      frame.generation <= this.refreshAfterGeneration) {
+      return false
+    }
+    if (this.refreshAfterComposerRevision === null) {
+      // WHY old recordings do not contain every pre-edit frame, and live code
+      // can sample during an in-flight parse. In that case generation remains
+      // the conservative fallback. Whenever a genuine pre-write composer was
+      // available, the stronger revision fence below is mandatory.
+      return true
+    }
+    if (surface.kind !== 'primary-composer') {
+      return false
+    }
+    return this.composerRevision(frame, surface) !==
+      this.refreshAfterComposerRevision
   }
 
   private resetAfterSubmission(frame: StableTerminalFrame): void {
     this.latestFrameGeneration = Math.max(this.latestFrameGeneration, frame.generation)
     this.refreshAfterGeneration = frame.generation
+    // WHY submission can transition an empty composer back to an identical
+    // empty composer. A generation fence is sufficient here; requiring a text
+    // revision would permanently disable the next atomic sendPrompt().
+    this.refreshAfterComposerRevision = null
   }
+
+  private composerRevision(
+    frame: StableTerminalFrame,
+    surface: Extract<Codex01491ComposerSurface, { kind: 'primary-composer' }>,
+  ): string {
+    const composerRow = findComposerRow(frame)
+    const relativeCursorY = composerRow < 0
+      ? frame.cursor.y
+      : frame.cursor.y - composerRow
+    return createHmac('sha256', this.revisionKey)
+      .update(surface.draftText)
+      .update('\0')
+      .update(String(frame.cursor.x))
+      .update('\0')
+      .update(String(relativeCursorY))
+      .digest('hex')
+  }
+}
+
+function frameLayoutIsProviderRendered(frame: StableTerminalFrame): boolean {
+  return frame.layoutEpoch === frame.providerLayoutEpoch
+}
+
+function findComposerRow(frame: StableTerminalFrame): number {
+  const firstCandidate = Math.max(0, frame.rows.length - 15)
+  for (let index = frame.rows.length - 1; index >= firstCandidate; index -= 1) {
+    if (/^›(?: |$)/u.test(frame.rows[index]?.text ?? '')) return index
+  }
+  return -1
 }
 
 function nonEmptyPrompt(value: string): string | null {

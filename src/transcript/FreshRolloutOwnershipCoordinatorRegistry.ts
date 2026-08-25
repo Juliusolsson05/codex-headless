@@ -314,21 +314,37 @@ async function ensureWatcher(root: string, entry: RootEntry): Promise<void> {
       )
       entry.readQueue = entry.readQueue
         .then(async () => {
-          const prefix = await readReservedPrefix(reserved)
-          if (prefix === null) return
-          const candidate = parseFreshRolloutCandidate(
-            reserved.filePath,
-            prefix,
-          )
-          if (!candidate) return
-          entry.coordinator.commitCandidateObservation(
-            reserved.observation,
-            candidate,
-            {
-              readCapExceeded:
-                reserved.snapshot.byteLength > ROLLOUT_CANDIDATE_READ_BYTES,
-            },
-          )
+          try {
+            const prefix = await readReservedPrefix(reserved)
+            if (prefix === null) return
+            const candidate = parseFreshRolloutCandidate(
+              reserved.filePath,
+              prefix,
+            )
+            if (!candidate) return
+            entry.coordinator.commitCandidateObservation(
+              reserved.observation,
+              candidate,
+              {
+                readCapExceeded:
+                  reserved.snapshot.byteLength > ROLLOUT_CANDIDATE_READ_BYTES,
+              },
+            )
+          } finally {
+            // WHY an event can be admitted before compaction but run after it.
+            // `enqueue` necessarily restores its path so the immutable read can
+            // complete, but a terminal candidate (blocked, quarantined, leased,
+            // or otherwise path-leased) can never need another rescan. Evict it
+            // at the end of this callback or one delayed chokidar event retains
+            // a UUID-bearing path indefinitely while an unrelated sibling keeps
+            // the shared watcher alive.
+            if (entry.coordinator.isCandidateTransportTerminal(
+              reserved.filePath,
+            )) {
+              entry.knownPaths.delete(reserved.filePath)
+              entry.lastFingerprints.delete(reserved.filePath)
+            }
+          }
         })
         .catch(error => emitError(entry, error))
     }
@@ -491,12 +507,25 @@ function emitError(entry: RootEntry, error: unknown): void {
 }
 
 function compactInactiveTransport(entry: RootEntry): void {
-  entry.coordinator.compactInactiveState()
-  // WHY candidate paths are live callback transport, not process-lifetime
-  // evidence. The graph already retained the HMAC facts needed after the grace
-  // barrier. Keeping a second raw copy in the rescan maps defeated that privacy
-  // boundary while a sibling watcher stayed live. A later add/change event
-  // re-admits its path and snapshot before policy is recomputed.
-  entry.knownPaths.clear()
-  entry.lastFingerprints.clear()
+  const watcherRemainsLive = entry.referenceCount > 0
+  entry.coordinator.compactInactiveState(Date.now(), watcherRemainsLive)
+  // WHY raw paths are callback transport, not a single all-or-nothing cache.
+  // Terminal candidates are erased immediately, but an unresolved candidate
+  // that can still gain prompt/lineage evidence for a live participant must
+  // remain in the 500ms poll set: the entire purpose of that poll is recovering
+  // a coalesced or omitted filesystem event. Final watcher shutdown retains
+  // nothing because no future rescan can consume the path.
+  for (const filePath of entry.knownPaths) {
+    if (watcherRemainsLive &&
+      entry.coordinator.requiresCandidateRescan(filePath)) {
+      continue
+    }
+    entry.knownPaths.delete(filePath)
+    entry.lastFingerprints.delete(filePath)
+  }
+  for (const filePath of entry.lastFingerprints.keys()) {
+    if (!entry.knownPaths.has(filePath)) {
+      entry.lastFingerprints.delete(filePath)
+    }
+  }
 }

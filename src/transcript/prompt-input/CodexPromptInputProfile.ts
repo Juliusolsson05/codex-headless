@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process'
+
 const issuedProfiles = new WeakSet<object>()
 
 const CODEX_01491_PROMPT_INPUT_OVERRIDES = Object.freeze([
@@ -6,6 +8,16 @@ const CODEX_01491_PROMPT_INPUT_OVERRIDES = Object.freeze([
   'tui.vim_mode_default=false',
   'tui.keymap.global.toggle_vim_mode=[]',
 ])
+const CODEX_01491_PROMPT_INPUT_ARGS = Object.freeze(
+  CODEX_01491_PROMPT_INPUT_OVERRIDES.flatMap(override => [
+    '--config',
+    override,
+  ]),
+)
+const PROBE_CLIENT_NAME = 'agent_code_prompt_profile_probe'
+const INITIALIZE_ID = 'agent-code-prompt-profile-initialize'
+const CONFIG_READ_ID = 'agent-code-prompt-profile-config-read'
+const MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 declare const CODEX_PROMPT_INPUT_PROFILE: unique symbol
 
@@ -24,40 +36,62 @@ export type CodexPromptInputProfile = Readonly<{
 }>
 
 export type Codex01491PromptInputProfileOptions = {
-  /** Exact output from `codex --version`, or its normalized numeric version. */
-  cliVersion: string
+  /** Exact binary that will be used for the immediately following PTY spawn. */
+  binary: string
+  /** Exact working directory whose project configuration Codex will resolve. */
+  cwd: string
+  /** Exact environment that will be passed to the PTY process. */
+  env?: Readonly<Record<string, string | undefined>>
+  /** Global launch arguments assembled before the profile's final overrides. */
+  baseArgs?: readonly string[]
+  /** Bounded app-server probe deadline. Defaults to 5 seconds. */
+  timeoutMs?: number
 }
 
-/**
- * Issue the narrow capability that enables prompt reconstruction.
- *
- * WHY a version string alone is not an attestation: Codex 0.149.1 supports
- * user/project keymap layers, explicit unbinding, and Vim-by-default. Those
- * settings change the meaning of the same PTY bytes. Asking Agent Code to
- * rediscover Codex's config-layer resolver would create a second source of
- * truth, so the package instead issues highest-precedence CLI overrides. The
- * caller must append the frozen `cliArgs` to the exact process launch before
- * handing its PTY and this capability to CodexHeadless.
- */
-export function createCodex01491PromptInputProfile(
-  options: Codex01491PromptInputProfileOptions,
-): CodexPromptInputProfile {
-  const cliVersion = normalizeCodexVersion(options.cliVersion)
-  if (cliVersion !== '0.149.1') {
-    throw new Error(
-      `Codex prompt-input evidence supports exactly 0.149.1; received ${JSON.stringify(options.cliVersion)}`,
-    )
-  }
-  const configOverrides = Object.freeze([...CODEX_01491_PROMPT_INPUT_OVERRIDES])
-  const cliArgs = Object.freeze(configOverrides.flatMap(override => [
-    '--config',
-    override,
-  ]))
+export type CodexPromptInputProfilePreparation =
+  | { ok: true; profile: CodexPromptInputProfile }
+  | {
+      ok: false
+      reason: 'unsupported-cli' | 'effective-config-unverified'
+    }
 
+/**
+ * Ask the exact Codex binary to resolve its own effective input configuration,
+ * then issue the narrow capability consumed by PromptInputEvidence.
+ *
+ * WHY CLI overrides alone are not an attestation: rust-v0.149.1 merges every
+ * dotted override into one session layer, validates the fully resolved keymap,
+ * and then applies legacy managed file/MDM layers above session flags. A lower
+ * binding can therefore conflict with our forced Tab, while managed policy can
+ * replace it outright. Reimplementing that resolver here would create a second
+ * source of truth. `config/read` executes the same binary, cwd, environment,
+ * and already-assembled global arguments as the imminent PTY launch. We inspect
+ * its response only in memory and issue nothing unless every effective binding
+ * is exactly the recorded 0.149.1 contract.
+ */
+export async function prepareCodex01491PromptInputProfile(
+  options: Codex01491PromptInputProfileOptions,
+): Promise<CodexPromptInputProfilePreparation> {
+  let attestation: AttestationResult
+  try {
+    attestation = await readEffectiveInputAttestation(options)
+  } catch {
+    // WHY an invalid custom binary/cwd is not permission to skip the terminal
+    // launch path. The parent may still present the provider's own error or use
+    // the terminal without transcript ownership; only capability issuance must
+    // fail closed, and no raw spawn/config error crosses this privacy boundary.
+    return { ok: false, reason: 'effective-config-unverified' }
+  }
+  if (!attestation.ok) return attestation
+
+  const configOverrides = Object.freeze([
+    ...CODEX_01491_PROMPT_INPUT_OVERRIDES,
+  ])
+  const cliArgs = Object.freeze([...CODEX_01491_PROMPT_INPUT_ARGS])
   const profile = Object.freeze({
     profileVersion: 1 as const,
     provider: 'codex' as const,
-    cliVersion,
+    cliVersion: '0.149.1' as const,
     upstreamTag: 'rust-v0.149.1' as const,
     submitKey: 'enter' as const,
     queueKey: 'tab' as const,
@@ -67,7 +101,7 @@ export function createCodex01491PromptInputProfile(
     cliArgs,
   }) as CodexPromptInputProfile
   issuedProfiles.add(profile)
-  return profile
+  return { ok: true, profile }
 }
 
 export function isIssuedCodexPromptInputProfile(
@@ -89,10 +123,7 @@ export function isIssuedCodexPromptInputProfile(
     Object.isFrozen(profile.configOverrides) &&
     Object.isFrozen(profile.cliArgs) &&
     arraysEqual(profile.configOverrides, CODEX_01491_PROMPT_INPUT_OVERRIDES) &&
-    arraysEqual(
-      profile.cliArgs,
-      CODEX_01491_PROMPT_INPUT_OVERRIDES.flatMap(override => ['--config', override]),
-    )
+    arraysEqual(profile.cliArgs, CODEX_01491_PROMPT_INPUT_ARGS)
 }
 
 export function assertIssuedCodexPromptInputProfile(
@@ -100,20 +131,194 @@ export function assertIssuedCodexPromptInputProfile(
 ): CodexPromptInputProfile {
   if (!isIssuedCodexPromptInputProfile(value)) {
     throw new Error(
-      'promptInputProfile must be created by createCodex01491PromptInputProfile()',
+      'promptInputProfile must be issued by ' +
+        'prepareCodex01491PromptInputProfile()',
     )
   }
   return value
 }
 
-function normalizeCodexVersion(value: string): string {
-  const match = /(?:^|\s)(\d+\.\d+\.\d+)(?:\s|$)/.exec(value.trim())
-  return match?.[1] ?? value.trim()
+type AttestationResult =
+  | { ok: true }
+  | Extract<CodexPromptInputProfilePreparation, { ok: false }>
+
+async function readEffectiveInputAttestation(
+  options: Codex01491PromptInputProfileOptions,
+): Promise<AttestationResult> {
+  const args = [
+    ...(options.baseArgs ?? []),
+    ...CODEX_01491_PROMPT_INPUT_ARGS,
+    'app-server',
+    '--stdio',
+  ]
+  const timeoutMs = Number.isFinite(options.timeoutMs) &&
+    (options.timeoutMs ?? 0) > 0
+    ? Math.min(options.timeoutMs!, 30_000)
+    : 5_000
+
+  return await new Promise(resolve => {
+    let settled = false
+    let stdout = ''
+    let initializedVersion: string | null = null
+    const child = spawn(options.binary, args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ['pipe', 'pipe', 'ignore'],
+    })
+    child.stdout.setEncoding('utf8')
+
+    const finish = (value: AttestationResult): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      // WHY config/read is a bounded pre-spawn observation, not a second live
+      // provider. Once the projection is decided, retaining app-server would
+      // duplicate filesystem/config watchers for every terminal session.
+      child.kill()
+      const forceKillTimer = setTimeout(() => child.kill('SIGKILL'), 250)
+      forceKillTimer.unref?.()
+      child.once('exit', () => clearTimeout(forceKillTimer))
+      resolve(value)
+    }
+    const refuse = () => finish({
+      ok: false,
+      reason: 'effective-config-unverified',
+    })
+    const timer = setTimeout(refuse, timeoutMs)
+
+    child.on('error', refuse)
+    child.stdin.on('error', refuse)
+    child.stdout.on('error', refuse)
+    child.on('exit', () => {
+      if (!settled) refuse()
+    })
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk
+      if (stdout.length > MAX_RESPONSE_BYTES) {
+        refuse()
+        return
+      }
+      for (;;) {
+        const newline = stdout.indexOf('\n')
+        if (newline < 0) break
+        const line = stdout.slice(0, newline)
+        stdout = stdout.slice(newline + 1)
+        let message: unknown
+        try {
+          message = JSON.parse(line)
+        } catch {
+          continue
+        }
+        if (!isRecord(message)) continue
+
+        if (message.id === INITIALIZE_ID) {
+          const userAgent = isRecord(message.result)
+            ? message.result.userAgent
+            : null
+          const version = typeof userAgent === 'string'
+            ? new RegExp(`^${PROBE_CLIENT_NAME}/(\\d+\\.\\d+\\.\\d+)(?:\\s|$)`)
+              .exec(userAgent)?.[1] ?? null
+            : null
+          if (version !== '0.149.1') {
+            finish({ ok: false, reason: 'unsupported-cli' })
+            return
+          }
+          initializedVersion = version
+          child.stdin.write(`${JSON.stringify({
+            method: 'initialized',
+            params: {},
+          })}\n`)
+          child.stdin.write(`${JSON.stringify({
+            method: 'config/read',
+            id: CONFIG_READ_ID,
+            params: { cwd: options.cwd, includeLayers: true },
+          })}\n`)
+          continue
+        }
+
+        if (message.id !== CONFIG_READ_ID) continue
+        if (initializedVersion !== '0.149.1' ||
+          !effectiveInputIsRecordedContract(message.result)) {
+          refuse()
+          return
+        }
+        finish({ ok: true })
+        return
+      }
+    })
+
+    child.stdin.write(`${JSON.stringify({
+      method: 'initialize',
+      id: INITIALIZE_ID,
+      params: {
+        clientInfo: {
+          name: PROBE_CLIENT_NAME,
+          title: 'Agent Code prompt-profile probe',
+          version: '0.1.0',
+        },
+      },
+    })}\n`)
+  })
+}
+
+function effectiveInputIsRecordedContract(value: unknown): boolean {
+  if (!isRecord(value) || !isRecord(value.config) ||
+    !isRecord(value.config.tui) || !isRecord(value.config.tui.keymap)) {
+    return false
+  }
+  const tui = value.config.tui
+  const keymap = tui.keymap
+  const composer = isRecord(keymap.composer) ? keymap.composer : null
+  const global = isRecord(keymap.global) ? keymap.global : null
+  if (!composer || !global || composer.submit !== 'enter' ||
+    composer.queue !== 'tab' || tui.vim_mode_default !== false ||
+    !Array.isArray(global.toggle_vim_mode) ||
+    global.toggle_vim_mode.length !== 0) {
+    return false
+  }
+
+  const allowed = new Set([
+    'composer.submit',
+    'composer.queue',
+    'global.toggle_vim_mode',
+  ])
+  if (flattenLeaves(keymap).some(([path, leaf]) =>
+    !allowed.has(path) && leaf !== null)) {
+    return false
+  }
+
+  if (!Array.isArray(value.layers)) return false
+  const layerTypes = value.layers.map(layer =>
+    isRecord(layer) && isRecord(layer.name) ? layer.name.type : null)
+  if (layerTypes.filter(type => type === 'sessionFlags').length !== 1) {
+    return false
+  }
+  return !layerTypes.some(type =>
+    type === 'legacyManagedConfigTomlFromFile' ||
+    type === 'legacyManagedConfigTomlFromMdm')
+}
+
+function flattenLeaves(
+  value: Record<string, unknown>,
+  prefix = '',
+): Array<[string, unknown]> {
+  const leaves: Array<[string, unknown]> = []
+  for (const [key, child] of Object.entries(value)) {
+    const path = prefix ? `${prefix}.${key}` : key
+    if (isRecord(child)) leaves.push(...flattenLeaves(child, path))
+    else leaves.push([path, child])
+  }
+  return leaves
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function arraysEqual(
   left: readonly string[],
   right: readonly string[],
 ): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index])
+  return left.length === right.length &&
+    left.every((value, index) => value === right[index])
 }

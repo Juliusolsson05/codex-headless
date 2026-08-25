@@ -1,22 +1,39 @@
+import { fileURLToPath } from 'node:url'
+
 import { describe, expect, it } from 'vitest'
 
 import {
   assertIssuedCodexPromptInputProfile,
-  createCodex01491PromptInputProfile,
+  prepareCodex01491PromptInputProfile,
 } from './CodexPromptInputProfile.js'
 
-describe('Codex 0.149.1 prompt-input launch profile', () => {
-  it('issues frozen highest-precedence launch arguments for every routed input', () => {
-    const profile = createCodex01491PromptInputProfile({
-      cliVersion: 'codex-cli 0.149.1',
-    })
+const appServerFixture = fileURLToPath(new URL(
+  '../../../testing/fixtures/prompt-input/codex-01491-app-server-fixture.mjs',
+  import.meta.url,
+))
 
-    // WHY this exact ordered vector is the attestation. Merely saying the
-    // effective keymap is "default" cannot rule out user/project config, and
-    // placing these values anywhere except the final global-option position
-    // lets a later override change what Enter or Tab means after we authorize
-    // prompt evidence. Consumers append this immutable vector immediately
-    // before Codex's optional `resume` subcommand.
+function prepare(mode = 'recorded-safe') {
+  return prepareCodex01491PromptInputProfile({
+    binary: process.execPath,
+    cwd: process.cwd(),
+    baseArgs: [appServerFixture],
+    env: {
+      ...process.env,
+      CODEX_PROFILE_FIXTURE_MODE: mode,
+    },
+  })
+}
+
+describe('Codex 0.149.1 prompt-input launch profile', () => {
+  it('issues frozen launch arguments only after recorded config/read attestation', async () => {
+    const result = await prepare()
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const { profile } = result
+
+    // WHY this exact ordered vector must be both observed by config/read and
+    // appended to the immediately following PTY. A version string or a copied
+    // profile object proves neither effective key routing nor launch identity.
     expect(profile.cliArgs).toEqual([
       '--config', 'tui.keymap.composer.submit="enter"',
       '--config', 'tui.keymap.composer.queue="tab"',
@@ -26,21 +43,18 @@ describe('Codex 0.149.1 prompt-input launch profile', () => {
     expect(Object.isFrozen(profile)).toBe(true)
     expect(Object.isFrozen(profile.configOverrides)).toBe(true)
     expect(Object.isFrozen(profile.cliArgs)).toBe(true)
+
+    const lookalike = Object.freeze({ ...profile })
+    expect(() => assertIssuedCodexPromptInputProfile(lookalike)).toThrow(
+      /must be issued by prepareCodex01491PromptInputProfile/,
+    )
   })
 
-  it('rejects caller-authored lookalikes and unsupported provider versions', () => {
-    const issued = createCodex01491PromptInputProfile({ cliVersion: '0.149.1' })
-    const lookalike = Object.freeze({ ...issued })
-
-    // WHY every public field is intentionally serializable so Agent Code can
-    // launch the provider, but those fields are not proof that it did so. The
-    // private issuer identity closes the capability boundary even when a
-    // caller copies a genuine profile byte-for-byte.
-    expect(() => assertIssuedCodexPromptInputProfile(lookalike)).toThrow(
-      /must be created by createCodex01491PromptInputProfile/,
-    )
-    expect(() => createCodex01491PromptInputProfile({
-      cliVersion: 'codex-cli 0.150.0',
-    })).toThrow(/supports exactly 0\.149\.1/)
+  it.each([
+    ['conflicting-binding', 'effective-config-unverified'],
+    ['managed-layer', 'effective-config-unverified'],
+    ['wrong-version', 'unsupported-cli'],
+  ] as const)('refuses %s effective evidence', async (mode, reason) => {
+    await expect(prepare(mode)).resolves.toEqual({ ok: false, reason })
   })
 })

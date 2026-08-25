@@ -44,9 +44,10 @@ export {
 } from './terminal/HeadlessTerminal.js'
 
 export {
-  createCodex01491PromptInputProfile,
+  prepareCodex01491PromptInputProfile,
   type Codex01491PromptInputProfileOptions,
   type CodexPromptInputProfile,
+  type CodexPromptInputProfilePreparation,
 } from './transcript/prompt-input/CodexPromptInputProfile.js'
 
 // --- Parsers (codex-specific) ---

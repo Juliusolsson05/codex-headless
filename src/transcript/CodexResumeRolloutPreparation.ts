@@ -23,6 +23,10 @@ const PREPARATION_CONSTRUCTION_TOKEN = Symbol(
   'codex-headless.resume-rollout-preparation-construction',
 )
 const issuedResumeRolloutPreparations = new WeakSet<object>()
+const internalResumeRolloutPreparations = new WeakMap<
+  object,
+  CodexResumeRolloutPreparationState
+>()
 declare const resumeRolloutPreparationBrand: unique symbol
 
 type PreparationHandlers = {
@@ -54,15 +58,12 @@ export interface CodexResumeRolloutPreparation {
  * capability; Agent Code may move the spawn boundary around it but cannot
  * recreate or partially apply ownership policy.
  */
-class CodexResumeRolloutPreparationImpl
-  implements CodexResumeRolloutPreparation {
-  declare readonly [resumeRolloutPreparationBrand]: never
-
+class CodexResumeRolloutPreparationState {
   // WHY native private fields are required here rather than TypeScript's
-  // `private` modifier: this object crosses the parent rollback window and is a
-  // tempting target for generic logging. TS-private assignments are enumerable
-  // JavaScript properties; `#` state is absent from own-key enumeration, object
-  // spread, JSON serialization, and ordinary diagnostic inspection.
+  // `private` modifier: CodexHeadless holds this controller across asynchronous
+  // tail setup, and runtime-private assignments would still be enumerable to
+  // accidental internal inspection. The parent sees only the separate WeakMap
+  // handle, while native fields keep the controller defensive in depth.
   #ownerId: string | null = randomUUID()
   #sessionsDir: string | null
   #initialPath: string | null
@@ -104,10 +105,10 @@ class CodexResumeRolloutPreparationImpl
     this.#resumeThreadId = options.resumeThreadId
     this.#cwd = options.cwd
     this.#acquisition = options.acquisition
-    issuedResumeRolloutPreparations.add(this)
-    // Native private fields remain mutable after freeze. Preventing callers from
-    // shadowing internal getters with forged own properties keeps the branded
-    // instance's visible surface empty for its entire lifecycle.
+    // WHY this state object is never the public capability. Native fields keep
+    // values out of ordinary enumeration, while a separate dispose-only handle
+    // prevents prototype reflection from reaching these internal getters at
+    // all. CodexHeadless receives this controller only after issuer validation.
     Object.freeze(this)
   }
 
@@ -252,9 +253,55 @@ class CodexResumeRolloutPreparationImpl
   }
 }
 
+// WHY a shared null-rooted prototype is safer than returning the internal
+// controller or a normal class instance. The public parent must be able to roll
+// back a failed spawn, but it has no reason to observe owner/path/session state
+// or recover an internal constructor. Keeping `dispose` as the sole prototype
+// member also preserves an empty own-key/JSON surface for generic diagnostics.
+const RESUME_ROLLOUT_PREPARATION_HANDLE_PROTOTYPE = Object.create(null) as {
+  dispose?: (clean?: boolean) => Promise<void>
+}
+Object.defineProperty(RESUME_ROLLOUT_PREPARATION_HANDLE_PROTOTYPE, 'dispose', {
+  configurable: false,
+  enumerable: false,
+  writable: false,
+  value: function disposeResumeRolloutPreparation(
+    this: CodexResumeRolloutPreparation,
+    clean = true,
+  ): Promise<void> {
+    const internal = internalResumeRolloutPreparations.get(this)
+    if (!internal || !issuedResumeRolloutPreparations.has(this)) {
+      // WHY Object.create(genuinePrototype) reproduces the visible method but
+      // cannot reproduce issuer membership. Disposal has lease authority, so a
+      // borrowed method must fail before touching any internal coordinator.
+      return Promise.reject(new TypeError(
+        'Codex resume rollout capability was not created by ' +
+          'prepareCodexResumeRollout()',
+      ))
+    }
+    return internal.dispose(clean)
+  },
+})
+Object.freeze(RESUME_ROLLOUT_PREPARATION_HANDLE_PROTOTYPE)
+
+function issueCodexResumeRolloutPreparation(
+  internal: CodexResumeRolloutPreparationState,
+): CodexResumeRolloutPreparation {
+  const handle = Object.create(
+    RESUME_ROLLOUT_PREPARATION_HANDLE_PROTOTYPE,
+  ) as CodexResumeRolloutPreparation
+  issuedResumeRolloutPreparations.add(handle)
+  internalResumeRolloutPreparations.set(handle, internal)
+  // WHY freezing the empty handle prevents a caller from shadowing `dispose`
+  // or attaching misleading path/session fields that later diagnostics might
+  // mistake for package-owned state. The WeakMap controller remains mutable
+  // and scrubbed on disposal without appearing anywhere on this object graph.
+  return Object.freeze(handle)
+}
+
 /** Internal view used only by CodexHeadless after issuer validation. */
 export type CodexResumeRolloutPreparationInternal =
-  CodexResumeRolloutPreparationImpl
+  CodexResumeRolloutPreparationState
 
 export function unwrapCodexResumeRolloutPreparation(
   value: CodexResumeRolloutPreparation,
@@ -267,10 +314,17 @@ export function unwrapCodexResumeRolloutPreparation(
     // this module's factory actually issued the object.
     throw new TypeError(
       'Codex resume rollout capability was not created by ' +
-        'prepareCodexResumeRollout()',
+      'prepareCodexResumeRollout()',
     )
   }
-  return value as CodexResumeRolloutPreparationImpl
+  const internal = internalResumeRolloutPreparations.get(value)
+  if (!internal) {
+    // WHY WeakSet membership and controller lookup must agree. This should be
+    // unreachable without a module bug, but returning the public handle as an
+    // internal controller would turn an integrity failure into lease mutation.
+    throw new TypeError('Codex resume rollout capability has no internal state')
+  }
+  return internal
 }
 
 export async function prepareCodexResumeRollout(options: {
@@ -289,7 +343,7 @@ export async function prepareCodexResumeRollout(options: {
     // CodexHeadless can deliberately enter its fail-closed new-file fallback,
     // while callers cannot accidentally skip preparation on the ordinary exact
     // route merely because both cases previously used one optional string.
-    return new CodexResumeRolloutPreparationImpl(
+    const internal = new CodexResumeRolloutPreparationState(
       PREPARATION_CONSTRUCTION_TOKEN,
       {
         sessionsDir,
@@ -300,6 +354,7 @@ export async function prepareCodexResumeRollout(options: {
         acquisition: null,
       },
     )
+    return issueCodexResumeRolloutPreparation(internal)
   }
 
   const acquisition = await acquireFreshRolloutCoordinator({
@@ -308,7 +363,7 @@ export async function prepareCodexResumeRollout(options: {
     normalizePath: normalizeRolloutOwnershipPath,
     onError: options.onError ?? (() => undefined),
   })
-  const preparation = new CodexResumeRolloutPreparationImpl(
+  const internal = new CodexResumeRolloutPreparationState(
     PREPARATION_CONSTRUCTION_TOKEN,
     {
       sessionsDir,
@@ -320,13 +375,13 @@ export async function prepareCodexResumeRollout(options: {
     },
   )
   const reserved = acquisition.coordinator.reservePath({
-    ownerId: preparation.ownerId,
+    ownerId: internal.ownerId,
     filePath: initialLocation.filePath,
     kind: 'exact-id',
     proofIdentity: options.resumeThreadId,
   })
   if (!reserved) {
-    await preparation.dispose(true)
+    await internal.dispose(true)
     throw new Error('Codex exact rollout path is already leased by another live session')
   }
 
@@ -334,12 +389,12 @@ export async function prepareCodexResumeRollout(options: {
     const text = await readCodexRolloutGeneration(initialLocation)
     const lineageIds = new Set<string>()
     collectRolloutLineageIds(text, lineageIds, RESUME_LINEAGE_ID_CAP)
-    preparation.registerLineage(lineageIds)
-    return preparation
+    internal.registerLineage(lineageIds)
+    return issueCodexResumeRolloutPreparation(internal)
   } catch (error) {
     // No physical tail was opened, so a failed preparation may cleanly release
     // exact X for a later retry in the same process.
-    await preparation.dispose(true)
+    await internal.dispose(true)
     throw error
   }
 }

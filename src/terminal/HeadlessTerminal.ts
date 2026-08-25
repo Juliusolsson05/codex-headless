@@ -111,6 +111,13 @@ export type StableTerminalRow = {
 export type StableTerminalFrame = {
   /** Monotonic generation advanced only after xterm has parsed a PTY chunk. */
   generation: number
+  /** Geometry epoch currently applied to xterm. */
+  layoutEpoch: number
+  /**
+   * Latest geometry epoch for which a post-resize provider chunk was parsed.
+   * A mismatch means xterm has reinterpreted an older paint at new dimensions.
+   */
+  providerLayoutEpoch: number
   cols: number
   rows: readonly StableTerminalRow[]
   cursor: Readonly<{ x: number; y: number }>
@@ -240,6 +247,8 @@ export class HeadlessTerminal extends EventEmitter {
   // don't snapshot a half-parsed buffer. See attach() for the use.
   private pendingWrites = 0
   private parsedFrameGeneration = 0
+  private layoutEpoch = 0
+  private providerLayoutEpoch = 0
   private exited = false
   private attached = false
   private readonly snapshotIntervalMs: number
@@ -295,9 +304,18 @@ export class HeadlessTerminal extends EventEmitter {
       // been parsed into the buffer. Schedule the flush from inside
       // the callback so snapshots always reflect already-parsed bytes.
       this.pendingWrites++
+      // WHY the callback can run after resize even when this chunk arrived
+      // before resize. Capturing the epoch at admission prevents those old
+      // bytes from blessing xterm's new geometry merely because parsing was
+      // asynchronous.
+      const admittedLayoutEpoch = this.layoutEpoch
       this.term.write(data, () => {
         this.pendingWrites--
         this.parsedFrameGeneration++
+        this.providerLayoutEpoch = Math.max(
+          this.providerLayoutEpoch,
+          admittedLayoutEpoch,
+        )
         // Only schedule when there are no more pending parses.
         // Otherwise rapid PTY chunks would each schedule a flush
         // and we'd snapshot mid-parse. The throttle inside
@@ -321,9 +339,16 @@ export class HeadlessTerminal extends EventEmitter {
 
   /** Resize both the PTY and the headless terminal in lockstep. */
   resize(cols: number, rows: number): void {
+    if (cols === this.term.cols && rows === this.term.rows) return
     try {
       this.pty.resize(cols, rows)
       this.term.resize(cols, rows)
+      // WHY xterm reflows immediately, while Codex redraws asynchronously
+      // after receiving SIGWINCH. Until a later provider chunk is parsed, the
+      // buffer contains old provider rows under new column semantics. Keeping
+      // that interval explicit prevents prompt evidence from manufacturing a
+      // logical newline out of a formerly soft-wrapped draft.
+      this.layoutEpoch++
     } catch {
       // node-pty throws on 0/negative dims during transient layouts.
     }
@@ -377,6 +402,8 @@ export class HeadlessTerminal extends EventEmitter {
     const absoluteCursorY = buffer.baseY + buffer.cursorY
     return Object.freeze({
       generation: this.parsedFrameGeneration,
+      layoutEpoch: this.layoutEpoch,
+      providerLayoutEpoch: this.providerLayoutEpoch,
       cols: this.term.cols,
       rows: Object.freeze(rows),
       cursor: Object.freeze({

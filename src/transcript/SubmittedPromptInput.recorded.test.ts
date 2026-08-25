@@ -10,8 +10,11 @@ import {
   type SubmittedPromptInputContext,
 } from './SubmittedPromptInput.js'
 import {
-  createCodex01491PromptInputProfile,
+  prepareCodex01491PromptInputProfile,
 } from './prompt-input/CodexPromptInputProfile.js'
+import {
+  classifyCodex01491ComposerSurface,
+} from './prompt-input/Codex01491ComposerSurface.js'
 import { PromptInputEvidence } from './prompt-input/PromptInputEvidence.js'
 
 type RecordedConfigClass =
@@ -117,12 +120,7 @@ type RecordedInputContext = SubmittedPromptInputContext & {
    * the red contract impossible to satisfy by silently assuming defaults for
    * an explicitly remapped or Vim-enabled session.
    */
-  inputProfile: {
-    cliVersion: string
-    upstreamTag: string
-    configClass: RecordedConfigClass
-    configOverrides: string[]
-  }
+  inputProfile: unknown
 }
 
 type RecordedConsumer = (
@@ -142,6 +140,10 @@ const configSourcePath = fileURLToPath(new URL(
   '../../testing/fixtures/prompt-input/codex-01491-config-source.json',
   import.meta.url,
 ))
+const appServerFixturePath = fileURLToPath(new URL(
+  '../../testing/fixtures/prompt-input/codex-01491-app-server-fixture.mjs',
+  import.meta.url,
+))
 const corpus = JSON.parse(
   readFileSync(fixturePath, 'utf8'),
 ) as RecordedPromptInputCorpus
@@ -157,6 +159,11 @@ const configSource = JSON.parse(readFileSync(configSourcePath, 'utf8')) as {
     coordinates: Array<{ startLine: number; endLine: number; claim: string }>
   }>
 }
+const recordedProfilePreparation = await prepareRecordedProfile()
+if (!recordedProfilePreparation.ok) {
+  throw new Error('recorded config/read profile fixture was refused')
+}
+const recordedIssuedProfile = recordedProfilePreparation.profile
 
 const recordedCaseIds = [
   'trust-action-then-submit',
@@ -204,12 +211,14 @@ function contextFor(
     // the active bottom footer, while the genuine queue footer remains green.
     tabBehavior: inferCodexTabBehavior(screenBeforeWrite ?? ''),
     screenBeforeWrite,
-    inputProfile: {
-      cliVersion: corpus.provider.cliVersion,
-      upstreamTag: corpus.provider.upstreamTag,
-      configClass: recordedCase.configClass,
-      configOverrides: [...recordedCase.configOverrides],
-    },
+    inputProfile: recordedCase.configClass === 'recorded-default-01491'
+      ? recordedIssuedProfile
+      : {
+          cliVersion: corpus.provider.cliVersion,
+          upstreamTag: corpus.provider.upstreamTag,
+          configClass: recordedCase.configClass,
+          configOverrides: [...recordedCase.configOverrides],
+        },
   }
 }
 
@@ -270,9 +279,16 @@ function caseById(id: typeof recordedCaseIds[number]): RecordedPromptInputCase {
   return recordedCase
 }
 
-function stableFrame(recorded: RecordedStableFrame): StableTerminalFrame {
+function stableFrame(
+  recorded: RecordedStableFrame,
+  layout: { layoutEpoch: number; providerLayoutEpoch: number } = {
+    layoutEpoch: 0,
+    providerLayoutEpoch: 0,
+  },
+): StableTerminalFrame {
   return {
     generation: recorded.generation,
+    ...layout,
     cols: recorded.cols,
     cursor: recorded.cursor,
     rows: recorded.rows.map(row => ({
@@ -286,6 +302,8 @@ function stableFrame(recorded: RecordedStableFrame): StableTerminalFrame {
 function frameFromRows(rows: readonly string[], generation = 1): StableTerminalFrame {
   return {
     generation,
+    layoutEpoch: 0,
+    providerLayoutEpoch: 0,
     cols: Math.max(140, ...rows.map(row => [...row].length)),
     cursor: { x: 0, y: 0 },
     rows: rows.map(text => ({ text, cells: [...text], isWrapped: false })),
@@ -293,9 +311,19 @@ function frameFromRows(rows: readonly string[], generation = 1): StableTerminalF
 }
 
 function issuedEvidence(): PromptInputEvidence {
-  return new PromptInputEvidence(createCodex01491PromptInputProfile({
-    cliVersion: corpus.provider.cliVersion,
-  }))
+  return new PromptInputEvidence(recordedIssuedProfile)
+}
+
+function prepareRecordedProfile(mode = 'recorded-safe') {
+  return prepareCodex01491PromptInputProfile({
+    binary: process.execPath,
+    cwd: process.cwd(),
+    baseArgs: [appServerFixturePath],
+    env: {
+      ...process.env,
+      CODEX_PROFILE_FIXTURE_MODE: mode,
+    },
+  })
 }
 
 describe('recorded Codex 0.149.1 prompt-input contract', () => {
@@ -471,7 +499,13 @@ describe('recorded Codex 0.149.1 prompt-input contract', () => {
       frame: stableFrame(beforeTyping),
     })).toEqual([])
     expect(evidence.consume('\r', {
-      frame: stableFrame(resize.beforeProviderRedraw),
+      // WHY the recorded generation and raw-chunk count stayed unchanged
+      // across this resize. Epoch 1 is xterm's new geometry; epoch 0 is the
+      // latest geometry Codex had actually painted at this exact boundary.
+      frame: stableFrame(resize.beforeProviderRedraw, {
+        layoutEpoch: 1,
+        providerLayoutEpoch: 0,
+      }),
     })).toEqual([])
   })
 
@@ -488,7 +522,10 @@ describe('recorded Codex 0.149.1 prompt-input contract', () => {
       frame: stableFrame(beforeTyping),
     })
     expect(evidence.consume('\r', {
-      frame: stableFrame(resize.afterProviderRedraw),
+      frame: stableFrame(resize.afterProviderRedraw, {
+        layoutEpoch: 1,
+        providerLayoutEpoch: 1,
+      }),
     })).toEqual([recordedCase.durableUserText])
   })
 
@@ -512,7 +549,21 @@ describe('recorded Codex 0.149.1 prompt-input contract', () => {
     })).toEqual([recordedCase.durableUserText])
   })
 
-  it('CH-05 refuses profile issuance for the recorded lower-layer conflict', () => {
+  it('CH-10 still rejects the genuine recorded trust modal and Vim status atom', () => {
+    const trust = caseById('trust-action-then-submit')
+    const vim = caseById('vim-normal-default')
+    if (!trust.modal || !vim.screenBeforeFinalWrite) {
+      throw new Error('missing recorded CH-10 negative controls')
+    }
+
+    expect(classifyCodex01491ComposerSurface(frameFromRows(trust.modal)))
+      .toEqual({ kind: 'non-composer-modal' })
+    expect(classifyCodex01491ComposerSurface(
+      frameFromRows(vim.screenBeforeFinalWrite),
+    )).toEqual({ kind: 'unknown' })
+  })
+
+  it('CH-05 refuses profile issuance for the recorded lower-layer conflict', async () => {
     const control = caseById('lower-layer-keymap-valid-control')
     const conflict = caseById('lower-layer-keymap-issued-profile-conflict')
     expect(control.startupOutcome).toBe('composer-ready')
@@ -521,24 +572,13 @@ describe('recorded Codex 0.149.1 prompt-input contract', () => {
     expect(conflict.exitOutcome?.exitCode).toBe(1)
     expect(conflict.requestCountDelta).toBe(0)
 
-    type ConflictAwareIssuer = (options: {
-      cliVersion: string
-      configurationEvidence: {
-        lowerLayerConfig: readonly string[]
-      }
-    }) => unknown
-    // WHY Stage 29 proves the lower map is valid alone and the issued overrides
-    // are what make startup fail. The current function has no configuration
-    // evidence parameter, so this forward contract is cast only at the call
-    // boundary: production must refuse the capability instead of advertising a
-    // profile for a process that exits before any composer can exist.
-    const issueWithConfiguration = createCodex01491PromptInputProfile as
-      unknown as ConflictAwareIssuer
-    expect(() => issueWithConfiguration({
-      cliVersion: corpus.provider.cliVersion,
-      configurationEvidence: {
-        lowerLayerConfig: conflict.lowerLayerConfig ?? [],
-      },
-    })).toThrow(/conflict|keymap|configuration/i)
+    // WHY the fixture server wraps the recorded config/read projection and
+    // adds only the exact non-null lower binding proved by the paired live TUI
+    // outcomes above. The issuer must inspect effective routing and refuse
+    // before Agent Code appends arguments that make Codex exit at startup.
+    await expect(prepareRecordedProfile('conflicting-binding')).resolves.toEqual({
+      ok: false,
+      reason: 'effective-config-unverified',
+    })
   })
 })
