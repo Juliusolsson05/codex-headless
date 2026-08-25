@@ -71,6 +71,11 @@ export type FreshRolloutCoordinatorAcquisition = {
   release(): Promise<void>
 }
 
+export type StartingFreshRolloutCoordinatorAcquisition =
+  FreshRolloutCoordinatorAcquisition & {
+    ready: Promise<void>
+  }
+
 function getRegistry(): Registry {
   const globalWithRegistry = globalThis as typeof globalThis & {
     [REGISTRY_SYMBOL]?: Registry
@@ -103,7 +108,28 @@ export async function acquireFreshRolloutCoordinator(options: {
   normalizePath: (filePath: string) => string
   onError: (error: Error) => void
 }): Promise<FreshRolloutCoordinatorAcquisition> {
-  await mkdir(options.sessionsRoot, { recursive: true })
+  const starting = beginFreshRolloutCoordinatorAcquisition(options)
+  await starting.ready
+  return starting
+}
+
+/**
+ * Reserve the process-wide coordinator synchronously, then prime its watcher.
+ *
+ * WHY this split exists: an async function yields at `mkdir()` before its
+ * caller can register a participant. Agent Code intentionally publishes the
+ * already-spawned terminal while `CodexHeadless.start()` is pending, so a human
+ * can submit during that yield. The coordinator sequence must record that
+ * prompt immediately; replaying it after watcher readiness would falsely make
+ * an older durable candidate appear causal. Consumers that do not need this
+ * boundary should continue using `acquireFreshRolloutCoordinator()`.
+ */
+export function beginFreshRolloutCoordinatorAcquisition(options: {
+  sessionsRoot: string
+  normalizeCwd: (cwd: string) => string
+  normalizePath: (filePath: string) => string
+  onError: (error: Error) => void
+}): StartingFreshRolloutCoordinatorAcquisition {
   const root = options.normalizePath(options.sessionsRoot)
   const registry = getRegistry()
   // WHY the raw sessions root is needed only by the live watcher. Keeping it
@@ -135,37 +161,58 @@ export async function acquireFreshRolloutCoordinator(options: {
     registry.roots.set(rootFingerprint, entry)
   }
 
-  if (entry.stopping) await entry.stopping
   entry.referenceCount += 1
   entry.errorListeners.add(options.onError)
-  try {
-    await ensureWatcher(root, entry)
-  } catch (error) {
-    entry.referenceCount -= 1
-    entry.errorListeners.delete(options.onError)
-    if (entry.referenceCount === 0) await stopRootWatcher(entry)
-    throw error
-  }
-
+  const acquiredEntry = entry
   let released = false
+  let referenceHeld = true
+  const ready = (async () => {
+    try {
+      await mkdir(options.sessionsRoot, { recursive: true })
+      if (acquiredEntry.stopping) await acquiredEntry.stopping
+      await ensureWatcher(root, acquiredEntry)
+    } catch (error) {
+      if (referenceHeld) {
+        referenceHeld = false
+        acquiredEntry.referenceCount = Math.max(
+          0,
+          acquiredEntry.referenceCount - 1,
+        )
+        acquiredEntry.errorListeners.delete(options.onError)
+        if (acquiredEntry.referenceCount === 0) {
+          await stopRootWatcher(acquiredEntry)
+        }
+      }
+      throw error
+    }
+  })()
   return {
-    coordinator: entry.coordinator,
+    coordinator: acquiredEntry.coordinator,
+    ready,
     release: async () => {
       if (released) return
       released = true
-      entry?.errorListeners.delete(options.onError)
-      if (!entry) return
-      entry.referenceCount = Math.max(0, entry.referenceCount - 1)
-      if (entry.referenceCount !== 0) {
+      // WHY readiness may fail or stop may race watcher priming. Joining it
+      // prevents a late ensureWatcher() from installing transport after this
+      // reference was retired; the rejection is still observed by start().
+      try { await ready } catch { /* acquisition caller owns the error */ }
+      if (!referenceHeld) return
+      referenceHeld = false
+      acquiredEntry.errorListeners.delete(options.onError)
+      acquiredEntry.referenceCount = Math.max(
+        0,
+        acquiredEntry.referenceCount - 1,
+      )
+      if (acquiredEntry.referenceCount !== 0) {
         // WHY watcher transport is shared but participant lifetime is not. A
         // long-lived sibling keeps filesystem admission open; it must not keep
         // every stopped sibling's prompt/lineage HMAC in the graph forever.
         // Arm the same grace timer used at final shutdown, with expiry ordered
         // behind the reads admitted before that timer fires.
-        scheduleInactiveRetention(entry)
+        scheduleInactiveRetention(acquiredEntry)
         return
       }
-      await stopRootWatcher(entry)
+      await stopRootWatcher(acquiredEntry)
     },
   }
 }

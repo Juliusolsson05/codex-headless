@@ -8,13 +8,16 @@ import {
   type ScreenSnapshot,
 } from './terminal/HeadlessTerminal.js'
 import { tailSessionFile } from './transcript/JsonlTailer.js'
-import { SubmittedPromptInput } from './transcript/SubmittedPromptInput.js'
+import {
+  inferCodexTabBehavior,
+  SubmittedPromptInput,
+} from './transcript/SubmittedPromptInput.js'
 import type {
   FreshRolloutParticipantDecision,
   FreshRolloutParticipantHandle,
 } from './transcript/FreshRolloutOwnershipCoordinator.js'
 import {
-  acquireFreshRolloutCoordinator,
+  beginFreshRolloutCoordinatorAcquisition,
 } from './transcript/FreshRolloutOwnershipCoordinatorRegistry.js'
 import type { CodexResumeRolloutPreparation } from './transcript/CodexResumeRolloutPreparation.js'
 import { normalizeRolloutOwnershipPath } from './transcript/OwnershipNormalization.js'
@@ -953,7 +956,11 @@ export class CodexHeadless extends EventEmitter {
     // invalidate the late-identical-prompt safety argument. The accumulator is
     // equally important: real xterm typing arrives in arbitrary chunks, while a
     // closing bracketed-paste marker is not a submission until a later Enter.
-    for (const prompt of this.submittedPromptInput.consume(data)) {
+    const screenBeforeWrite = data.includes('\t')
+      ? this.terminal.snapshotPlain().toLowerCase()
+      : ''
+    const tabBehavior = inferCodexTabBehavior(screenBeforeWrite)
+    for (const prompt of this.submittedPromptInput.consume(data, { tabBehavior })) {
       this.freshRolloutParticipant?.registerPrompt(prompt)
     }
   }
@@ -1087,10 +1094,11 @@ export class CodexHeadless extends EventEmitter {
    * parsed and emitted as 'rollout-entry'. The first session_meta
    * entry is captured for getSessionMeta().
    */
-  private tailFile(filePath: string): () => Promise<void> {
-    this.activeRolloutPath = filePath
-    this.tailedRolloutPaths.add(filePath)
-    return tailSessionFile<CodexRolloutLine>(
+  private tailFile(
+    filePath: string,
+    expectedGenerationId?: string | null,
+  ): () => Promise<void> {
+    const stop = tailSessionFile<CodexRolloutLine>(
       filePath,
       (entry) => {
         const line = entry
@@ -1116,10 +1124,20 @@ export class CodexHeadless extends EventEmitter {
         this.emit('rollout-error', err)
         this.committed.publishError(err)
       },
-      this.resumeThreadId
-        ? { bootstrapTailLines: CodexHeadless.RESUME_BOOTSTRAP_TAIL_LINES }
-        : undefined,
+      {
+        ...(this.resumeThreadId
+          ? { bootstrapTailLines: CodexHeadless.RESUME_BOOTSTRAP_TAIL_LINES }
+          : {}),
+        ...(expectedGenerationId ? { expectedGenerationId } : {}),
+      },
     )
+    // WHY publish only after FileTailer has synchronously opened and fstat'd
+    // the authorized generation. Setting these fields first made a failed
+    // generation handoff look like a live switch and blocked the still-valid
+    // original resume tail.
+    this.activeRolloutPath = filePath
+    this.tailedRolloutPaths.add(filePath)
+    return stop
   }
 
   /**
@@ -1155,7 +1173,8 @@ export class CodexHeadless extends EventEmitter {
     preparation: CodexResumeRolloutPreparation,
   ): Promise<() => Promise<void>> {
     const initialPath = preparation.initialPath
-    if (!initialPath || !this.resumeThreadId) {
+    const initialGenerationId = preparation.initialGenerationId
+    if (!initialPath || !initialGenerationId || !this.resumeThreadId) {
       throw new Error('Codex resume rollout preparation has no exact rollout')
     }
 
@@ -1168,7 +1187,7 @@ export class CodexHeadless extends EventEmitter {
 
     try {
       initialTailOpenAttempted = true
-      currentStop = this.tailFile(initialPath)
+      currentStop = this.tailFile(initialPath, initialGenerationId)
     } catch (error) {
       // WHY preparation owns cleanup here: exact reservation and lineage
       // registration happened before this object existed. Splitting rollback
@@ -1177,7 +1196,10 @@ export class CodexHeadless extends EventEmitter {
       throw error
     }
 
-    const switchTo = async (filePath: string): Promise<void> => {
+    const switchTo = async (
+      filePath: string,
+      generationId: string | null,
+    ): Promise<void> => {
       if (stopped) return
       if (this.activeRolloutPath === filePath) return
       if (this.tailedRolloutPaths.has(filePath)) return
@@ -1196,7 +1218,10 @@ export class CodexHeadless extends EventEmitter {
       const previousPath = currentPath
       let nextStop: () => Promise<void>
       try {
-        nextStop = this.tailFile(filePath)
+        if (!generationId) {
+          throw new Error('Codex lineage lease has no verified rollout generation')
+        }
+        nextStop = this.tailFile(filePath, generationId)
       } catch (error) {
         // The new path was reserved before opening to preserve at-most-one
         // tail. Retire only that failed switch: the original tail remains live
@@ -1255,7 +1280,7 @@ export class CodexHeadless extends EventEmitter {
             // revoke admission, then wait for any already-admitted switch before
             // deciding whether the current physical tail closed cleanly.
             switchQueue = switchQueue
-              .then(() => switchTo(lease.filePath))
+              .then(() => switchTo(lease.filePath, lease.generationId))
               .catch(error => {
                 this.emit(
                   'rollout-error',
@@ -1673,7 +1698,7 @@ export class CodexHeadless extends EventEmitter {
   ): Promise<() => Promise<void>> {
     let stopped = false
     let latestDecision: FreshRolloutParticipantDecision | null = null
-    const acquisition = await acquireFreshRolloutCoordinator({
+    const acquisition = beginFreshRolloutCoordinatorAcquisition({
       sessionsRoot: sessionsDir,
       normalizeCwd,
       normalizePath: normalizeCwd,
@@ -1705,7 +1730,13 @@ export class CodexHeadless extends EventEmitter {
           // coordinator has already installed an irreversible path lease before
           // invoking us. CodexHeadless owns I/O, while the transcript layer owns
           // identity; neither renderer nor parent adapter gets a second policy.
-          this.freshRolloutStopTail = this.tailFile(lease.filePath)
+          if (!lease.generationId) {
+            throw new Error('Codex fresh lease has no verified rollout generation')
+          }
+          this.freshRolloutStopTail = this.tailFile(
+            lease.filePath,
+            lease.generationId,
+          )
           const state = latestDecision
           if (!state) return
           const {
@@ -1728,7 +1759,21 @@ export class CodexHeadless extends EventEmitter {
       await acquisition.release()
       throw error
     }
+    // WHY this assignment precedes watcher readiness: write() is intentionally
+    // available while start() is pending. Prompt registration must take its
+    // coordinator sequence now, before any primed candidate observations are
+    // committed, rather than being replayed with a later causal order.
     this.freshRolloutParticipant = participant
+    try {
+      await acquisition.ready
+    } catch (error) {
+      participant.unregister()
+      if (this.freshRolloutParticipant === participant) {
+        this.freshRolloutParticipant = null
+      }
+      await acquisition.release()
+      throw error
+    }
 
     return async () => {
       if (stopped) return

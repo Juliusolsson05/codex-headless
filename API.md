@@ -1540,6 +1540,11 @@ here only for completeness:
   flag pair, so overlapping writes never produce duplicate emits.
 - On the resume path the tailer bootstraps from the last 200 lines
   (`bootstrapTailLines: 200`, bounded to 512 KiB of file tail).
+- Ownership-authorized tails receive the verified `dev:ino` as
+  `expectedGenerationId`. The initial open and every later poll use `fstat` on
+  the same descriptor that supplies bytes. Same-inode appends continue
+  normally; an atomic pathname replacement emits one structure-only generation
+  error and is never followed.
 
 ---
 

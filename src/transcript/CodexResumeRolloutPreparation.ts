@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
 
 import { collectRolloutLineageIds } from './ResumeForkCandidate.js'
-import { findCodexRolloutPathByThreadId } from './RolloutLocator.js'
+import {
+  findCodexRolloutByThreadId,
+  readCodexRolloutGeneration,
+} from './RolloutLocator.js'
 import { getCodexSessionsDir } from './ProjectDir.js'
 import {
   acquireFreshRolloutCoordinator,
@@ -37,6 +39,7 @@ export class CodexResumeRolloutPreparation {
   readonly ownerId = randomUUID()
   readonly sessionsDir: string
   readonly initialPath: string | null
+  readonly initialGenerationId: string | null
   readonly resumeThreadId: string
   readonly cwd: string
 
@@ -52,12 +55,14 @@ export class CodexResumeRolloutPreparation {
   constructor(options: {
     sessionsDir: string
     initialPath: string | null
+    initialGenerationId: string | null
     resumeThreadId: string
     cwd: string
     acquisition: FreshRolloutCoordinatorAcquisition | null
   }) {
     this.sessionsDir = options.sessionsDir
     this.initialPath = options.initialPath
+    this.initialGenerationId = options.initialGenerationId
     this.resumeThreadId = options.resumeThreadId
     this.cwd = options.cwd
     this.acquisition = options.acquisition
@@ -160,11 +165,11 @@ export async function prepareCodexResumeRollout(options: {
   onError?: (error: Error) => void
 }): Promise<CodexResumeRolloutPreparation> {
   const sessionsDir = options.sessionsDir ?? getCodexSessionsDir()
-  const initialPath = await findCodexRolloutPathByThreadId(
+  const initialLocation = await findCodexRolloutByThreadId(
     sessionsDir,
     options.resumeThreadId,
   )
-  if (!initialPath) {
+  if (!initialLocation) {
     // WHY absence is still represented as a consumed pre-spawn capability:
     // CodexHeadless can deliberately enter its fail-closed new-file fallback,
     // while callers cannot accidentally skip preparation on the ordinary exact
@@ -172,6 +177,7 @@ export async function prepareCodexResumeRollout(options: {
     return new CodexResumeRolloutPreparation({
       sessionsDir,
       initialPath: null,
+      initialGenerationId: null,
       resumeThreadId: options.resumeThreadId,
       cwd: options.cwd,
       acquisition: null,
@@ -186,14 +192,15 @@ export async function prepareCodexResumeRollout(options: {
   })
   const preparation = new CodexResumeRolloutPreparation({
     sessionsDir,
-    initialPath,
+    initialPath: initialLocation.filePath,
+    initialGenerationId: initialLocation.generationId,
     resumeThreadId: options.resumeThreadId,
     cwd: options.cwd,
     acquisition,
   })
   const reserved = acquisition.coordinator.reservePath({
     ownerId: preparation.ownerId,
-    filePath: initialPath,
+    filePath: initialLocation.filePath,
     kind: 'exact-id',
     proofIdentity: options.resumeThreadId,
   })
@@ -203,7 +210,7 @@ export async function prepareCodexResumeRollout(options: {
   }
 
   try {
-    const text = await readFile(initialPath, 'utf8')
+    const text = await readCodexRolloutGeneration(initialLocation)
     const lineageIds = new Set<string>()
     collectRolloutLineageIds(text, lineageIds, RESUME_LINEAGE_ID_CAP)
     preparation.registerLineage(lineageIds)

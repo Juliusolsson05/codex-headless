@@ -1,6 +1,32 @@
 const PASTE_START = '\x1b[200~'
 const PASTE_END = '\x1b[201~'
 const CSI = /^\x1b\[([0-9;?]*)([@-~])/
+const WORD_SEPARATORS = new Set(
+  [...'`~!@#$%^&*()-=+[{]}\\|;:\'",.<>/?'],
+)
+
+export type SubmittedPromptInputContext = {
+  /**
+   * Whether this exact Tab key is known to reach Codex's submission handler.
+   *
+   * WHY the caller supplies this per write: rust-v0.149.1 submits/queues plain
+   * Tab only after slash/file/mention popups have had the first chance to
+   * consume it. The bytes are identical in both cases, so the assembler cannot
+   * infer ownership from `\t` alone.
+   */
+  tabBehavior?: 'submit' | 'complete-or-unknown'
+}
+
+export function inferCodexTabBehavior(
+  screenBeforeWrite: string,
+): NonNullable<SubmittedPromptInputContext['tabBehavior']> {
+  // WHY the footer is provider-rendered keymap evidence. rust-v0.149.1 removes
+  // this hint when Tab is remapped, while popup candidates are conservatively
+  // rejected again from the local draft inside SubmittedPromptInput.
+  return screenBeforeWrite.toLowerCase().includes('tab to queue')
+    ? 'submit'
+    : 'complete-or-unknown'
+}
 
 /**
  * Reconstruct submitted composer text from the exact chunks written to a PTY.
@@ -20,7 +46,7 @@ export class SubmittedPromptInput {
   private pending = ''
   private inBracketedPaste = false
 
-  consume(data: string): string[] {
+  consume(data: string, context: SubmittedPromptInputContext = {}): string[] {
     this.pending += data
     const submitted: string[] = []
 
@@ -74,20 +100,25 @@ export class SubmittedPromptInput {
       this.pending = this.pending.slice(character.length)
 
       switch (character) {
-        case '\r':
-        case '\n': {
+        case '\r': {
           const prompt = this.finishSubmission()
           if (prompt !== null) submitted.push(prompt)
           break
         }
+        case '\n':
+          // WHY Ctrl+J is a newline in Codex's exact default editor. Bracketed
+          // paste already arrives through insert(), while treating this raw byte
+          // as submit invents a prompt the provider has not dispatched.
+          this.insert('\n')
+          break
         case '\x03': // Ctrl+C cancels the composer.
           this.resetComposer()
           break
         case '\x01': // Ctrl+A
-          this.cursor = 0
+          this.cursor = this.beginningOfCurrentLine()
           break
         case '\x05': // Ctrl+E
-          this.cursor = this.text.length
+          this.cursor = this.endOfCurrentLine()
           break
         case '\x08':
         case '\x7f':
@@ -97,22 +128,23 @@ export class SubmittedPromptInput {
           this.deleteForward()
           break
         case '\x0b': // Ctrl+K
-          this.text = this.text.slice(0, this.cursor)
+          this.killToEndOfLine()
           break
         case '\x15': // Ctrl+U
-          this.text = this.text.slice(this.cursor)
-          this.cursor = 0
-          // Clearing from an end-positioned history entry restores known local
-          // state. This is the ordinary recovery after Up was pressed by mistake.
-          if (!this.text) this.valid = true
+          this.killToBeginningOfLine()
           break
         case '\x17': // Ctrl+W
           this.deletePreviousWord()
           break
         case '\t':
-          // Completion changes text without sending those replacement bytes
-          // through this boundary. The eventual Enter therefore must fail closed.
-          this.valid = false
+          if (context.tabBehavior === 'submit' && this.tabCanOnlySubmit()) {
+            const prompt = this.finishSubmission()
+            if (prompt !== null) submitted.push(prompt)
+          } else {
+            // Completion changes text without sending those replacement bytes
+            // through this boundary. The eventual Enter therefore fails closed.
+            this.valid = false
+          }
           break
         default:
           if (codePoint < 0x20) this.valid = false
@@ -124,6 +156,14 @@ export class SubmittedPromptInput {
   }
 
   private applyCsi(parameters: string, final: string): void {
+    if (parameters.includes(';') || parameters.includes('?')) {
+      // WHY `parseInt("1;5") === 1` is precisely the unsafe behavior recorded
+      // by the seventh gate: Ctrl+Left moves by word in Codex but was modeled as
+      // one scalar. Private and modified sequences remain invalid until their
+      // exact provider result is represented here.
+      this.valid = false
+      return
+    }
     const count = Math.max(1, Number.parseInt(parameters, 10) || 1)
     if (final === 'D') {
       for (let i = 0; i < count; i += 1) this.moveLeft()
@@ -134,11 +174,11 @@ export class SubmittedPromptInput {
       return
     }
     if (final === 'H' || (final === '~' && parameters === '1')) {
-      this.cursor = 0
+      this.cursor = this.beginningOfCurrentLine()
       return
     }
     if (final === 'F' || (final === '~' && parameters === '4')) {
-      this.cursor = this.text.length
+      this.cursor = this.endOfCurrentLine()
       return
     }
     if (final === '~' && parameters === '3') {
@@ -190,9 +230,67 @@ export class SubmittedPromptInput {
 
   private deletePreviousWord(): void {
     const before = this.text.slice(0, this.cursor)
-    const retained = before.replace(/\s*\S+\s*$/, '')
-    this.text = retained + this.text.slice(this.cursor)
-    this.cursor = retained.length
+    let start = before.length
+    while (start > 0) {
+      const previous = [...before.slice(0, start)].at(-1)
+      if (!previous || !/\s/u.test(previous)) break
+      start -= previous.length
+    }
+    const previous = [...before.slice(0, start)].at(-1)
+    if (previous && WORD_SEPARATORS.has(previous)) {
+      while (start > 0) {
+        const candidate = [...before.slice(0, start)].at(-1)
+        if (!candidate || !WORD_SEPARATORS.has(candidate)) break
+        start -= candidate.length
+      }
+    } else {
+      while (start > 0) {
+        const candidate = [...before.slice(0, start)].at(-1)
+        if (!candidate || /\s/u.test(candidate) || WORD_SEPARATORS.has(candidate)) break
+        start -= candidate.length
+      }
+    }
+    this.text = this.text.slice(0, start) + this.text.slice(this.cursor)
+    this.cursor = start
+  }
+
+  private beginningOfCurrentLine(): number {
+    return this.text.lastIndexOf('\n', Math.max(0, this.cursor - 1)) + 1
+  }
+
+  private endOfCurrentLine(): number {
+    const newline = this.text.indexOf('\n', this.cursor)
+    return newline === -1 ? this.text.length : newline
+  }
+
+  private killToBeginningOfLine(): void {
+    const beginning = this.beginningOfCurrentLine()
+    const start = this.cursor === beginning && beginning > 0
+      ? beginning - 1
+      : beginning
+    this.text = this.text.slice(0, start) + this.text.slice(this.cursor)
+    this.cursor = start
+    // WHY no edit can recover `valid`: history/completion may have installed
+    // unknown text on another line, and Ctrl+U is line-scoped in Codex. Only a
+    // provider-proven full reset (Ctrl+C or completed submission) starts a new
+    // trustworthy composer lifetime.
+  }
+
+  private killToEndOfLine(): void {
+    const end = this.endOfCurrentLine()
+    const deleteEnd = this.cursor === end && end < this.text.length
+      ? end + 1
+      : end
+    this.text = this.text.slice(0, this.cursor) + this.text.slice(deleteEnd)
+  }
+
+  private tabCanOnlySubmit(): boolean {
+    const trimmed = this.text.trimStart()
+    if (trimmed.startsWith('!') || trimmed.startsWith('/')) return false
+    // WHY @ file/mention completion gets the first chance at Tab. We do not
+    // attempt to reproduce Codex's token grammar here: refusing all @ drafts is
+    // conservative and prevents a completion from becoming false ownership.
+    return !/(^|\s)@\S*$/u.test(this.text.slice(0, this.cursor))
   }
 
   private finishSubmission(): string | null {

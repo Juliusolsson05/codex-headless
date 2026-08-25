@@ -9,6 +9,7 @@ export type FreshRolloutLease = {
   participantId: string
   filePath: string
   candidateFingerprint: string
+  generationId: string | null
 }
 
 export type FreshRolloutParticipantHandle = {
@@ -758,6 +759,7 @@ export class FreshRolloutOwnershipCoordinator {
           participantId,
           filePath: candidate.filePath,
           candidateFingerprint,
+          generationId: candidate.generationId,
         },
       })
     }
@@ -856,6 +858,7 @@ export class FreshRolloutOwnershipCoordinator {
           participantId,
           filePath: candidate.filePath,
           candidateFingerprint,
+          generationId: candidate.generationId,
         },
       })
     }

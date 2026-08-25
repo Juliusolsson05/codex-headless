@@ -977,6 +977,125 @@ describe('process-wide fresh rollout watcher', () => {
     }
   })
 
+  it('does not tail replacement B after fresh ownership authorized inode A', async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'codex-fresh-generation-'))
+    temporaryDirectories.push(codexHome)
+    const previousCodexHome = process.env.CODEX_HOME
+    process.env.CODEX_HOME = codexHome
+    const fixture = loadFixture('modern-0149-agents-first')
+    const day = join(codexHome, 'sessions', '2026', '08', '24')
+    mkdirSync(day, { recursive: true })
+    const rolloutPath = join(
+      day,
+      'rollout-fresh-generation-00000000-0000-4000-8000-000000000078.jsonl',
+    )
+    const replacementSentinel = 'fresh-replacement-must-not-commit'
+    const headless = new CodexHeadless({
+      pty: inertPty(),
+      cwd: '/recorded/worktree',
+    })
+    const internal = headless as unknown as {
+      tailFile(filePath: string, generationId?: string | null): () => Promise<void>
+      activeRolloutPath: string | null
+    }
+    const openAuthorizedTail = internal.tailFile.bind(headless)
+    let authorizedGeneration: string | null | undefined
+    let swapped = false
+    internal.tailFile = (filePath, generationId) => {
+      authorizedGeneration = generationId
+      if (!swapped) {
+        swapped = true
+        renameSync(filePath, `${filePath}.inode-a`)
+        writeFileSync(
+          filePath,
+          `${rolloutText(fixture)}${JSON.stringify({
+            timestamp: '2026-08-25T00:00:00.000Z',
+            type: 'event_msg',
+            payload: { type: 'agent_message', message: replacementSentinel },
+          })}\n`,
+        )
+      }
+      return openAuthorizedTail(filePath, generationId)
+    }
+    const seenMessages: string[] = []
+    headless.on('rollout-entry', line => {
+      const message = (line.payload as { message?: unknown } | undefined)?.message
+      if (typeof message === 'string') seenMessages.push(message)
+    })
+
+    try {
+      await headless.start()
+      headless.write(`${fixture.ownership.localPromptToken}\r`)
+      writeFileSync(rolloutPath, rolloutText(fixture))
+      expect(await waitFor(() => swapped)).toBe(true)
+      await new Promise(resolve => setTimeout(resolve, 300))
+      // WHY the hook is after coordinator authorization and immediately before
+      // FileTailer construction. It deterministically exercises the exact gap
+      // that pathname-only tests otherwise hit only as a filesystem race.
+      expect(authorizedGeneration).toMatch(/^\d+:\d+$/)
+      expect(internal.activeRolloutPath).toBeNull()
+      expect(seenMessages).not.toContain(replacementSentinel)
+    } finally {
+      await headless.stop()
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = previousCodexHome
+    }
+  })
+
+  it('claims the recorded prompt submitted by Tab in a provider-proven state', async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'codex-tab-terminal-input-'))
+    temporaryDirectories.push(codexHome)
+    const previousCodexHome = process.env.CODEX_HOME
+    process.env.CODEX_HOME = codexHome
+    const fixture = loadFixture('modern-0149-agents-first')
+    const day = join(codexHome, 'sessions', '2026', '08', '24')
+    mkdirSync(day, { recursive: true })
+    const rolloutPath = join(
+      day,
+      'rollout-tab-00000000-0000-4000-8000-000000000079.jsonl',
+    )
+    const terminalDataListeners = new Set<(data: string) => void>()
+    const pty = {
+      write: () => undefined,
+      resize: () => undefined,
+      onData: (listener: (data: string) => void) => {
+        terminalDataListeners.add(listener)
+        return { dispose: () => { terminalDataListeners.delete(listener) } }
+      },
+      onExit: () => ({ dispose: () => undefined }),
+    } as unknown as IPty
+    const headless = new CodexHeadless({
+      pty,
+      cwd: '/recorded/worktree',
+    })
+
+    try {
+      await headless.start()
+      // Exact rust-v0.149.1 renders this footer only while the active keymap
+      // assigns Tab to queue/submit. The screen is real provider state at the
+      // pre-write boundary, not an assumption attached to the input byte.
+      for (const listener of terminalDataListeners) {
+        listener('  tab to queue message  100% context left  ')
+      }
+      expect(await waitFor(() =>
+        headless.getScreen().toLowerCase().includes('tab to queue'),
+      )).toBe(true)
+      for (const character of fixture.ownership.localPromptToken) {
+        headless.write(character)
+      }
+      headless.write('\t')
+      writeFileSync(rolloutPath, rolloutText(fixture))
+      expect(await waitFor(() =>
+        (headless as unknown as { activeRolloutPath: string | null })
+          .activeRolloutPath?.endsWith(rolloutPath.split('/').pop()!) === true,
+      )).toBe(true)
+    } finally {
+      await headless.stop()
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = previousCodexHome
+    }
+  })
+
   it('does not claim a sibling rollout for pasted but unsubmitted text', async () => {
     const codexHome = mkdtempSync(join(tmpdir(), 'codex-unsubmitted-paste-'))
     temporaryDirectories.push(codexHome)

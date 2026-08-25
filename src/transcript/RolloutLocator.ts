@@ -1,10 +1,16 @@
-import { open, readdir, stat } from 'node:fs/promises'
+import { open, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const SESSION_META_READ_BYTES = 256 * 1024
 
 export const CODEX_ROLLOUT_FILENAME_RE =
   /^rollout-(.+)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i
+
+export type CodexRolloutLocation = {
+  filePath: string
+  generationId: string
+  mtimeMs: number
+}
 
 /**
  * Resolve one exact Codex provider thread to its newest verified rollout.
@@ -20,21 +26,28 @@ export async function findCodexRolloutPathByThreadId(
   sessionsRoot: string,
   threadId: string,
 ): Promise<string | null> {
+  return (await findCodexRolloutByThreadId(sessionsRoot, threadId))?.filePath ?? null
+}
+
+export async function findCodexRolloutByThreadId(
+  sessionsRoot: string,
+  threadId: string,
+): Promise<CodexRolloutLocation | null> {
   const requestedId = threadId.toLowerCase()
   if (!isUuid(requestedId)) return null
 
-  const matches: Array<{ filePath: string; mtimeMs: number }> = []
+  const matches: CodexRolloutLocation[] = []
   await collectMatches(sessionsRoot, requestedId, matches, 0)
   matches.sort((left, right) =>
     right.mtimeMs - left.mtimeMs || left.filePath.localeCompare(right.filePath)
   )
-  return matches[0]?.filePath ?? null
+  return matches[0] ?? null
 }
 
 async function collectMatches(
   directory: string,
   requestedId: string,
-  matches: Array<{ filePath: string; mtimeMs: number }>,
+  matches: CodexRolloutLocation[],
   depth: number,
 ): Promise<void> {
   if (depth > 3) return
@@ -55,18 +68,20 @@ async function collectMatches(
     const filename = CODEX_ROLLOUT_FILENAME_RE.exec(entry.name)
     if (filename?.[2]?.toLowerCase() !== requestedId) continue
 
-    const metadataId = await readSessionMetaId(filePath)
-    if (metadataId?.toLowerCase() !== requestedId) continue
-    const fileStat = await stat(filePath).catch(() => null)
-    if (!fileStat?.isFile()) continue
-    matches.push({ filePath, mtimeMs: fileStat.mtimeMs })
+    const match = await inspectExactGeneration(filePath, requestedId)
+    if (match) matches.push(match)
   }
 }
 
-async function readSessionMetaId(filePath: string): Promise<string | null> {
+async function inspectExactGeneration(
+  filePath: string,
+  requestedId: string,
+): Promise<CodexRolloutLocation | null> {
   let handle
   try {
     handle = await open(filePath, 'r')
+    const fileStat = await handle.stat()
+    if (!fileStat.isFile()) return null
     const buffer = Buffer.alloc(SESSION_META_READ_BYTES)
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
     const prefix = buffer.subarray(0, bytesRead).toString('utf8')
@@ -85,7 +100,14 @@ async function readSessionMetaId(filePath: string): Promise<string | null> {
         continue
       }
       const id = (record.payload as { id?: unknown }).id
-      return typeof id === 'string' ? id : null
+      if (typeof id !== 'string' || id.toLowerCase() !== requestedId) {
+        return null
+      }
+      return {
+        filePath,
+        generationId: `${fileStat.dev}:${fileStat.ino}`,
+        mtimeMs: fileStat.mtimeMs,
+      }
     }
   } catch {
     return null
@@ -93,6 +115,29 @@ async function readSessionMetaId(filePath: string): Promise<string | null> {
     await handle?.close().catch(() => undefined)
   }
   return null
+}
+
+export async function readCodexRolloutGeneration(
+  location: Pick<CodexRolloutLocation, 'filePath' | 'generationId'>,
+): Promise<string> {
+  let handle
+  try {
+    handle = await open(location.filePath, 'r')
+    const fileStat = await handle.stat()
+    const openedGenerationId = `${fileStat.dev}:${fileStat.ino}`
+    if (!fileStat.isFile() || openedGenerationId !== location.generationId) {
+      // WHY raw path/dev:ino values are authorization internals. This error may
+      // cross the package's recorder-visible error channel, so it reports only
+      // the failed invariant.
+      throw new Error('Codex rollout generation mismatch during exact preparation')
+    }
+    // WHY read from this verified handle instead of readFile(path): lineage is
+    // part of the authorization proof. An atomic rename after fstat may change
+    // the directory entry, but it cannot change which inode this handle reads.
+    return await handle.readFile({ encoding: 'utf8' })
+  } finally {
+    await handle?.close().catch(() => undefined)
+  }
 }
 
 function isUuid(value: string): boolean {

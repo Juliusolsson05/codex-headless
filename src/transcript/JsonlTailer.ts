@@ -5,7 +5,6 @@ import {
   fstatSync,
   openSync,
   readSync,
-  statSync,
   type ReadStream,
 } from 'fs'
 import { mkdir, readdir } from 'fs/promises'
@@ -51,6 +50,27 @@ import { basename } from 'path'
  * queued. This guarantees strict serialization with zero unbounded
  * queuing and zero concurrency.
  */
+export type FileTailerOptions = {
+  bootstrapTailLines?: number
+  /**
+   * Bind every emitted byte to the dev:ino generation that authorized this
+   * physical tail. Pathnames are mutable directory entries, not capabilities.
+   */
+  expectedGenerationId?: string
+  /** @deprecated Direct private polling no longer needs a watcher-stall watchdog. */
+  watchdogMs?: number
+}
+
+export class RolloutGenerationMismatchError extends Error {
+  constructor() {
+    // WHY the error is intentionally structure-only. Raw paths and dev:ino
+    // values are authorization internals and can flow into recorder-visible
+    // rollout-error events; neither value is needed to explain the failure.
+    super('Rollout generation mismatch at physical tail boundary')
+    this.name = 'RolloutGenerationMismatchError'
+  }
+}
+
 export class FileTailer<T> {
   private offset = 0
   private buffer = ''
@@ -77,26 +97,16 @@ export class FileTailer<T> {
   private fileCtimeMs: number | null = null
   private activeStream: ReadStream | null = null
   private activeRead: Promise<void> | null = null
+  private readonly expectedGenerationId: string | null
+  private generationRejected = false
 
   constructor(
     private readonly filePath: string,
     private readonly onEntry: (entry: T) => void,
     private readonly onError?: (err: Error) => void,
-    options?: {
-      /**
-       * When set, do NOT replay the whole file from byte 0 on startup.
-       * Instead, synchronously parse only the most recent N complete
-       * JSONL lines, then begin tailing from EOF for future appends.
-       *
-       * Used by resume flows so long rollouts open at the current end
-       * of the conversation instead of making the renderer watch
-       * thousands of historical entries stream by.
-       */
-      bootstrapTailLines?: number
-      /** @deprecated Direct private polling no longer needs a watcher-stall watchdog. */
-      watchdogMs?: number
-    },
+    options?: FileTailerOptions,
   ) {
+    this.expectedGenerationId = options?.expectedGenerationId ?? null
     const bootstrapTailLines = options?.bootstrapTailLines ?? 0
     if (bootstrapTailLines > 0) {
       this.bootstrapTail(bootstrapTailLines)
@@ -105,7 +115,7 @@ export class FileTailer<T> {
       // CC often writes several entries before the watcher would tick. The
       // stream itself is asynchronous; serialized timer ticks reconcile any
       // append that lands while that initial stream is in flight.
-      this.readNew()
+      this.readNew(true)
     }
     // WHY each tailer owns its timer: closing one session can never unregister another session's
     // observer for the same rollout path, and there is no watcher-baseline handoff in which a write
@@ -117,69 +127,67 @@ export class FileTailer<T> {
   private bootstrapTail(maxLines: number): void {
     if (this.closed || maxLines <= 0) return
 
-    let stat: ReturnType<typeof statSync>
-    try {
-      stat = statSync(this.filePath)
-    } catch {
-      return
-    }
-    if (stat.size <= 0) {
-      this.offset = 0
-      this.fileIdentity = `${stat.dev}:${stat.ino}`
-      this.fileCtimeMs = stat.ctimeMs
-      return
-    }
-
-    const bytesToRead = Math.min(FileTailer.BOOTSTRAP_TAIL_BYTES, stat.size)
-    const start = Math.max(0, stat.size - bytesToRead)
-    const buf = Buffer.alloc(bytesToRead)
-
     let fd: number | null = null
+    let stat: ReturnType<typeof fstatSync>
     try {
       fd = openSync(this.filePath, 'r')
+      stat = fstatSync(fd)
+      const identity = `${stat.dev}:${stat.ino}`
+      this.requireExpectedGeneration(identity)
+      if (stat.size <= 0) {
+        this.offset = 0
+        this.fileIdentity = identity
+        this.fileCtimeMs = stat.ctimeMs
+        closeSync(fd)
+        return
+      }
+
+      const bytesToRead = Math.min(FileTailer.BOOTSTRAP_TAIL_BYTES, stat.size)
+      const start = Math.max(0, stat.size - bytesToRead)
+      const buf = Buffer.alloc(bytesToRead)
       readSync(fd, buf, 0, bytesToRead, start)
+      closeSync(fd)
+      fd = null
+
+      let text = buf.toString('utf8')
+      if (start > 0) {
+        const firstNewline = text.indexOf('\n')
+        text = firstNewline === -1 ? '' : text.slice(firstNewline + 1)
+      }
+
+      const lines = text
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0)
+
+      const recent = lines.slice(-maxLines)
+      for (const line of recent) {
+        try {
+          const obj = JSON.parse(line) as T
+          this.emitEntry(obj)
+        } catch (err) {
+          this.emitError(err as Error)
+        }
+      }
+
+      this.offset = stat.size
+      this.fileIdentity = identity
+      this.fileCtimeMs = stat.ctimeMs
+      this.buffer = ''
     } catch (err) {
-      this.onError?.(err as Error)
       if (fd !== null) {
         try { closeSync(fd) } catch { /* best-effort */ }
       }
-      return
+      // A generation-bound bootstrap is an authorization transaction. The
+      // caller must know synchronously that no physical tail was opened so it
+      // can retire the coordinator lease without ever publishing B's bytes.
+      if (this.expectedGenerationId) throw err
+      this.emitError(err as Error)
     }
-    try {
-      closeSync(fd)
-    } catch {
-      // best-effort close
-    }
-
-    let text = buf.toString('utf8')
-    if (start > 0) {
-      const firstNewline = text.indexOf('\n')
-      text = firstNewline === -1 ? '' : text.slice(firstNewline + 1)
-    }
-
-    const lines = text
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line.length > 0)
-
-    const recent = lines.slice(-maxLines)
-    for (const line of recent) {
-      try {
-        const obj = JSON.parse(line) as T
-        this.emitEntry(obj)
-      } catch (err) {
-        this.emitError(err as Error)
-      }
-    }
-
-    this.offset = stat.size
-    this.fileIdentity = `${stat.dev}:${stat.ino}`
-    this.fileCtimeMs = stat.ctimeMs
-    this.buffer = ''
   }
 
-  private readNew(): void {
-    if (this.closed) return
+  private readNew(throwOnInitialFailure = false): void {
+    if (this.closed || this.generationRejected) return
     if (this.reading) {
       // A read is in flight; queue a re-run instead of starting a
       // concurrent stream. See the class block comment for why
@@ -204,9 +212,23 @@ export class FileTailer<T> {
       // File temporarily missing — atomic-rename writers do this.
       // Skip and wait for the next poll tick.
       this.reading = false
+      if (throwOnInitialFailure && this.expectedGenerationId) {
+        throw new RolloutGenerationMismatchError()
+      }
       return
     }
     const identity = `${stat.dev}:${stat.ino}`
+    if (this.expectedGenerationId && identity !== this.expectedGenerationId) {
+      closeSync(fd)
+      this.reading = false
+      const error = new RolloutGenerationMismatchError()
+      if (throwOnInitialFailure) throw error
+      this.generationRejected = true
+      if (this.poller !== null) clearInterval(this.poller)
+      this.poller = null
+      this.emitError(error)
+      return
+    }
     if (
       this.fileIdentity !== null &&
       (
@@ -284,6 +306,13 @@ export class FileTailer<T> {
         this.readNew()
       }
     })
+  }
+
+  private requireExpectedGeneration(actualGenerationId: string): void {
+    if (this.expectedGenerationId &&
+      actualGenerationId !== this.expectedGenerationId) {
+      throw new RolloutGenerationMismatchError()
+    }
   }
 
   private emitEntry(entry: T): void {
@@ -391,9 +420,7 @@ export function tailSessionFile<T extends JsonlEntry = JsonlEntry>(
   filePath: string,
   onEntry: (entry: T) => void,
   onError?: (err: Error) => void,
-  options?: {
-    bootstrapTailLines?: number
-  },
+  options?: FileTailerOptions,
 ): () => Promise<void> {
   const tailer = new FileTailer<T>(filePath, onEntry, onError, options)
   return async () => {

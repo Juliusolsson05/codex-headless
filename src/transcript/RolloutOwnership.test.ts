@@ -8,7 +8,10 @@ import {
   type FreshRolloutCandidate,
   type SubmittedPrompt,
 } from './FreshRolloutClaim.js'
-import { SubmittedPromptInput } from './SubmittedPromptInput.js'
+import {
+  inferCodexTabBehavior,
+  SubmittedPromptInput,
+} from './SubmittedPromptInput.js'
 import {
   collectRolloutLineageIds,
   decideResumeForkCandidate,
@@ -132,6 +135,11 @@ describe('fresh rollout ownership', () => {
   })
 
   it('distinguishes recorded no-popup Tab submission from completion', () => {
+    expect(inferCodexTabBehavior(
+      '  tab to queue message                                       100% context left  ',
+    )).toBe('submit')
+    expect(inferCodexTabBehavior('  ctrl + q to queue message  '))
+      .toBe('complete-or-unknown')
     const submitted = new SubmittedPromptInput()
     const consumeSubmitted = submitted.consume.bind(submitted) as (
       data: string,
