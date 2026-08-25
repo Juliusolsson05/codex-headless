@@ -5,6 +5,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -936,6 +937,46 @@ describe('process-wide fresh rollout watcher', () => {
     }
   })
 
+  it('retains a recorded prompt submitted while fresh startup is still priming', async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'codex-startup-terminal-input-'))
+    temporaryDirectories.push(codexHome)
+    const previousCodexHome = process.env.CODEX_HOME
+    process.env.CODEX_HOME = codexHome
+    const fixture = loadFixture('modern-0149-agents-first')
+    const day = join(codexHome, 'sessions', '2026', '08', '24')
+    mkdirSync(day, { recursive: true })
+    const rolloutPath = join(
+      day,
+      'rollout-startup-00000000-0000-4000-8000-000000000076.jsonl',
+    )
+    const headless = new CodexHeadless({
+      pty: inertPty(),
+      cwd: '/recorded/worktree',
+    })
+
+    try {
+      const starting = headless.start()
+      // WHY Agent Code publishes the session while start() is pending so xterm
+      // can attach to the already-spawned PTY. This synchronous write order is
+      // the production race: the provider receives every byte even though the
+      // shared watcher has not yet reported ready.
+      for (const character of fixture.ownership.localPromptToken) {
+        headless.write(character)
+      }
+      headless.write('\r')
+      await starting
+      writeFileSync(rolloutPath, rolloutText(fixture))
+      expect(await waitFor(() =>
+        (headless as unknown as { activeRolloutPath: string | null })
+          .activeRolloutPath?.endsWith(rolloutPath.split('/').pop()!) === true,
+      )).toBe(true)
+    } finally {
+      await headless.stop()
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = previousCodexHome
+    }
+  })
+
   it('does not claim a sibling rollout for pasted but unsubmitted text', async () => {
     const codexHome = mkdtempSync(join(tmpdir(), 'codex-unsubmitted-paste-'))
     temporaryDirectories.push(codexHome)
@@ -1098,6 +1139,132 @@ describe('process-wide fresh rollout watcher', () => {
       else process.env.CODEX_HOME = previousCodexHome
     }
   })
+
+  it('rejects replacement after exact rollout preparation verified inode A', async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'codex-exact-generation-'))
+    temporaryDirectories.push(codexHome)
+    const previousCodexHome = process.env.CODEX_HOME
+    process.env.CODEX_HOME = codexHome
+    const fixture = loadFixture('subagent-0149-exact-attachment')
+    const sessionMeta = fixture.lines.find(line => line.type === 'session_meta')
+    const threadId = (sessionMeta?.payload as { id?: unknown } | undefined)?.id
+    if (typeof threadId !== 'string') {
+      throw new Error('recorded exact-id fixture has no thread id')
+    }
+    const day = join(codexHome, 'sessions', '2026', '08', '24')
+    mkdirSync(day, { recursive: true })
+    const rolloutPath = join(day, `rollout-recorded-${threadId}.jsonl`)
+    writeFileSync(rolloutPath, rolloutText(fixture))
+    const inodeA = statSync(rolloutPath)
+    const generationA = `${inodeA.dev}:${inodeA.ino}`
+    const preparation = await prepareRecordedResume({
+      codexHome,
+      cwd: '/recorded/worktree',
+      resumeThreadId: threadId,
+    })
+    expect((preparation as unknown as { initialGenerationId?: string })
+      .initialGenerationId).toBe(generationA)
+
+    renameSync(rolloutPath, `${rolloutPath}.inode-a`)
+    writeFileSync(rolloutPath, rolloutText(fixture))
+    const inodeB = statSync(rolloutPath)
+    expect(`${inodeB.dev}:${inodeB.ino}`).not.toBe(generationA)
+    const headless = new CodexHeadless({
+      pty: inertPty(),
+      cwd: '/recorded/worktree',
+      resumeThreadId: threadId,
+      resumeRolloutPreparation: preparation,
+    })
+
+    try {
+      // WHY requested id == filename id == metadata id proved inode A only.
+      // Reopening the pathname after replacement must not transfer that exact
+      // proof to B merely because B copied the same public identifiers.
+      await expect(headless.start()).rejects.toThrow(/generation/i)
+    } finally {
+      await headless.stop()
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = previousCodexHome
+    }
+  })
+
+  it('does not emit replacement B from a buffered lineage lease for A', async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'codex-lineage-generation-'))
+    temporaryDirectories.push(codexHome)
+    const previousCodexHome = process.env.CODEX_HOME
+    process.env.CODEX_HOME = codexHome
+    const fixture = loadFixture('subagent-0149-exact-attachment')
+    const sessionMetaIndex = fixture.lines.findIndex(line => line.type === 'session_meta')
+    const sessionMeta = fixture.lines[sessionMetaIndex]
+    const threadId = (sessionMeta?.payload as { id?: unknown } | undefined)?.id
+    if (typeof threadId !== 'string') {
+      throw new Error('recorded exact-id fixture has no thread id')
+    }
+    const forkThreadId = '00000000-0000-4000-8000-000000000077'
+    const forkLines = structuredClone(fixture.lines)
+    ;(forkLines[sessionMetaIndex]!.payload as { id: string }).id = forkThreadId
+    const day = join(codexHome, 'sessions', '2026', '08', '24')
+    mkdirSync(day, { recursive: true })
+    const initialPath = join(day, `rollout-recorded-${threadId}.jsonl`)
+    const forkPath = join(day, `rollout-recorded-${forkThreadId}.jsonl`)
+    writeFileSync(initialPath, rolloutText(fixture))
+    const preparation = await prepareRecordedResume({
+      codexHome,
+      cwd: '/recorded/worktree',
+      resumeThreadId: threadId,
+    })
+
+    writeFileSync(
+      forkPath,
+      `${forkLines.map(line => JSON.stringify(line)).join('\n')}\n`,
+    )
+    expect(await waitFor(() =>
+      (preparation as unknown as { pendingLeases: unknown[] })
+        .pendingLeases.length === 1,
+    5000)).toBe(true)
+    const inodeA = statSync(forkPath)
+    const generationA = `${inodeA.dev}:${inodeA.ino}`
+    const pendingLease = (preparation as unknown as {
+      pendingLeases: Array<{ generationId?: string }>
+    }).pendingLeases[0]
+    expect(pendingLease?.generationId).toBe(generationA)
+
+    renameSync(forkPath, `${forkPath}.inode-a`)
+    const replacementSentinel = 'replacement-generation-must-not-commit'
+    writeFileSync(
+      forkPath,
+      `${forkLines.map(line => JSON.stringify(line)).join('\n')}\n` +
+        `${JSON.stringify({
+          timestamp: '2026-08-25T00:00:00.000Z',
+          type: 'event_msg',
+          payload: { type: 'agent_message', message: replacementSentinel },
+        })}\n`,
+    )
+    const seenMessages: string[] = []
+    const headless = new CodexHeadless({
+      pty: inertPty(),
+      cwd: '/recorded/worktree',
+      resumeThreadId: threadId,
+      resumeRolloutPreparation: preparation,
+    })
+    headless.on('rollout-entry', line => {
+      const message = (line.payload as { message?: unknown } | undefined)?.message
+      if (typeof message === 'string') seenMessages.push(message)
+    })
+
+    try {
+      await headless.start()
+      await new Promise(resolve => setTimeout(resolve, 500))
+      // WHY the lineage proof was buffered before CodexHeadless existed. That
+      // makes the A->B replacement deterministic at the exact handoff where a
+      // pathname-only lease currently loses the watcher's verified generation.
+      expect(seenMessages).not.toContain(replacementSentinel)
+    } finally {
+      await headless.stop()
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = previousCodexHome
+    }
+  }, 15_000)
 
   it('releases the resume watcher when its bounded window expires', async () => {
     const codexHome = mkdtempSync(join(tmpdir(), 'codex-resume-window-'))

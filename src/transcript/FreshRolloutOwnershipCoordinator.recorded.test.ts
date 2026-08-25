@@ -399,6 +399,53 @@ describe('recorded process-wide fresh rollout ownership', () => {
     }])
   })
 
+  it('carries the verified generation through fresh and lineage leases', () => {
+    const freshFixture = loadFixture('modern-0149-agents-first')
+    const freshCandidate = candidateFromFixture(freshFixture)
+    const freshOwner = coordinator()
+    const freshLeases: FreshRolloutLease[] = []
+    const fresh = register(freshOwner, 'generation-fresh', freshLeases)
+    fresh.registerPrompt(promptFromFixture(freshFixture))
+    const freshObservation = freshOwner.beginCandidateObservation(
+      freshCandidate.filePath,
+      { generationId: 'recorded-fresh-dev:ino' },
+    )
+    freshOwner.commitCandidateObservation(freshObservation, freshCandidate)
+
+    const resumeFixture = loadFixture('subagent-0149-exact-attachment')
+    const resumeCandidate = candidateFromFixture(resumeFixture)
+    const lineageIds = new Set<string>()
+    collectRolloutLineageIds(
+      resumeFixture.lines.map(line => JSON.stringify(line)).join('\n'),
+      lineageIds,
+      8000,
+    )
+    const resumeOwner = coordinator()
+    const resumeLeases: FreshRolloutLease[] = []
+    resumeOwner.registerResumeParticipant({
+      participantId: 'generation-resume',
+      cwd: '/recorded/worktree',
+      lineageIds,
+      requiredOverlapLimit: 3,
+      onLease: lease => resumeLeases.push(lease),
+    })
+    const resumeObservation = resumeOwner.beginCandidateObservation(
+      resumeCandidate.filePath,
+      { generationId: 'recorded-resume-dev:ino' },
+    )
+    resumeOwner.commitCandidateObservation(resumeObservation, resumeCandidate)
+
+    // WHY parsing was already bound to these recorded dev:ino values. A lease
+    // that retains only the pathname lets a later atomic replacement inherit
+    // the accepted prompt/lineage proof when CodexHeadless opens its tail.
+    expect(freshLeases[0]).toMatchObject({
+      generationId: 'recorded-fresh-dev:ino',
+    })
+    expect(resumeLeases[0]).toMatchObject({
+      generationId: 'recorded-resume-dev:ino',
+    })
+  })
+
   it('quarantines a recorded prefix that loses previously observed lineage', () => {
     const fixture = loadFixture('subagent-0149-exact-attachment')
     const candidate = candidateFromFixture(fixture)
