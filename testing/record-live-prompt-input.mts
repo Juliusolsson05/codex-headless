@@ -10,18 +10,26 @@ import process from 'node:process'
 import * as pty from 'node-pty'
 
 import { HeadlessTerminal } from '../src/terminal/HeadlessTerminal.js'
+import type { StableTerminalFrame } from '../src/terminal/HeadlessTerminal.js'
 
 type InputCase = {
   id: string
   configOverrides?: string[]
+  lowerLayerConfig?: string[]
   trusted?: boolean
+  initialCols?: number
+  initialRows?: number
+  workspaceSuffix?: string
   inputChunks: string[]
   expectedSubmission: boolean
   expectedDurableText?: string
+  startupOnly?: boolean
+  expectedStartupFailure?: RegExp
   waitForPopup?: RegExp
   popupAfterChunk?: number
   waitBeforeFinal?: RegExp
   setup?: (session: LiveSession) => Promise<Record<string, unknown>>
+  afterDraft?: (session: LiveSession) => Promise<Record<string, unknown>>
 }
 
 type CapturedRequest = {
@@ -34,14 +42,27 @@ type LiveSession = {
   mirror: HeadlessTerminal
   codexHome: string
   workspace: string
+  workspaceRoot: string
+  workspaceSuffix?: string
   requests: CapturedRequest[]
   rawPtyChunks: string[]
+  exitOutcome: { exitCode: number; signal?: number } | null
 }
 
 const CODEX_BINARY = process.env.CODEX_BINARY ?? '/Users/juliusolsson/.local/bin/codex'
 const TIMEOUT_MS = Number(process.env.CODEX_INPUT_RECORD_TIMEOUT_MS ?? 20_000)
 const COLS = 140
 const ROWS = 42
+// These are the exact final session-layer arguments issued by
+// CodexPromptInputProfile. The conflict recording must exercise the production
+// launch contract as one unit: selectively omitting an override could make a
+// lower-layer map appear safe even though the real spawn is rejected.
+const ISSUED_PROMPT_INPUT_OVERRIDES = [
+  'tui.keymap.composer.submit="enter"',
+  'tui.keymap.composer.queue="tab"',
+  'tui.vim_mode_default=false',
+  'tui.keymap.global.toggle_vim_mode=[]',
+] as const
 // WHY this exact minimal stream is copied from rust-v0.149.1's
 // app-server-test-client loopback server rather than the fixture file in the
 // currently checked-out vendor tree: the vendor checkout is an older reference
@@ -177,6 +198,75 @@ const allCases: InputCase[] = [
       return { activeTurnFooter: structuralScreen(session) }
     },
   },
+  {
+    id: 'narrow-soft-wrap-resize-redraw',
+    initialCols: 52,
+    initialRows: 24,
+    inputChunks: [
+      'RECORDED_NARROW_WRAP alpha beta gamma delta epsilon zeta eta theta iota kappa omega',
+      '\r',
+    ],
+    expectedSubmission: true,
+    expectedDurableText: 'RECORDED_NARROW_WRAP alpha beta gamma delta epsilon zeta eta theta iota kappa omega',
+    setup: async session => {
+      await waitForPtyQuiet(session)
+      const frame = session.mirror.snapshotStableFrame()
+      if (!frame) throw new Error('missing complete composer frame before narrow input')
+      return { beforeTypingFrame: structuralStableFrame(session, frame) }
+    },
+    afterDraft: async session => recordResizeBoundary(session, 92, 24),
+  },
+  {
+    id: 'unchanged-redraw-after-edit',
+    inputChunks: ['\r'],
+    expectedSubmission: true,
+    expectedDurableText: 'RECORDED_UNCHANGED_BASE_EDIT',
+    setup: async session => recordUnchangedRedrawAfterEdit(
+      session,
+      '_EDIT',
+    ),
+  },
+  {
+    id: 'ordinary-modal-sentinel-draft',
+    inputChunks: [
+      'ORDINARY_DRAFT Do you trust the contents of this directory? Press enter to continue END',
+      '\r',
+    ],
+    expectedSubmission: true,
+    expectedDurableText:
+      'ORDINARY_DRAFT Do you trust the contents of this directory? Press enter to continue END',
+  },
+  {
+    id: 'ordinary-vim-sentinel-cwd',
+    workspaceSuffix: 'Vim: Insert',
+    inputChunks: ['ORDINARY_VIM_SENTINEL_CWD', '\r'],
+    expectedSubmission: true,
+    expectedDurableText: 'ORDINARY_VIM_SENTINEL_CWD',
+  },
+  {
+    id: 'lower-layer-keymap-valid-control',
+    lowerLayerConfig: [
+      '[tui.keymap.composer]',
+      'queue = []',
+      'toggle_shortcuts = "tab"',
+    ],
+    inputChunks: [],
+    expectedSubmission: false,
+    startupOnly: true,
+  },
+  {
+    id: 'lower-layer-keymap-issued-profile-conflict',
+    lowerLayerConfig: [
+      '[tui.keymap.composer]',
+      'queue = []',
+      'toggle_shortcuts = "tab"',
+    ],
+    configOverrides: [...ISSUED_PROMPT_INPUT_OVERRIDES],
+    inputChunks: [],
+    expectedSubmission: false,
+    startupOnly: true,
+    expectedStartupFailure: /composer\.queue.*composer\.toggle_shortcuts|composer\.toggle_shortcuts.*composer\.queue/i,
+  },
 ]
 const requestedCases = new Set(
   (process.env.CODEX_INPUT_RECORD_CASES ?? '').split(',').filter(Boolean),
@@ -190,6 +280,97 @@ try {
   for (const inputCase of cases) {
     const session = await startSession(inputCase)
     try {
+      const beforeStartupUsers = await readDurableUserTexts(session.codexHome)
+      const beforeStartupRequests = session.requests.length
+
+      if (inputCase.expectedStartupFailure) {
+        await waitFor(() => {
+          const screen = session.mirror.snapshotPlain()
+          return inputCase.expectedStartupFailure!.test(screen) ||
+            session.exitOutcome !== null
+        }, `${inputCase.id} explicit startup failure`)
+        // The terminal mirror remains readable after process exit. Waiting one
+        // event-loop turn retains the provider's final error paint rather than
+        // whichever partial ANSI chunk first happened to match the sentinel.
+        await delay(100)
+        const startupScreen = structuralScreen(session)
+        if (!inputCase.expectedStartupFailure.test(startupScreen.join('\n'))) {
+          throw new Error(
+            `${inputCase.id} exited without the expected conflict: ` +
+            JSON.stringify(startupScreen),
+          )
+        }
+        const durableUserTexts = await readDurableUserTexts(session.codexHome)
+        const requestCountDelta = session.requests.length - beforeStartupRequests
+        if (durableUserTexts.length !== beforeStartupUsers.length || requestCountDelta !== 0) {
+          throw new Error(`${inputCase.id} reached a provider boundary before startup rejection`)
+        }
+        const rawPtySha256 = sha256(session.rawPtyChunks.join(''))
+        output.push({
+          id: inputCase.id,
+          sourceLabel: `recorded-source-${rawPtySha256.slice(0, 16)}`,
+          rawPtySha256,
+          rolloutSha256: await hashRolloutCorpus(session.codexHome),
+          rawRequestSha256: null,
+          configClass: 'lower-layer-plus-issued-cli-override',
+          lowerLayerConfig: inputCase.lowerLayerConfig ?? [],
+          configOverrides: inputCase.configOverrides ?? [],
+          terminal: {
+            cols: inputCase.initialCols ?? COLS,
+            rows: inputCase.initialRows ?? ROWS,
+          },
+          inputChunks: [],
+          expectedSubmission: false,
+          durableUserText: null,
+          requestUserText: null,
+          requestCountDelta,
+          startupOutcome: 'rejected-before-composer',
+          exitOutcome: session.exitOutcome,
+          startupScreen,
+        })
+        continue
+      }
+
+      if (inputCase.trusted ?? true) {
+        await waitForComposer(session)
+        // The first empty composer frame can precede the configured Vim-mode
+        // transition by one redraw. Record only after the provider state is
+        // stable; the startup-immediate delivery race has its own fixture.
+        await delay(350)
+      }
+
+      if (inputCase.startupOnly) {
+        const durableUserTexts = await readDurableUserTexts(session.codexHome)
+        const requestCountDelta = session.requests.length - beforeStartupRequests
+        if (durableUserTexts.length !== beforeStartupUsers.length || requestCountDelta !== 0) {
+          throw new Error(`${inputCase.id} crossed a provider boundary during startup control`)
+        }
+        const rawPtySha256 = sha256(session.rawPtyChunks.join(''))
+        output.push({
+          id: inputCase.id,
+          sourceLabel: `recorded-source-${rawPtySha256.slice(0, 16)}`,
+          rawPtySha256,
+          rolloutSha256: await hashRolloutCorpus(session.codexHome),
+          rawRequestSha256: null,
+          configClass: 'lower-layer-config',
+          lowerLayerConfig: inputCase.lowerLayerConfig ?? [],
+          configOverrides: inputCase.configOverrides ?? [],
+          terminal: {
+            cols: inputCase.initialCols ?? COLS,
+            rows: inputCase.initialRows ?? ROWS,
+          },
+          inputChunks: [],
+          expectedSubmission: false,
+          durableUserText: null,
+          requestUserText: null,
+          requestCountDelta,
+          startupOutcome: 'composer-ready',
+          exitOutcome: session.exitOutcome,
+          startupScreen: structuralScreen(session),
+        })
+        continue
+      }
+
       const setup = await inputCase.setup?.(session) ?? {}
       const beforeUsers = await readDurableUserTexts(session.codexHome)
       const beforeRequests = session.requests.length
@@ -221,6 +402,7 @@ try {
       if (inputCase.waitBeforeFinal) {
         await waitForScreen(session, screen => inputCase.waitBeforeFinal!.test(screen))
       }
+      const afterDraft = await inputCase.afterDraft?.(session) ?? {}
       // WHY this is an observed provider boundary, not arbitrary test sleep:
       // Codex 0.149.1 can still be coalescing the typed redraw when Enter lands
       // in the same burst. Agent Code's real xterm events have a human-scale
@@ -291,8 +473,15 @@ try {
         rawRequestSha256,
         configClass: inputCase.configOverrides?.length
           ? 'explicit-cli-override'
-          : 'recorded-default-01491',
+          : inputCase.lowerLayerConfig?.length
+            ? 'lower-layer-config'
+            : 'recorded-default-01491',
+        lowerLayerConfig: inputCase.lowerLayerConfig ?? [],
         configOverrides: inputCase.configOverrides ?? [],
+        terminal: {
+          cols: inputCase.initialCols ?? COLS,
+          rows: inputCase.initialRows ?? ROWS,
+        },
         inputChunks: inputCase.inputChunks,
         expectedSubmission: inputCase.expectedSubmission,
         durableUserText,
@@ -300,6 +489,7 @@ try {
         screenBeforeFinalWrite,
         popup,
         ...setup,
+        ...afterDraft,
       })
     } finally {
       releaseSlowResponse?.()
@@ -307,7 +497,7 @@ try {
       try { session.terminal.kill() } catch { /* Provider may already have exited. */ }
       session.mirror.dispose()
       await rm(session.codexHome, { recursive: true, force: true })
-      await rm(session.workspace, { recursive: true, force: true })
+      await rm(session.workspaceRoot, { recursive: true, force: true })
     }
   }
 } finally {
@@ -336,7 +526,11 @@ async function startSession(inputCase: InputCase): Promise<LiveSession> {
   // WHY Codex realpaths cwd before matching `[projects]`. macOS exposes the
   // temp root through both /var and /private/var; recording the alias in config
   // silently leaves the supposedly trusted control cases on the trust modal.
-  const workspace = await realpath(workspaceAlias)
+  const workspaceRoot = await realpath(workspaceAlias)
+  const workspace = inputCase.workspaceSuffix
+    ? join(workspaceRoot, inputCase.workspaceSuffix)
+    : workspaceRoot
+  if (inputCase.workspaceSuffix) await mkdir(workspace, { recursive: true })
   await mkdir(join(codexHome, 'skills', 'recorded-evidence'), { recursive: true })
   await writeFile(
     join(codexHome, 'skills', 'recorded-evidence', 'SKILL.md'),
@@ -359,6 +553,8 @@ async function startSession(inputCase: InputCase): Promise<LiveSession> {
       'trust_level = "trusted"',
       '',
     ] : []),
+    ...(inputCase.lowerLayerConfig ?? []),
+    ...(inputCase.lowerLayerConfig?.length ? [''] : []),
   ].join('\n')
   await writeFile(join(codexHome, 'config.toml'), config)
 
@@ -372,8 +568,8 @@ async function startSession(inputCase: InputCase): Promise<LiveSession> {
   }
   const terminal = pty.spawn(CODEX_BINARY, args, {
     name: 'xterm-256color',
-    cols: COLS,
-    rows: ROWS,
+    cols: inputCase.initialCols ?? COLS,
+    rows: inputCase.initialRows ?? ROWS,
     cwd: workspace,
     env: {
       ...process.env,
@@ -383,18 +579,27 @@ async function startSession(inputCase: InputCase): Promise<LiveSession> {
       COLORTERM: 'truecolor',
     } as Record<string, string>,
   })
-  const mirror = new HeadlessTerminal({ pty: terminal, cols: COLS, rows: ROWS, snapshotIntervalMs: 20 })
+  const mirror = new HeadlessTerminal({
+    pty: terminal,
+    cols: inputCase.initialCols ?? COLS,
+    rows: inputCase.initialRows ?? ROWS,
+    snapshotIntervalMs: 20,
+  })
   const rawPtyChunks: string[] = []
   mirror.on('pty-data', data => { rawPtyChunks.push(data) })
-  mirror.attach()
-  const session = { terminal, mirror, codexHome, workspace, requests, rawPtyChunks }
-  if (trusted) {
-    await waitForComposer(session)
-    // The first empty composer frame can precede the configured Vim-mode
-    // transition by one redraw. Record only after the provider state is stable;
-    // the startup-immediate delivery race has its own deterministic fixture.
-    await delay(350)
+  const session: LiveSession = {
+    terminal,
+    mirror,
+    codexHome,
+    workspace,
+    workspaceRoot,
+    workspaceSuffix: inputCase.workspaceSuffix,
+    requests,
+    rawPtyChunks,
+    exitOutcome: null,
   }
+  mirror.on('exit', outcome => { session.exitOutcome = outcome })
+  mirror.attach()
   return session
 }
 
@@ -466,22 +671,306 @@ async function waitFor(
 }
 
 function structuralScreen(session: LiveSession): string[] {
-  const privateValues = [session.codexHome, session.workspace, process.env.HOME ?? '']
-    .filter(Boolean)
   const screenRows = session.mirror.snapshotPlain().split('\n')
   const rowCount = screenRows.some(row => row.includes('Do you trust the contents')) ? 12 : 8
-  return screenRows.slice(-rowCount).map(row => {
-    let sanitized = row
-    for (const value of privateValues) sanitized = sanitized.split(value).join('<private-path>')
-    sanitized = sanitized.replace('/private<private-path>', '<private-path>')
-    sanitized = sanitized.replace(
-      /(?:\/private)?\/var\/…\/T\/codex-input-workspace-[A-Za-z0-9]+/g,
-      '<recorded-workspace>',
-    )
-    sanitized = sanitized.replace(/[•◦] Working \(\d+s/, '<activity> Working (<elapsed>')
-    sanitized = sanitized.replaceAll(`127.0.0.1:${port}`, '<fixture-server>')
-    return sanitized
-  })
+  return screenRows.slice(-rowCount).map(row => sanitizeScreenRow(session, row))
+}
+
+function sanitizeScreenRow(session: LiveSession, row: string): string {
+  let sanitized = row
+  // Preserve only the public suffix needed by the Vim-sentinel counterexample.
+  // Replacing the full cwd with a generic token would erase the provider fact
+  // under test; retaining the random temp parent would expose host-local data.
+  sanitized = sanitized.split(session.workspaceRoot).join(
+    session.workspaceSuffix ? '<recorded-workspace>' : '<private-path>',
+  )
+  for (const value of [session.codexHome, process.env.HOME ?? ''].filter(Boolean)) {
+    sanitized = sanitized.split(value).join('<private-path>')
+  }
+  sanitized = sanitized.replace('/private<private-path>', '<private-path>')
+  sanitized = sanitized.replace(
+    /(?:\/private)?\/var\/folders\/[^\s]+\/T\/codex-input-(?:workspace-[A-Za-z0-9]+|wo…)/g,
+    '<recorded-workspace>',
+  )
+  sanitized = sanitized.replace(
+    /(?:\/private)?\/var\/folders\/[^\s·…]*…/g,
+    '<private-path>',
+  )
+  sanitized = sanitized.replace(
+    /(?:\/private)?\/var\/…\/T\/codex-input-workspace-[A-Za-z0-9]+/g,
+    '<recorded-workspace>',
+  )
+  sanitized = sanitized.replace(/[•◦] Working \(\d+s/, '<activity> Working (<elapsed>')
+  sanitized = sanitized.replaceAll(`127.0.0.1:${port}`, '<fixture-server>')
+  return sanitized
+}
+
+async function recordResizeBoundary(
+  session: LiveSession,
+  cols: number,
+  rows: number,
+): Promise<Record<string, unknown>> {
+  await waitForPtyQuiet(session)
+  const narrow = session.mirror.snapshotStableFrame()
+  if (!narrow) throw new Error('narrow frame was still parsing after PTY quiet')
+
+  const rawChunkCountBeforeResize = session.rawPtyChunks.length
+  session.mirror.resize(cols, rows)
+  // HeadlessTerminal.resize() changes xterm geometry synchronously in the same
+  // JavaScript turn. No PTY callback can run between the call and this sample,
+  // making it a real pre-provider-redraw frame rather than a timing guess.
+  const beforeProviderRedraw = session.mirror.snapshotStableFrame()
+  const rawChunkCountBeforeProviderRedraw = session.rawPtyChunks.length
+  if (!beforeProviderRedraw) {
+    throw new Error('resize unexpectedly overlapped an in-flight PTY parse')
+  }
+  if (beforeProviderRedraw.generation !== narrow.generation ||
+    rawChunkCountBeforeProviderRedraw !== rawChunkCountBeforeResize) {
+    throw new Error('provider bytes arrived inside the synchronous resize boundary')
+  }
+
+  await waitFor(() => {
+    const frame = session.mirror.snapshotStableFrame()
+    return frame !== null && frame.generation > beforeProviderRedraw.generation
+  }, 'provider redraw after resize')
+  await waitForPtyQuiet(session)
+  const afterProviderRedraw = session.mirror.snapshotStableFrame()
+  if (!afterProviderRedraw ||
+    afterProviderRedraw.generation <= beforeProviderRedraw.generation) {
+    throw new Error('resize did not produce a complete newer provider frame')
+  }
+
+  return {
+    resizeTrace: {
+      requested: { cols, rows },
+      rawChunkCountBeforeResize,
+      rawChunkCountBeforeProviderRedraw,
+      rawChunkCountAfterProviderRedraw: session.rawPtyChunks.length,
+      preRedrawGenerationUnchanged:
+        beforeProviderRedraw.generation === narrow.generation,
+      postRedrawGenerationAdvanced:
+        afterProviderRedraw.generation > beforeProviderRedraw.generation,
+      narrow: structuralStableFrame(session, narrow),
+      beforeProviderRedraw: structuralStableFrame(session, beforeProviderRedraw),
+      afterProviderRedraw: structuralStableFrame(session, afterProviderRedraw),
+    },
+  }
+}
+
+async function recordUnchangedRedrawAfterEdit(
+  session: LiveSession,
+  edit: string,
+): Promise<Record<string, unknown>> {
+  const beforeSetupUsers = await readDurableUserTexts(session.codexHome)
+  const beforeSetupRequests = session.requests.length
+  session.terminal.write('RECORDED_SLOW_TURN')
+  await delay(300)
+  session.terminal.write('\r')
+  await waitFor(async () => {
+    const values = await readDurableUserTexts(session.codexHome)
+    return values.length > beforeSetupUsers.length
+  }, 'unchanged-redraw slow setup prompt to become durable')
+  await waitFor(() => session.requests.length > beforeSetupRequests,
+    'unchanged-redraw slow setup request')
+  await waitForScreen(session, screen => screen.includes('Working ('))
+  const baseDraft = 'RECORDED_UNCHANGED_BASE'
+  session.terminal.write(baseDraft)
+  await waitForScreen(session, screen => screen.includes(baseDraft))
+  let beforeEdit: StableTerminalFrame | null = null
+  await waitFor(() => {
+    beforeEdit = session.mirror.snapshotStableFrame()
+    return beforeEdit !== null
+  }, 'complete active-composer frame before edit')
+  if (!beforeEdit) throw new Error('missing complete frame before edit')
+  const beforeRevision = composerRevision(beforeEdit)
+  if (!beforeRevision) throw new Error('missing composer revision before edit')
+
+  const rawChunkCountBeforeEdit = session.rawPtyChunks.length
+  let editIssued = false
+  let childStopped = false
+  const issueEditInsideProviderChunk = () => {
+    if (editIssued) return
+    editIssued = true
+    // WHY this listener runs synchronously from HeadlessTerminal's `pty-data`
+    // event before that already-produced provider chunk is parsed into xterm.
+    // The edit therefore happens after frame F but before the unrelated status
+    // bytes advance the mirror generation, reproducing the exact causality the
+    // generation-only acknowledgement mistakes for an edit paint.
+    session.terminal.write(edit)
+    // Freeze only this isolated fixture process after the kernel accepts the
+    // edit. The already-emitted status chunk can now finish parsing into the
+    // mirror before Codex consumes the edit and paints it. This scheduling
+    // control changes no bytes or screen content; it makes the otherwise tiny
+    // real race independently inspectable and repeatable.
+    process.kill(session.terminal.pid, 'SIGSTOP')
+    childStopped = true
+  }
+  session.mirror.on('pty-data', issueEditInsideProviderChunk)
+  try {
+    await waitFor(() => editIssued, 'next provider status redraw after arming edit')
+  } finally {
+    session.mirror.off('pty-data', issueEditInsideProviderChunk)
+  }
+  let unchangedAfterEdit: StableTerminalFrame | null = null
+  let rawChunkCountAtUnchangedRedraw: number | null = null
+  try {
+    await waitFor(() => {
+      const frame = session.mirror.snapshotStableFrame()
+      if (!frame || frame.generation <= beforeEdit.generation) return false
+      const revision = composerRevision(frame)
+      if (!revision || !sameComposerRevision(revision, beforeRevision)) return false
+      unchangedAfterEdit = frame
+      rawChunkCountAtUnchangedRedraw = session.rawPtyChunks.length
+      return true
+    }, 'newer provider generation with unchanged pre-edit composer revision')
+  } finally {
+    if (childStopped) {
+      process.kill(session.terminal.pid, 'SIGCONT')
+      childStopped = false
+    }
+  }
+
+  let paintedEdit: StableTerminalFrame | null = null
+  await waitFor(() => {
+    const frame = session.mirror.snapshotStableFrame()
+    if (!frame || frame.generation <= unchangedAfterEdit!.generation) return false
+    if (!composerRevision(frame)?.draftText.includes(edit)) return false
+    paintedEdit = frame
+    return true
+  }, 'provider paint that contains the recorded edit')
+  if (!unchangedAfterEdit) {
+    throw new Error('no newer provider generation retained the pre-edit composer revision')
+  }
+  if (!paintedEdit) throw new Error('provider never painted the recorded edit')
+
+  const setupDurableUserText = (await readDurableUserTexts(session.codexHome)).at(-1) ?? null
+  const setupRequestUserText = extractLastRequestUserText(
+    session.requests.at(beforeSetupRequests)?.body,
+  )
+  if (setupDurableUserText !== 'RECORDED_SLOW_TURN' ||
+    setupRequestUserText !== 'RECORDED_SLOW_TURN') {
+    throw new Error('slow setup prompt did not agree at rollout/request boundaries')
+  }
+
+  releaseSlowResponse?.()
+  releaseSlowResponse = null
+  await waitForScreen(session, screen =>
+    !screen.includes('Working (') && screen.includes(edit),
+  )
+  await waitForPtyQuiet(session)
+
+  return {
+    editAcknowledgementTrace: {
+      baseDraft,
+      edit,
+      setupDurableUserText,
+      setupRequestUserText,
+      rawChunkCountBeforeEdit,
+      rawChunkCountAtUnchangedRedraw,
+      schedulingControl: 'SIGSTOP_AFTER_EDIT_WRITE_BEFORE_PROVIDER_PARSE',
+      beforeEdit: structuralStableFrame(
+        session,
+        beforeEdit,
+        stableFrameContentEnd(beforeEdit),
+      ),
+      unchangedAfterEdit: structuralStableFrame(
+        session,
+        unchangedAfterEdit,
+        stableFrameContentEnd(unchangedAfterEdit),
+      ),
+      paintedEdit: structuralStableFrame(
+        session,
+        paintedEdit,
+        stableFrameContentEnd(paintedEdit),
+      ),
+      unchangedGenerationAdvanced:
+        unchangedAfterEdit.generation > beforeEdit.generation,
+      unchangedComposerRevision:
+        sameComposerRevision(
+          composerRevision(unchangedAfterEdit)!,
+          beforeRevision,
+        ),
+      paintedGenerationAdvanced:
+        paintedEdit.generation > unchangedAfterEdit.generation,
+    },
+  }
+}
+
+type ComposerRevision = {
+  draftText: string
+  cursor: Readonly<{ x: number; y: number }>
+}
+
+function composerRevision(frame: StableTerminalFrame): ComposerRevision | null {
+  const rows = frame.rows.map(row => row.text.replace(/[ \t]+$/u, ''))
+  let composerRow = -1
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    if (/^›(?: |$)/u.test(rows[index] ?? '')) {
+      composerRow = index
+      break
+    }
+  }
+  if (composerRow < 0) return null
+  const separatorRow = rows.findIndex((row, index) =>
+    index > composerRow && row.trim() === '',
+  )
+  if (separatorRow < 0) return null
+  return {
+    draftText: rows.slice(composerRow, separatorRow).join('\n'),
+    cursor: frame.cursor,
+  }
+}
+
+function sameComposerRevision(
+  left: ComposerRevision,
+  right: ComposerRevision,
+): boolean {
+  return left.draftText === right.draftText &&
+    left.cursor.x === right.cursor.x &&
+    left.cursor.y === right.cursor.y
+}
+
+async function waitForPtyQuiet(session: LiveSession, quietMs = 200): Promise<void> {
+  const deadline = Date.now() + TIMEOUT_MS
+  let lastCount = session.rawPtyChunks.length
+  let unchangedSince = Date.now()
+  while (Date.now() < deadline) {
+    await delay(20)
+    const currentCount = session.rawPtyChunks.length
+    if (currentCount !== lastCount) {
+      lastCount = currentCount
+      unchangedSince = Date.now()
+      continue
+    }
+    if (Date.now() - unchangedSince >= quietMs &&
+      session.mirror.snapshotStableFrame() !== null) return
+  }
+  throw new Error('Timed out waiting for a complete quiet PTY frame')
+}
+
+function structuralStableFrame(
+  session: LiveSession,
+  frame: StableTerminalFrame,
+  end = frame.rows.length,
+): Record<string, unknown> {
+  const start = Math.max(0, end - 10)
+  return {
+    generation: frame.generation,
+    cols: frame.cols,
+    cursor: frame.cursor,
+    rows: frame.rows.slice(start, end).map((row, offset) => ({
+      viewportRow: start + offset,
+      text: sanitizeScreenRow(session, row.text),
+      isWrapped: row.isWrapped,
+    })),
+  }
+}
+
+function stableFrameContentEnd(frame: StableTerminalFrame): number {
+  for (let index = frame.rows.length - 1; index >= 0; index -= 1) {
+    if (frame.rows[index]!.text.trim() !== '') return index + 1
+  }
+  return frame.rows.length
 }
 
 async function readDurableUserTexts(codexHome: string): Promise<string[]> {

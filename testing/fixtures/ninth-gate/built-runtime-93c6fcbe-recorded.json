@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "recordedPackageHead": "93c6fcbe0f5ee7123aef10f2f277763bfd389ce0",
+  "moduleSha256": {
+    "root": "de3c12765c35f221cbed86cb6cb41331b337c146c74a2db7235334b6ff086ab7",
+    "resume": "e9207a5795a43404a3e5d47a1862c1d4d2f48b9a3bdff0acf9b3e16cc4fde8e7",
+    "prompt": "63675c3e6891fddbaaf8a709078ea835d76f5d1b92bdd8d70e5a30174ee2ffb0",
+    "coordinator": "12ce08dd3e65de360f31f4363c7bc212b321f6365b0ad067fb364bbebe9d93c8"
+  },
+  "sources": {
+    "priorCapabilityHead": "6244eac4a24ac1fb2aa6d12227cd85c106590ca7",
+    "priorCapabilityArtifactSha256": "d5078b5c7ba6053486999a744616d50bd560b1bde6436ba213c7f04a637d6b2f",
+    "exactRolloutFixtureSha256": "1e73bb8c9635f4350d766fde9807c104bf5cc09ba91b936a4ebda375691fc810",
+    "freshRolloutFixtureSha256": "b39f8a81eee86a20e4eba0d26d4b89e819e33c64b0796f377f7ca54071285b10",
+    "promptInputFixtureSha256": "33d315e26dab933b5d1f94bd9c03400634a45124a2472ac8c1a681772ac45dc1"
+  },
+  "ch06ResumePrototype": {
+    "beforeDispose": {
+      "sensitiveGetterNames": [
+        "initialGenerationId",
+        "initialPath",
+        "ownerId",
+        "sessionsDir"
+      ],
+      "getterResults": {
+        "initialGenerationId": {
+          "accessible": true,
+          "valueType": "string",
+          "nonEmpty": true,
+          "matchesRecordedRuntimeValue": true
+        },
+        "initialPath": {
+          "accessible": true,
+          "valueType": "string",
+          "nonEmpty": true,
+          "matchesRecordedRuntimeValue": true
+        },
+        "ownerId": {
+          "accessible": true,
+          "valueType": "string",
+          "nonEmpty": true
+        },
+        "sessionsDir": {
+          "accessible": true,
+          "valueType": "string",
+          "nonEmpty": true,
+          "matchesRecordedRuntimeValue": true
+        }
+      }
+    },
+    "afterDispose": {
+      "sensitiveGetterNames": [
+        "initialGenerationId",
+        "initialPath",
+        "ownerId",
+        "sessionsDir"
+      ],
+      "getterResults": {
+        "initialGenerationId": {
+          "accessible": false,
+          "errorClass": "Error"
+        },
+        "initialPath": {
+          "accessible": false,
+          "errorClass": "Error"
+        },
+        "ownerId": {
+          "accessible": false,
+          "errorClass": "Error"
+        },
+        "sessionsDir": {
+          "accessible": false,
+          "errorClass": "Error"
+        }
+      }
+    }
+  },
+  "ch07StructuralPromptProfile": {
+    "caseId": "trust-action-then-submit",
+    "profileSource": "caller-authored-structural-lookalike",
+    "submissionCount": 1,
+    "matchedRecordedDurableText": true
+  },
+  "ch08RetentionInspection": {
+    "participantEntryKeys": [
+      "active",
+      "cwdFingerprint",
+      "hasDecisionCallback",
+      "hasLeaseCallback",
+      "id",
+      "promptFingerprints"
+    ],
+    "resumeParticipantEntryKeys": [
+      "active",
+      "cwdFingerprint",
+      "hasDecisionCallback",
+      "hasLeaseCallback",
+      "id",
+      "lineageFingerprints"
+    ],
+    "serializedContainsFreshParticipantId": true,
+    "serializedContainsResumeParticipantId": true
+  }
+}

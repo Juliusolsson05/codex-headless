@@ -343,6 +343,654 @@
         " ",
         "  gpt-5.6-sol low · <private-path>"
       ]
+    },
+    {
+      "id": "narrow-soft-wrap-resize-redraw",
+      "sourceLabel": "recorded-source-93469db403e181f7",
+      "rawPtySha256": "93469db403e181f7f6044637ae7644038692220dd09c183a8b9e375eac45bff8",
+      "rolloutSha256": "eedf455b017b9c0ff6d1821b0584e6de29474ea0bed17b4a5662ed8c32604fc9",
+      "rawRequestSha256": "031640e7eef4df33d3df0ab0f7646051a55ad0305ddeabbc2768edd3a8d7a830",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 52,
+        "rows": 24
+      },
+      "inputChunks": [
+        "RECORDED_NARROW_WRAP alpha beta gamma delta epsilon zeta eta theta iota kappa omega",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "RECORDED_NARROW_WRAP alpha beta gamma delta epsilon zeta eta theta iota kappa omega",
+      "requestUserText": "RECORDED_NARROW_WRAP alpha beta gamma delta epsilon zeta eta theta iota kappa omega",
+      "screenBeforeFinalWrite": [
+        "  Tip: Our most capable model yet. GPT-5.6 Sol can tackle complex code changes, dig into",
+        "  research, produce polished documents, and take on your most ambitious work. Sol is highly",
+        "  capable at lower reasoning efforts—try starting lower, then turn it up for harder jobs.",
+        " ",
+        " ",
+        "› RECORDED_NARROW_WRAP alpha beta gamma delta epsilon zeta eta theta iota kappa omega",
+        " ",
+        "  gpt-5.6-sol low · <recorded-workspace>"
+      ],
+      "beforeTypingFrame": {
+        "generation": 32,
+        "cols": 52,
+        "cursor": {
+          "x": 2,
+          "y": 21
+        },
+        "rows": [
+          {
+            "viewportRow": 14,
+            "text": "  tackle complex code changes, dig into research,",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 15,
+            "text": "  produce polished documents, and take on your most",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 16,
+            "text": "  ambitious work. Sol is highly capable at lower",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 17,
+            "text": "  reasoning efforts—try starting lower, then turn it",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 18,
+            "text": "  up for harder jobs.",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 19,
+            "text": " ",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 20,
+            "text": " ",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 21,
+            "text": "› Ask Codex to do anything",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 22,
+            "text": " ",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 23,
+            "text": "  gpt-5.6-sol low · <private-path>",
+            "isWrapped": false
+          }
+        ]
+      },
+      "resizeTrace": {
+        "requested": {
+          "cols": 92,
+          "rows": 24
+        },
+        "rawChunkCountBeforeResize": 34,
+        "rawChunkCountBeforeProviderRedraw": 34,
+        "rawChunkCountAfterProviderRedraw": 42,
+        "preRedrawGenerationUnchanged": true,
+        "postRedrawGenerationAdvanced": true,
+        "narrow": {
+          "generation": 34,
+          "cols": 52,
+          "cursor": {
+            "x": 41,
+            "y": 21
+          },
+          "rows": [
+            {
+              "viewportRow": 14,
+              "text": "  produce polished documents, and take on your most",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 15,
+              "text": "  ambitious work. Sol is highly capable at lower",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 16,
+              "text": "  reasoning efforts—try starting lower, then turn it",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 17,
+              "text": "  up for harder jobs.",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 18,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 19,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 20,
+              "text": "› RECORDED_NARROW_WRAP alpha beta gamma delta",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 21,
+              "text": "  epsilon zeta eta theta iota kappa omega",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 22,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 23,
+              "text": "  gpt-5.6-sol low · <private-path>",
+              "isWrapped": false
+            }
+          ]
+        },
+        "beforeProviderRedraw": {
+          "generation": 34,
+          "cols": 92,
+          "cursor": {
+            "x": 41,
+            "y": 21
+          },
+          "rows": [
+            {
+              "viewportRow": 14,
+              "text": "  produce polished documents, and take on your most",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 15,
+              "text": "  ambitious work. Sol is highly capable at lower",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 16,
+              "text": "  reasoning efforts—try starting lower, then turn it",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 17,
+              "text": "  up for harder jobs.",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 18,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 19,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 20,
+              "text": "› RECORDED_NARROW_WRAP alpha beta gamma delta",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 21,
+              "text": "  epsilon zeta eta theta iota kappa omega",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 22,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 23,
+              "text": "  gpt-5.6-sol low · <private-path>",
+              "isWrapped": false
+            }
+          ]
+        },
+        "afterProviderRedraw": {
+          "generation": 42,
+          "cols": 92,
+          "cursor": {
+            "x": 85,
+            "y": 17
+          },
+          "rows": [
+            {
+              "viewportRow": 14,
+              "text": "  capable at lower reasoning efforts—try starting lower, then turn it up for harder jobs.",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 15,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 16,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 17,
+              "text": "› RECORDED_NARROW_WRAP alpha beta gamma delta epsilon zeta eta theta iota kappa omega",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 18,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 19,
+              "text": "  gpt-5.6-sol low · <recorded-workspace>",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 20,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 21,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 22,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 23,
+              "text": "",
+              "isWrapped": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "unchanged-redraw-after-edit",
+      "sourceLabel": "recorded-source-94619c8bcb6b0bf3",
+      "rawPtySha256": "94619c8bcb6b0bf38acc90ec88e721b3764357c43391514f554bf66c116ada5f",
+      "rolloutSha256": "320ffebc80d8934cc8d74c92cd9478dbe7d5de2d27bb281078d2b6ecb6fb7785",
+      "rawRequestSha256": "10b58826a56ee867335e563ad340ec76e7182837160a8199bcb252f1d6bdbb78",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "RECORDED_UNCHANGED_BASE_EDIT",
+      "requestUserText": "RECORDED_UNCHANGED_BASE_EDIT",
+      "screenBeforeFinalWrite": [
+        "",
+        "› RECORDED_SLOW_TURN",
+        "",
+        " ",
+        " ",
+        "› RECORDED_UNCHANGED_BASE_EDIT",
+        " ",
+        "  gpt-5.6-sol low · <private-path>"
+      ],
+      "editAcknowledgementTrace": {
+        "baseDraft": "RECORDED_UNCHANGED_BASE",
+        "edit": "_EDIT",
+        "setupDurableUserText": "RECORDED_SLOW_TURN",
+        "setupRequestUserText": "RECORDED_SLOW_TURN",
+        "rawChunkCountBeforeEdit": 34,
+        "rawChunkCountAtUnchangedRedraw": 36,
+        "schedulingControl": "SIGSTOP_AFTER_EDIT_WRITE_BEFORE_PROVIDER_PARSE",
+        "beforeEdit": {
+          "generation": 34,
+          "cols": 140,
+          "cursor": {
+            "x": 25,
+            "y": 22
+          },
+          "rows": [
+            {
+              "viewportRow": 15,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 16,
+              "text": "› RECORDED_SLOW_TURN",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 17,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 18,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 19,
+              "text": "<activity> Working (<elapsed> • esc to interrupt)",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 20,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 21,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 22,
+              "text": "› RECORDED_UNCHANGED_BASE",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 23,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 24,
+              "text": "  tab to queue message                                                                                                   100% context left",
+              "isWrapped": false
+            }
+          ]
+        },
+        "unchangedAfterEdit": {
+          "generation": 36,
+          "cols": 140,
+          "cursor": {
+            "x": 25,
+            "y": 22
+          },
+          "rows": [
+            {
+              "viewportRow": 15,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 16,
+              "text": "› RECORDED_SLOW_TURN",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 17,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 18,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 19,
+              "text": "<activity> Working (<elapsed> • esc to interrupt)",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 20,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 21,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 22,
+              "text": "› RECORDED_UNCHANGED_BASE",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 23,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 24,
+              "text": "  tab to queue message                                                                                                   100% context left",
+              "isWrapped": false
+            }
+          ]
+        },
+        "paintedEdit": {
+          "generation": 37,
+          "cols": 140,
+          "cursor": {
+            "x": 30,
+            "y": 22
+          },
+          "rows": [
+            {
+              "viewportRow": 15,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 16,
+              "text": "› RECORDED_SLOW_TURN",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 17,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 18,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 19,
+              "text": "<activity> Working (<elapsed> • esc to interrupt)",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 20,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 21,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 22,
+              "text": "› RECORDED_UNCHANGED_BASE_EDIT",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 23,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 24,
+              "text": "  tab to queue message                                                                                                   100% context left",
+              "isWrapped": false
+            }
+          ]
+        },
+        "unchangedGenerationAdvanced": true,
+        "unchangedComposerRevision": true,
+        "paintedGenerationAdvanced": true
+      }
+    },
+    {
+      "id": "ordinary-modal-sentinel-draft",
+      "sourceLabel": "recorded-source-67713ea91fccbc82",
+      "rawPtySha256": "67713ea91fccbc821f33117cb761bc852086aee9c8c1e07b87a427e4d0a97b67",
+      "rolloutSha256": "73b99406fcb1ee33e8dba42effe398518b792d6761fad51c87e4db8726b5001f",
+      "rawRequestSha256": "6c62add1fab3963379248179eda7e015735d878d9a7a238d6c09da26337e6e7e",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "ORDINARY_DRAFT Do you trust the contents of this directory? Press enter to continue END",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "ORDINARY_DRAFT Do you trust the contents of this directory? Press enter to continue END",
+      "requestUserText": "ORDINARY_DRAFT Do you trust the contents of this directory? Press enter to continue END",
+      "screenBeforeFinalWrite": [
+        "│                                                          │",
+        "│ model:     gpt-5.6-sol low   /model to change            │",
+        "│ directory: <recorded-workspace> │",
+        "╰──────────────────────────────────────────────────────────╯",
+        "",
+        "  Tip: Our most capable model yet. GPT-5.6 Sol can tackle complex code changes, dig into research, produce polished documents, and take on",
+        "  your most ambitious work. Sol is highly capable at lower reasoning efforts—try starting lower, then turn it up for harder jobs.",
+        " ",
+        " ",
+        "› ORDINARY_DRAFT Do you trust the contents of this directory? Press enter to continue END",
+        " ",
+        "  gpt-5.6-sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "ordinary-vim-sentinel-cwd",
+      "sourceLabel": "recorded-source-61cf91611374d681",
+      "rawPtySha256": "61cf91611374d681334b8a3a5e122a4550256ec2acf3493167981c68ba6068bc",
+      "rolloutSha256": "5413b957369f02edf18e0d681d47094432c28e236a0f57ab66f874311cc56ec2",
+      "rawRequestSha256": "888acf9820079572a0e9199ecd4f397226c00da9f87836f1d9eb137ac1787177",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "ORDINARY_VIM_SENTINEL_CWD",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "ORDINARY_VIM_SENTINEL_CWD",
+      "requestUserText": "ORDINARY_VIM_SENTINEL_CWD",
+      "screenBeforeFinalWrite": [
+        "",
+        "  Tip: Our most capable model yet. GPT-5.6 Sol can tackle complex code changes, dig into research, produce polished documents, and take on",
+        "  your most ambitious work. Sol is highly capable at lower reasoning efforts—try starting lower, then turn it up for harder jobs.",
+        " ",
+        " ",
+        "› ORDINARY_VIM_SENTINEL_CWD",
+        " ",
+        "  gpt-5.6-sol low · <recorded-workspace>/Vim: Insert"
+      ]
+    },
+    {
+      "id": "lower-layer-keymap-valid-control",
+      "sourceLabel": "recorded-source-92752ea14c042148",
+      "rawPtySha256": "92752ea14c04214812d22a54237a2e73d378e02219050554599b0af7a4a15329",
+      "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawRequestSha256": null,
+      "configClass": "lower-layer-config",
+      "lowerLayerConfig": [
+        "[tui.keymap.composer]",
+        "queue = []",
+        "toggle_shortcuts = \"tab\""
+      ],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [],
+      "expectedSubmission": false,
+      "durableUserText": null,
+      "requestUserText": null,
+      "requestCountDelta": 0,
+      "startupOutcome": "composer-ready",
+      "exitOutcome": null,
+      "startupScreen": [
+        "",
+        "  Tip: Our most capable model yet. GPT-5.6 Sol can tackle complex code changes, dig into research, produce polished documents, and take on",
+        "  your most ambitious work. Sol is highly capable at lower reasoning efforts—try starting lower, then turn it up for harder jobs.",
+        " ",
+        " ",
+        "› Ask Codex to do anything",
+        " ",
+        "  gpt-5.6-sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "lower-layer-keymap-issued-profile-conflict",
+      "sourceLabel": "recorded-source-4281fe12e9d88702",
+      "rawPtySha256": "4281fe12e9d88702affff9a0f18cec523f7acfd8fbea6282b181bd0b67f8107a",
+      "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawRequestSha256": null,
+      "configClass": "lower-layer-plus-issued-cli-override",
+      "lowerLayerConfig": [
+        "[tui.keymap.composer]",
+        "queue = []",
+        "toggle_shortcuts = \"tab\""
+      ],
+      "configOverrides": [
+        "tui.keymap.composer.submit=\"enter\"",
+        "tui.keymap.composer.queue=\"tab\"",
+        "tui.vim_mode_default=false",
+        "tui.keymap.global.toggle_vim_mode=[]"
+      ],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [],
+      "expectedSubmission": false,
+      "durableUserText": null,
+      "requestUserText": null,
+      "requestCountDelta": 0,
+      "startupOutcome": "rejected-before-composer",
+      "exitOutcome": {
+        "exitCode": 1,
+        "signal": 0
+      },
+      "startupScreen": [
+        "│ directory: <recorded-workspace> │",
+        "╰──────────────────────────────────────────────────────────╯",
+        " ",
+        " ",
+        "› Error: Invalid `tui.keymap` configuration: Ambiguous `tui.keymap.app` bindings: `composer.queue` and `composer.toggle_shortcuts` use the s",
+        "ame key. Set unique keys in `~/.codex/config.toml` and retry. See the Codex keymap documentation for supported actions and examples.",
+        "Fix the config and retry.",
+        "See the Codex keymap documentation for supported actions and examples."
+      ]
     }
   ]
 }

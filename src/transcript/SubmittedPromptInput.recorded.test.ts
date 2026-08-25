@@ -3,15 +3,33 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
+import type { StableTerminalFrame } from '../terminal/HeadlessTerminal.js'
 import {
   inferCodexTabBehavior,
   SubmittedPromptInput,
   type SubmittedPromptInputContext,
 } from './SubmittedPromptInput.js'
+import {
+  createCodex01491PromptInputProfile,
+} from './prompt-input/CodexPromptInputProfile.js'
+import { PromptInputEvidence } from './prompt-input/PromptInputEvidence.js'
 
 type RecordedConfigClass =
   | 'recorded-default-01491'
   | 'explicit-cli-override'
+  | 'lower-layer-config'
+  | 'lower-layer-plus-issued-cli-override'
+
+type RecordedStableFrame = {
+  generation: number
+  cols: number
+  cursor: { x: number; y: number }
+  rows: Array<{
+    viewportRow: number
+    text: string
+    isWrapped: boolean
+  }>
+}
 
 type RecordedPromptInputCase = {
   id: string
@@ -20,16 +38,49 @@ type RecordedPromptInputCase = {
   rolloutSha256: string
   rawRequestSha256: string | null
   configClass: RecordedConfigClass
+  lowerLayerConfig?: string[]
   configOverrides: string[]
+  terminal?: { cols: number; rows: number }
   inputChunks: string[]
   expectedSubmission: boolean
   durableUserText: string | null
   requestUserText: string | null
-  screenBeforeFinalWrite: string[]
+  screenBeforeFinalWrite?: string[]
   nonComposerWrites?: string[]
   modal?: string[]
   popup?: string[]
   activeTurnFooter?: string[]
+  beforeTypingFrame?: RecordedStableFrame
+  resizeTrace?: {
+    requested: { cols: number; rows: number }
+    rawChunkCountBeforeResize: number
+    rawChunkCountBeforeProviderRedraw: number
+    rawChunkCountAfterProviderRedraw: number
+    preRedrawGenerationUnchanged: boolean
+    postRedrawGenerationAdvanced: boolean
+    narrow: RecordedStableFrame
+    beforeProviderRedraw: RecordedStableFrame
+    afterProviderRedraw: RecordedStableFrame
+  }
+  editAcknowledgementTrace?: {
+    baseDraft: string
+    edit: string
+    setupDurableUserText: string
+    setupRequestUserText: string
+    rawChunkCountBeforeEdit: number
+    rawChunkCountAtUnchangedRedraw: number
+    schedulingControl: string
+    beforeEdit: RecordedStableFrame
+    unchangedAfterEdit: RecordedStableFrame
+    paintedEdit: RecordedStableFrame
+    unchangedGenerationAdvanced: boolean
+    unchangedComposerRevision: boolean
+    paintedGenerationAdvanced: boolean
+  }
+  requestCountDelta?: number
+  startupOutcome?: 'composer-ready' | 'rejected-before-composer'
+  exitOutcome?: { exitCode: number; signal?: number } | null
+  startupScreen?: string[]
 }
 
 type RecordedPromptInputCorpus = {
@@ -87,10 +138,25 @@ const catalogPath = fileURLToPath(new URL(
   '../../testing/fixtures/prompt-input/catalog.md',
   import.meta.url,
 ))
+const configSourcePath = fileURLToPath(new URL(
+  '../../testing/fixtures/prompt-input/codex-01491-config-source.json',
+  import.meta.url,
+))
 const corpus = JSON.parse(
   readFileSync(fixturePath, 'utf8'),
 ) as RecordedPromptInputCorpus
 const catalog = readFileSync(catalogPath, 'utf8')
+const configSource = JSON.parse(readFileSync(configSourcePath, 'utf8')) as {
+  schemaVersion: number
+  upstreamTag: string
+  upstreamCommitSha: string
+  recordedCases: Record<string, string>
+  files: Array<{
+    path: string
+    sha256: string
+    coordinates: Array<{ startLine: number; endLine: number; claim: string }>
+  }>
+}
 
 const recordedCaseIds = [
   'trust-action-then-submit',
@@ -103,7 +169,15 @@ const recordedCaseIds = [
   'modal-ctrl-c-preserves-draft',
   'tab-footer-spoof-skill-popup',
   'active-footer-tab-queue',
+  'narrow-soft-wrap-resize-redraw',
+  'unchanged-redraw-after-edit',
+  'ordinary-modal-sentinel-draft',
+  'ordinary-vim-sentinel-cwd',
+  'lower-layer-keymap-valid-control',
+  'lower-layer-keymap-issued-profile-conflict',
 ] as const
+
+const priorReplayCaseIds = new Set(recordedCaseIds.slice(0, 10))
 
 const unicodeBoundaryCases = new Set([
   'combining-grapheme-backspace',
@@ -114,6 +188,9 @@ const casesById = corpus.cases.map(recordedCase => [
   recordedCase.id,
   recordedCase,
 ] as const)
+const priorReplayCasesById = casesById.filter(([caseId]) =>
+  priorReplayCaseIds.has(caseId as typeof recordedCaseIds[number]),
+)
 
 function contextFor(
   recordedCase: RecordedPromptInputCase,
@@ -187,6 +264,40 @@ function replayRecordedInput(recordedCase: RecordedPromptInputCase): string[] {
   return submitted
 }
 
+function caseById(id: typeof recordedCaseIds[number]): RecordedPromptInputCase {
+  const recordedCase = corpus.cases.find(value => value.id === id)
+  if (!recordedCase) throw new Error(`missing recorded case ${id}`)
+  return recordedCase
+}
+
+function stableFrame(recorded: RecordedStableFrame): StableTerminalFrame {
+  return {
+    generation: recorded.generation,
+    cols: recorded.cols,
+    cursor: recorded.cursor,
+    rows: recorded.rows.map(row => ({
+      text: row.text,
+      cells: [...row.text],
+      isWrapped: row.isWrapped,
+    })),
+  }
+}
+
+function frameFromRows(rows: readonly string[], generation = 1): StableTerminalFrame {
+  return {
+    generation,
+    cols: Math.max(140, ...rows.map(row => [...row].length)),
+    cursor: { x: 0, y: 0 },
+    rows: rows.map(text => ({ text, cells: [...text], isWrapped: false })),
+  }
+}
+
+function issuedEvidence(): PromptInputEvidence {
+  return new PromptInputEvidence(createCodex01491PromptInputProfile({
+    cliVersion: corpus.provider.cliVersion,
+  }))
+}
+
 describe('recorded Codex 0.149.1 prompt-input contract', () => {
   it('executes the complete sanitized catalog with pinned provenance', () => {
     const fixtureIds = corpus.cases.map(recordedCase => recordedCase.id)
@@ -234,11 +345,39 @@ describe('recorded Codex 0.149.1 prompt-input contract', () => {
     expect(recordedCase.requestUserText).toBe(recordedCase.durableUserText)
     expect(recordedCase.durableUserText === null)
       .toBe(!recordedCase.expectedSubmission)
-    expect(recordedCase.configOverrides.length === 0)
-      .toBe(recordedCase.configClass === 'recorded-default-01491')
+    const lowerLayerConfig = recordedCase.lowerLayerConfig ?? []
+    if (recordedCase.configClass === 'recorded-default-01491') {
+      expect(recordedCase.configOverrides).toEqual([])
+      expect(lowerLayerConfig).toEqual([])
+    } else if (recordedCase.configClass === 'explicit-cli-override') {
+      expect(recordedCase.configOverrides.length).toBeGreaterThan(0)
+      expect(lowerLayerConfig).toEqual([])
+    } else {
+      expect(lowerLayerConfig.length).toBeGreaterThan(0)
+    }
   })
 
-  it.each(casesById)('matches or safely declines recorded input evidence for %s', (
+  it('pins the exact rust-v0.149.1 config precedence and conflict sources', () => {
+    expect(configSource).toMatchObject({
+      schemaVersion: 1,
+      upstreamTag: 'rust-v0.149.1',
+      upstreamCommitSha: 'ff29a44391deccde0aba0f8390337d7f3c319ea4',
+      recordedCases: {
+        validLowerLayer: 'lower-layer-keymap-valid-control',
+        issuedOverridesConflict: 'lower-layer-keymap-issued-profile-conflict',
+      },
+    })
+    expect(configSource.files.map(file => [file.path, file.sha256])).toEqual([
+      ['codex-rs/config/src/config_layer_source.rs', '6816bf7bd44b1f2799aae30331b77a7e8231ccacdc4cd3d44d6485f9e1118364'],
+      ['codex-rs/config/src/loader/mod.rs', '53d66dce1cd81de3d86610ff2a75aed7f9049609cbefcd3694590c0acfc7c404'],
+      ['codex-rs/config/src/overrides.rs', 'd10b2c943a709d28395cde201f1b084da4d303afe4ff698f91f59f518c1a9e13'],
+      ['codex-rs/config/src/merge.rs', 'a7628f0da10f7f7e770fce5160ecbf1ca846b7d9db4b8ed92c6c9cce22c7fb11'],
+      ['codex-rs/tui/src/keymap.rs', '709feecb708a16b66af8685f0028191efc23b6fac8f87db6a8d45df2440ff604'],
+    ])
+    expect(configSource.files.every(file => file.coordinates.length > 0)).toBe(true)
+  })
+
+  it.each(priorReplayCasesById)('matches or safely declines recorded input evidence for %s', (
     _caseId,
     recordedCase,
   ) => {
@@ -268,5 +407,138 @@ describe('recorded Codex 0.149.1 prompt-input contract', () => {
     // semantics. Failing closed here would hide independent substrate defects
     // behind one broad invalidation switch instead of repairing the boundary.
     expect(submitted).toEqual(exact)
+  })
+
+  it('CH-04 does not treat an unchanged newer provider redraw as edit acknowledgement', () => {
+    const recordedCase = caseById('unchanged-redraw-after-edit')
+    const trace = recordedCase.editAcknowledgementTrace
+    if (!trace) throw new Error('missing recorded CH-04 acknowledgement trace')
+
+    // WHY a generation proves only that some provider bytes were parsed. Here
+    // the working-status bytes were emitted before the edit reached Codex; the
+    // recorder schedules the real processes so that tiny interval is visible.
+    // Draft plus cursor are unchanged, so generation 36 cannot acknowledge the
+    // `_EDIT` suffix even though it is newer than the pre-write frame.
+    expect(trace.unchangedAfterEdit.generation)
+      .toBeGreaterThan(trace.beforeEdit.generation)
+    expect(trace.unchangedAfterEdit.rows.map(row => row.text))
+      .toEqual(trace.beforeEdit.rows.map(row => row.text))
+    expect(trace.unchangedAfterEdit.cursor).toEqual(trace.beforeEdit.cursor)
+    expect(trace.setupDurableUserText).toBe(trace.setupRequestUserText)
+
+    const evidence = issuedEvidence()
+    evidence.consume(trace.baseDraft, { frame: null })
+    evidence.consume(trace.edit, { frame: stableFrame(trace.beforeEdit) })
+    expect(evidence.consume('\r', {
+      frame: stableFrame(trace.unchangedAfterEdit),
+    })).toEqual([])
+  })
+
+  it('CH-04 accepts the durable value only after the provider paints the edit', () => {
+    const recordedCase = caseById('unchanged-redraw-after-edit')
+    const trace = recordedCase.editAcknowledgementTrace
+    if (!trace) throw new Error('missing recorded CH-04 acknowledgement trace')
+
+    expect(trace.paintedEdit.generation)
+      .toBeGreaterThan(trace.unchangedAfterEdit.generation)
+    const evidence = issuedEvidence()
+    evidence.consume(trace.baseDraft, { frame: null })
+    evidence.consume(trace.edit, { frame: stableFrame(trace.beforeEdit) })
+    expect(evidence.consume('\r', {
+      frame: stableFrame(trace.paintedEdit),
+    })).toEqual([recordedCase.durableUserText])
+  })
+
+  it('CH-09 rejects the recorded resized frame until Codex repaints its layout', () => {
+    const recordedCase = caseById('narrow-soft-wrap-resize-redraw')
+    const beforeTyping = recordedCase.beforeTypingFrame
+    const resize = recordedCase.resizeTrace
+    if (!beforeTyping || !resize) throw new Error('missing recorded CH-04 frames')
+
+    // WHY the equal generation and byte count are the causal boundary. xterm
+    // has adopted 92 columns, but Codex has not acknowledged that layout: its
+    // old 52-column two-row paint remains byte-for-byte on screen. Interpreting
+    // those rows with the new width manufactures a newline the durable prompt
+    // and request prove never existed.
+    expect(resize.beforeProviderRedraw.generation).toBe(resize.narrow.generation)
+    expect(resize.rawChunkCountBeforeProviderRedraw)
+      .toBe(resize.rawChunkCountBeforeResize)
+    expect(resize.beforeProviderRedraw.rows.map(row => row.text))
+      .toEqual(resize.narrow.rows.map(row => row.text))
+
+    const evidence = issuedEvidence()
+    expect(evidence.consume(recordedCase.inputChunks[0]!, {
+      frame: stableFrame(beforeTyping),
+    })).toEqual([])
+    expect(evidence.consume('\r', {
+      frame: stableFrame(resize.beforeProviderRedraw),
+    })).toEqual([])
+  })
+
+  it('CH-09 accepts the same durable prompt after the recorded provider redraw', () => {
+    const recordedCase = caseById('narrow-soft-wrap-resize-redraw')
+    const beforeTyping = recordedCase.beforeTypingFrame
+    const resize = recordedCase.resizeTrace
+    if (!beforeTyping || !resize) throw new Error('missing recorded CH-04 frames')
+
+    expect(resize.afterProviderRedraw.generation)
+      .toBeGreaterThan(resize.beforeProviderRedraw.generation)
+    const evidence = issuedEvidence()
+    evidence.consume(recordedCase.inputChunks[0]!, {
+      frame: stableFrame(beforeTyping),
+    })
+    expect(evidence.consume('\r', {
+      frame: stableFrame(resize.afterProviderRedraw),
+    })).toEqual([recordedCase.durableUserText])
+  })
+
+  it('CH-10 keeps modal sentinel prose inside an ordinary submitted draft', () => {
+    const recordedCase = caseById('ordinary-modal-sentinel-draft')
+    if (!recordedCase.screenBeforeFinalWrite) throw new Error('missing CH-05 screen')
+    const evidence = issuedEvidence()
+    evidence.consume(recordedCase.inputChunks[0]!, { frame: null })
+    expect(evidence.consume('\r', {
+      frame: frameFromRows(recordedCase.screenBeforeFinalWrite),
+    })).toEqual([recordedCase.durableUserText])
+  })
+
+  it('CH-10 treats Vim: Insert in the recorded cwd footer as ordinary text', () => {
+    const recordedCase = caseById('ordinary-vim-sentinel-cwd')
+    if (!recordedCase.screenBeforeFinalWrite) throw new Error('missing CH-09 screen')
+    const evidence = issuedEvidence()
+    evidence.consume(recordedCase.inputChunks[0]!, { frame: null })
+    expect(evidence.consume('\r', {
+      frame: frameFromRows(recordedCase.screenBeforeFinalWrite),
+    })).toEqual([recordedCase.durableUserText])
+  })
+
+  it('CH-05 refuses profile issuance for the recorded lower-layer conflict', () => {
+    const control = caseById('lower-layer-keymap-valid-control')
+    const conflict = caseById('lower-layer-keymap-issued-profile-conflict')
+    expect(control.startupOutcome).toBe('composer-ready')
+    expect(control.requestCountDelta).toBe(0)
+    expect(conflict.startupOutcome).toBe('rejected-before-composer')
+    expect(conflict.exitOutcome?.exitCode).toBe(1)
+    expect(conflict.requestCountDelta).toBe(0)
+
+    type ConflictAwareIssuer = (options: {
+      cliVersion: string
+      configurationEvidence: {
+        lowerLayerConfig: readonly string[]
+      }
+    }) => unknown
+    // WHY Stage 29 proves the lower map is valid alone and the issued overrides
+    // are what make startup fail. The current function has no configuration
+    // evidence parameter, so this forward contract is cast only at the call
+    // boundary: production must refuse the capability instead of advertising a
+    // profile for a process that exits before any composer can exist.
+    const issueWithConfiguration = createCodex01491PromptInputProfile as
+      unknown as ConflictAwareIssuer
+    expect(() => issueWithConfiguration({
+      cliVersion: corpus.provider.cliVersion,
+      configurationEvidence: {
+        lowerLayerConfig: conflict.lowerLayerConfig ?? [],
+      },
+    })).toThrow(/conflict|keymap|configuration/i)
   })
 })
