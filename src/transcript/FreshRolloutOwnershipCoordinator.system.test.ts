@@ -11,11 +11,15 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { IPty } from 'node-pty'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { normalizePromptForOwnership } from './FreshRolloutClaim.js'
+import {
+  normalizePromptForOwnership,
+  parseFreshRolloutCandidate,
+} from './FreshRolloutClaim.js'
 import { acquireFreshRolloutCoordinator } from './FreshRolloutOwnershipCoordinatorRegistry.js'
 import { CodexHeadless } from '../CodexHeadless.js'
+import * as codexHeadlessApi from '../index.js'
 
 type RecordedOwnershipFixture = {
   ownership: { localPromptToken: string }
@@ -47,6 +51,7 @@ async function waitFor(predicate: () => boolean, ms = 3000): Promise<boolean> {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   while (temporaryDirectories.length > 0) {
     rmSync(temporaryDirectories.pop()!, { recursive: true, force: true })
   }
@@ -198,6 +203,118 @@ describe('process-wide fresh rollout watcher', () => {
     }
   })
 
+  it('prepares recorded resume lineage before a reconstructed fork can exist', async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'codex-pre-spawn-resume-'))
+    temporaryDirectories.push(codexHome)
+    const previousCodexHome = process.env.CODEX_HOME
+    process.env.CODEX_HOME = codexHome
+    const fixture = loadFixture('subagent-0149-exact-attachment')
+    const sessionMetaIndex = fixture.lines.findIndex(line => line.type === 'session_meta')
+    const sessionMeta = fixture.lines[sessionMetaIndex]
+    const threadId = (sessionMeta?.payload as { id?: unknown } | undefined)?.id
+    if (typeof threadId !== 'string') {
+      throw new Error('recorded exact-id fixture has no thread id')
+    }
+    const forkThreadId = '00000000-0000-4000-8000-000000000055'
+    const forkLines = structuredClone(fixture.lines)
+    ;(forkLines[sessionMetaIndex]!.payload as { id: string }).id = forkThreadId
+    const sessionsRoot = join(codexHome, 'sessions')
+    const day = join(sessionsRoot, '2026', '08', '24')
+    mkdirSync(day, { recursive: true })
+    writeFileSync(
+      join(day, `rollout-recorded-${threadId}.jsonl`),
+      rolloutText(fixture),
+    )
+    const errors: Error[] = []
+    const freshAcquisition = await acquireFreshRolloutCoordinator({
+      sessionsRoot,
+      normalizeCwd: value => value,
+      normalizePath: value => value,
+      onError: error => errors.push(error),
+    })
+    const freshLeases: string[] = []
+    const fresh = freshAcquisition.coordinator.registerParticipant({
+      participantId: `pre-spawn-fresh-${codexHome}`,
+      cwd: '/recorded/worktree',
+      onLease: lease => freshLeases.push(lease.filePath),
+    })
+    const parsedFork = parseFreshRolloutCandidate(
+      `/recorded/${fixture.ownership.localPromptToken ?? 'exact'}.jsonl`,
+      rolloutText(fixture),
+    )
+    const copiedPrompt = parsedFork?.userMessages.at(-1)?.text
+    if (!copiedPrompt) throw new Error('recorded exact fixture has no copied prompt')
+    fresh.registerPrompt(copiedPrompt)
+    const prepare = (codexHeadlessApi as unknown as {
+      prepareCodexResumeRollout?: (options: {
+        sessionsDir: string
+        cwd: string
+        resumeThreadId: string
+      }) => Promise<unknown>
+    }).prepareCodexResumeRollout
+    let preparation: unknown = null
+    let resumed: CodexHeadless | null = null
+
+    try {
+      // WHY preparation must complete before the consumer spawns Codex: Y can
+      // be created immediately by that process, while headless.start() still
+      // has asynchronous locator/file reads ahead of lineage registration.
+      expect(prepare).toBeTypeOf('function')
+      if (!prepare) return
+      preparation = await prepare({
+        sessionsDir: sessionsRoot,
+        cwd: '/recorded/worktree',
+        resumeThreadId: threadId,
+      })
+      const makePty = (): IPty => ({
+        write: () => undefined,
+        resize: () => undefined,
+        onData: () => ({ dispose: () => undefined }),
+        onExit: () => ({ dispose: () => undefined }),
+      }) as unknown as IPty
+      const PreparedCodexHeadless = CodexHeadless as unknown as new (options: {
+        pty: IPty
+        cwd: string
+        resumeThreadId: string
+        resumeRolloutPreparation: unknown
+      }) => CodexHeadless
+      resumed = new PreparedCodexHeadless({
+        pty: makePty(),
+        cwd: '/recorded/worktree',
+        resumeThreadId: threadId,
+        resumeRolloutPreparation: preparation,
+      })
+      const forkPaths: string[] = []
+      resumed.on('rollout-entry', (_line, filePath) => {
+        if (filePath.endsWith(`${forkThreadId}.jsonl`)) forkPaths.push(filePath)
+      })
+
+      // This write stands in for the already-spawned provider. The sibling
+      // watcher is intentionally live before Y exists, reproducing the gate's
+      // callback ordering without an imagined rollout wire shape.
+      writeFileSync(
+        join(day, `rollout-recorded-${forkThreadId}.jsonl`),
+        `${forkLines.map(line => JSON.stringify(line)).join('\n')}\n`,
+      )
+      await resumed.start()
+
+      expect(await waitFor(() => forkPaths.length > 0, 5000)).toBe(true)
+      expect(freshLeases).toEqual([])
+      expect(errors).toEqual([])
+    } finally {
+      await resumed?.stop()
+      await (preparation as { dispose?: () => Promise<void> } | null)?.dispose?.()
+      fresh.unregister()
+      freshAcquisition.coordinator.retireOwnerLeases(
+        `pre-spawn-fresh-${codexHome}`,
+        true,
+      )
+      await freshAcquisition.release()
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = previousCodexHome
+    }
+  }, 15_000)
+
   it('does not assign later appended prompt bytes to an earlier watcher sequence', async () => {
     const root = mkdtempSync(join(tmpdir(), 'codex-rollout-prefix-'))
     temporaryDirectories.push(root)
@@ -348,6 +465,43 @@ describe('process-wide fresh rollout watcher', () => {
     await betaAcquisition.release()
   })
 
+  it('expires a stopped owner while a sibling acquisition keeps the root live', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'codex-rollout-live-sibling-'))
+    temporaryDirectories.push(root)
+    const options = {
+      sessionsRoot: root,
+      normalizeCwd: (value: string) => value,
+      normalizePath: (value: string) => value,
+      onError: () => undefined,
+    }
+    const stoppedAcquisition = await acquireFreshRolloutCoordinator(options)
+    const siblingAcquisition = await acquireFreshRolloutCoordinator(options)
+    const participantId = `stopped-with-live-sibling-${root}`
+    const stopped = stoppedAcquisition.coordinator.registerParticipant({
+      participantId,
+      cwd: '/recorded/worktree',
+      onLease: () => undefined,
+    })
+    vi.useFakeTimers()
+
+    try {
+      stopped.registerPrompt('recorded tombstone lifetime')
+      stopped.unregister()
+      await stoppedAcquisition.release()
+      await vi.advanceTimersByTimeAsync(6000)
+
+      // WHY root reference count is watcher transport, not participant
+      // lifetime. A long-running sibling cannot retain every stopped prompt
+      // HMAC forever merely because its own PTY still needs file events.
+      expect(JSON.stringify(
+        siblingAcquisition.coordinator.inspectRetentionForTesting(),
+      )).not.toContain(participantId)
+    } finally {
+      vi.useRealTimers()
+      await siblingAcquisition.release()
+    }
+  })
+
   it('routes the recorded subagent through exact identity before tailing', async () => {
     const codexHome = mkdtempSync(join(tmpdir(), 'codex-exact-owner-'))
     temporaryDirectories.push(codexHome)
@@ -403,6 +557,77 @@ describe('process-wide fresh rollout watcher', () => {
       // process-global lease, so a new test process would hide the failure.
       await startAndStop()
     } finally {
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = previousCodexHome
+    }
+  })
+
+  it('releases the resume watcher when its bounded window expires', async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'codex-resume-window-'))
+    temporaryDirectories.push(codexHome)
+    const previousCodexHome = process.env.CODEX_HOME
+    process.env.CODEX_HOME = codexHome
+    const fixture = loadFixture('subagent-0149-exact-attachment')
+    const sessionMeta = fixture.lines.find(line => line.type === 'session_meta')
+    const threadId = (sessionMeta?.payload as { id?: unknown } | undefined)?.id
+    if (typeof threadId !== 'string') {
+      throw new Error('recorded exact-id fixture has no thread id')
+    }
+    const day = join(codexHome, 'sessions', '2026', '08', '24')
+    mkdirSync(day, { recursive: true })
+    const rolloutPath = join(day, `rollout-recorded-${threadId}.jsonl`)
+    writeFileSync(rolloutPath, rolloutText(fixture))
+    const makePty = (): IPty => ({
+      write: () => undefined,
+      resize: () => undefined,
+      onData: () => ({ dispose: () => undefined }),
+      onExit: () => ({ dispose: () => undefined }),
+    }) as unknown as IPty
+    const ctor = CodexHeadless as unknown as {
+      RESUME_FORK_WATCH_MS: number
+      new(options: { pty: IPty; cwd: string; resumeThreadId: string }): CodexHeadless
+    }
+    const previousWindow = ctor.RESUME_FORK_WATCH_MS
+    ctor.RESUME_FORK_WATCH_MS = 25
+    const symbol = Symbol.for(
+      'codex-headless.fresh-rollout-ownership-coordinator-registry',
+    )
+    const registryBefore = (globalThis as typeof globalThis & {
+      [symbol]?: { roots: Map<string, unknown> }
+    })[symbol]
+    const keysBefore = new Set(registryBefore?.roots.keys() ?? [])
+    const headless = new ctor({
+      pty: makePty(),
+      cwd: '/recorded/worktree',
+      resumeThreadId: threadId,
+    })
+    const seenPaths: string[] = []
+    headless.on('rollout-entry', (_line, filePath) => seenPaths.push(filePath))
+
+    try {
+      await headless.start()
+      expect(await waitFor(() => seenPaths.includes(rolloutPath))).toBe(true)
+      await new Promise(resolve => setTimeout(resolve, 75))
+      const registry = (globalThis as typeof globalThis & {
+        [symbol]?: {
+          roots: Map<string, { referenceCount: number; watcher: unknown }>
+        }
+      })[symbol]
+      const rootKey = [...(registry?.roots.keys() ?? [])]
+        .find(key => !keysBefore.has(key))
+      if (!rootKey) throw new Error('resume root was not registered')
+      const rootEntry = registry!.roots.get(rootKey)
+
+      // WHY the exact JsonlTailer and the candidate watcher have different
+      // lifetimes. The former remains the committed channel for X; the latter
+      // exists only for the bounded possibility of reconstructed Y.
+      expect(rootEntry).toMatchObject({ referenceCount: 0, watcher: null })
+      const beforeAppend = seenPaths.length
+      appendFileSync(rolloutPath, `${JSON.stringify(fixture.lines.at(-1))}\n`)
+      expect(await waitFor(() => seenPaths.length > beforeAppend)).toBe(true)
+    } finally {
+      ctor.RESUME_FORK_WATCH_MS = previousWindow
+      await headless.stop()
       if (previousCodexHome === undefined) delete process.env.CODEX_HOME
       else process.env.CODEX_HOME = previousCodexHome
     }

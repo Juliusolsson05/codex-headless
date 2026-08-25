@@ -420,6 +420,119 @@ describe('recorded process-wide fresh rollout ownership', () => {
     })
   })
 
+  it('preserves an earlier prompt-bearing observation when a later read is reserved', () => {
+    const fixture = loadFixture('modern-0149-agents-first')
+    const candidate = candidateFromFixture(fixture)
+    const owner = coordinator()
+    const leases: FreshRolloutLease[] = []
+    const handle = register(owner, 'causal-owner', leases)
+    const first = owner.beginCandidateObservation(candidate.filePath, {
+      birthtimeMs: Date.now(),
+      byteLength: 1,
+      generationId: 'same-recorded-generation',
+    })
+    handle.registerPrompt(promptFromFixture(fixture))
+    const second = owner.beginCandidateObservation(candidate.filePath, {
+      birthtimeMs: first.birthtimeMs ?? undefined,
+      byteLength: 2,
+      generationId: 'same-recorded-generation',
+    })
+
+    // WHY reads are serialized in production, so O1 still completes before O2.
+    // Reserving O2 cannot erase the fact that P was already inside O1's durable
+    // byte boundary before this participant registered the same prompt.
+    owner.commitCandidateObservation(first, candidate)
+    owner.commitCandidateObservation(second, candidate)
+
+    expect(leases).toEqual([])
+    expect(owner.inspect()).toMatchObject({ leasedPathCount: 0 })
+  })
+
+  it('rejects a recorded old generation for an active fresh participant', () => {
+    const fixture = loadFixture('subagent-0149-exact-attachment')
+    const candidate = candidateFromFixture(fixture)
+    const copiedPrompt = candidate.userMessages.at(-1)?.text
+    if (!copiedPrompt) throw new Error('recorded exact fixture has no copied prompt')
+    const owner = coordinator()
+    const leases: FreshRolloutLease[] = []
+    const fresh = register(owner, 'fresh-after-old-exact', leases)
+    fresh.registerPrompt(copiedPrompt)
+    const observation = owner.beginCandidateObservation(candidate.filePath, {
+      // WHY X predates A outside the same approved generation grace used for
+      // stopped owners. A later change event transports X; it does not make X
+      // a file that A's provider process could have created.
+      birthtimeMs: Date.now() - 10_000,
+      generationId: 'recorded-old-exact-generation',
+    })
+
+    owner.commitCandidateObservation(observation, candidate)
+
+    expect(leases).toEqual([])
+    expect(owner.inspect()).toMatchObject({ leasedPathCount: 0 })
+  })
+
+  it('reports an opaque ignored-fork decision for insufficient recorded lineage', () => {
+    const fixture = loadFixture('subagent-0149-exact-attachment')
+    const candidate = candidateFromFixture(fixture)
+    const lineageIds = new Set<string>()
+    collectRolloutLineageIds(
+      fixture.lines.map(line => JSON.stringify(line)).join('\n'),
+      lineageIds,
+      8000,
+    )
+    const decisions: Array<{
+      reason: string
+      lineageOverlap: number
+      requiredOverlap: number
+      candidateFingerprint: string
+    }> = []
+    const owner = coordinator()
+    const resumeOwner = owner as FreshRolloutOwnershipCoordinator & {
+      registerResumeParticipant(options: {
+        participantId: string
+        cwd: string
+        lineageIds: ReadonlySet<string>
+        requiredOverlapLimit: number
+        onLease: (lease: FreshRolloutLease) => void
+        onDecision: (decision: {
+          reason: string
+          lineageOverlap: number
+          requiredOverlap: number
+          candidateFingerprint: string
+        }) => void
+      }): { unregister(): void }
+    }
+    resumeOwner.registerResumeParticipant({
+      participantId: 'diagnostic-resume',
+      cwd: '/recorded/worktree',
+      lineageIds,
+      requiredOverlapLimit: 3,
+      onLease: () => undefined,
+      onDecision: (decision: {
+        reason: string
+        lineageOverlap: number
+        requiredOverlap: number
+        candidateFingerprint: string
+      }) => decisions.push(decision),
+    })
+
+    // WHY removing copied equality classes is the smallest recorded mutation
+    // that exercises the old reachable rejection. Paths, cwd, prompts, entry
+    // order, and provider wrappers remain sourced from the real fixture.
+    owner.observeCandidate({ ...candidate, lineageIds: [] })
+
+    expect(decisions).toMatchObject([{
+      reason: 'insufficient-lineage-overlap',
+      lineageOverlap: 0,
+      requiredOverlap: 3,
+      candidateFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+    }])
+    const serialized = JSON.stringify(decisions)
+    expect(serialized).not.toContain(candidate.filePath)
+    expect(serialized).not.toContain(candidate.threadId)
+    for (const lineageId of lineageIds) expect(serialized).not.toContain(lineageId)
+  })
+
   it('allows exact identity to reopen a cleanly retired path but not overlap it', () => {
     const owner = coordinator()
     const filePath = '/recorded/exact.jsonl'
