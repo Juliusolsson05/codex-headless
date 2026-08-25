@@ -22,6 +22,7 @@ import {
   prepareCodexResumeRollout,
   type CodexResumeRolloutPreparation,
 } from './CodexResumeRolloutPreparation.js'
+import { normalizeRolloutOwnershipPath } from './OwnershipNormalization.js'
 import { CodexHeadless } from '../CodexHeadless.js'
 import * as codexHeadlessApi from '../index.js'
 
@@ -256,8 +257,8 @@ describe('process-wide fresh rollout watcher', () => {
     const errors: Error[] = []
     const freshAcquisition = await acquireFreshRolloutCoordinator({
       sessionsRoot,
-      normalizeCwd: value => value,
-      normalizePath: value => value,
+      normalizeCwd: normalizeRolloutOwnershipPath,
+      normalizePath: normalizeRolloutOwnershipPath,
       onError: error => errors.push(error),
     })
     const freshLeases: string[] = []
@@ -342,6 +343,80 @@ describe('process-wide fresh rollout watcher', () => {
       else process.env.CODEX_HOME = previousCodexHome
     }
   }, 15_000)
+
+  it('keeps exact resume alive when a buffered ignored-fork observer throws', async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'codex-buffered-diagnostic-'))
+    temporaryDirectories.push(codexHome)
+    const exact = loadFixture('subagent-0149-exact-attachment')
+    const unrelated = loadFixture('modern-0149-agents-first')
+    const exactMeta = exact.lines.find(line => line.type === 'session_meta')
+    const unrelatedMeta = unrelated.lines.find(line => line.type === 'session_meta')
+    const threadId = (exactMeta?.payload as { id?: unknown } | undefined)?.id
+    const unrelatedThreadId = (
+      unrelatedMeta?.payload as { id?: unknown } | undefined
+    )?.id
+    if (typeof threadId !== 'string' || typeof unrelatedThreadId !== 'string') {
+      throw new Error('recorded diagnostic fixtures have no thread ids')
+    }
+    const sessionsRoot = join(codexHome, 'sessions')
+    const day = join(sessionsRoot, '2026', '08', '24')
+    mkdirSync(day, { recursive: true })
+    const exactPath = join(day, `rollout-recorded-${threadId}.jsonl`)
+    writeFileSync(exactPath, rolloutText(exact))
+    const preparation = await prepareCodexResumeRollout({
+      sessionsDir: sessionsRoot,
+      cwd: '/recorded/worktree',
+      resumeThreadId: threadId,
+    })
+    const monitor = await acquireFreshRolloutCoordinator({
+      sessionsRoot,
+      normalizeCwd: normalizeRolloutOwnershipPath,
+      normalizePath: normalizeRolloutOwnershipPath,
+      onError: () => undefined,
+    })
+    const makePty = (): IPty => ({
+      write: () => undefined,
+      resize: () => undefined,
+      onData: () => ({ dispose: () => undefined }),
+      onExit: () => ({ dispose: () => undefined }),
+    }) as unknown as IPty
+    const resumed = new CodexHeadless({
+      pty: makePty(),
+      cwd: '/recorded/worktree',
+      resumeThreadId: threadId,
+      resumeRolloutPreparation: preparation,
+    })
+    const exactEntries: string[] = []
+    resumed.on('rollout-entry', (_line, filePath) => {
+      if (filePath === exactPath) exactEntries.push(filePath)
+    })
+    resumed.on('rollout-diagnostic', diagnostic => {
+      if (diagnostic.type === 'resume-fork-ignored') {
+        throw new Error('recorded diagnostic observer failure')
+      }
+    })
+
+    try {
+      const observedBefore = monitor.coordinator.inspect().observedCandidateCount
+      writeFileSync(
+        join(day, `rollout-recorded-${unrelatedThreadId}.jsonl`),
+        rolloutText(unrelated),
+      )
+      // Waiting before start is essential: it proves the decision uses the
+      // preparation's buffered replay path, not the coordinator's already
+      // exception-isolated live callback path.
+      expect(await waitFor(() =>
+        monitor.coordinator.inspect().observedCandidateCount > observedBefore,
+      )).toBe(true)
+
+      await expect(resumed.start()).resolves.toMatchObject({ sessionsDir: sessionsRoot })
+      expect(await waitFor(() => exactEntries.length > 0)).toBe(true)
+    } finally {
+      await resumed.stop()
+      await preparation.dispose()
+      await monitor.release()
+    }
+  })
 
   it('does not assign later appended prompt bytes to an earlier watcher sequence', async () => {
     const root = mkdtempSync(join(tmpdir(), 'codex-rollout-prefix-'))
@@ -510,6 +585,21 @@ describe('process-wide fresh rollout watcher', () => {
       cwd: '/recorded/worktree',
       onLease: () => undefined,
     })
+    const fixture = loadFixture('modern-0149-agents-first')
+    const day = join(root, '2026', '08', '24')
+    mkdirSync(day, { recursive: true })
+    writeFileSync(
+      join(day, 'rollout-recorded-00000000-0000-4000-8000-000000000066.jsonl'),
+      rolloutText(fixture),
+    )
+    expect(await waitFor(() =>
+      stoppedAcquisition.coordinator.inspect().observedCandidateCount > 0,
+    )).toBe(true)
+    expect(
+      (stoppedAcquisition.coordinator.inspectRetentionForTesting() as {
+        candidates: Array<{ hasRawPath: boolean }>
+      }).candidates.some(candidate => candidate.hasRawPath),
+    ).toBe(true)
     vi.useFakeTimers()
 
     try {
@@ -524,6 +614,28 @@ describe('process-wide fresh rollout watcher', () => {
       expect(JSON.stringify(
         siblingAcquisition.coordinator.inspectRetentionForTesting(),
       )).not.toContain(participantId)
+      expect(
+        (siblingAcquisition.coordinator.inspectRetentionForTesting() as {
+          candidates: Array<{ hasRawPath: boolean }>
+        }).candidates.every(candidate => !candidate.hasRawPath),
+      ).toBe(true)
+      const symbol = Symbol.for(
+        'codex-headless.fresh-rollout-ownership-coordinator-registry',
+      )
+      const registry = (globalThis as typeof globalThis & {
+        [symbol]?: {
+          roots: Map<string, {
+            coordinator: unknown
+            referenceCount: number
+            watcher: unknown
+          }>
+        }
+      })[symbol]
+      const rootEntry = [...(registry?.roots.values() ?? [])].find(
+        entry => entry.coordinator === siblingAcquisition.coordinator,
+      )
+      expect(rootEntry).toMatchObject({ referenceCount: 1 })
+      expect(rootEntry?.watcher).not.toBeNull()
     } finally {
       vi.useRealTimers()
       await siblingAcquisition.release()

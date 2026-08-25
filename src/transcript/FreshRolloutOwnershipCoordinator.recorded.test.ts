@@ -471,6 +471,42 @@ describe('recorded process-wide fresh rollout ownership', () => {
     expect(owner.inspect()).toMatchObject({ leasedPathCount: 0 })
   })
 
+  it('rejects a recorded stale generation when filesystem birth time is unavailable', () => {
+    const fixture = loadFixture('subagent-0149-exact-attachment')
+    const candidate = candidateFromFixture(fixture)
+    const copiedPrompt = candidate.userMessages.at(-1)?.text
+    if (!copiedPrompt) throw new Error('recorded exact fixture has no copied prompt')
+    const owner = coordinator()
+    const staleAware = owner as FreshRolloutOwnershipCoordinator & {
+      rememberStaleCandidateGeneration?: (
+        filePath: string,
+        generationId: string,
+      ) => void
+    }
+    const generationId = 'recorded-no-birthtime-old-generation'
+
+    // WHY this is the information production sees during the ignored initial
+    // scan: mtime proves the path+inode predates every participant, but the
+    // filesystem reports no birth time. A later change must carry that stale
+    // generation fact forward instead of replacing it with observation time.
+    expect(staleAware.rememberStaleCandidateGeneration).toBeTypeOf('function')
+    if (!staleAware.rememberStaleCandidateGeneration) return
+    staleAware.rememberStaleCandidateGeneration(candidate.filePath, generationId)
+
+    const leases: FreshRolloutLease[] = []
+    const fresh = register(owner, 'fresh-after-no-birthtime-old-exact', leases)
+    fresh.registerPrompt(copiedPrompt)
+    const changedObservation = owner.beginCandidateObservation(candidate.filePath, {
+      generationId,
+      // Deliberately omit birthtimeMs exactly as snapshotFile does when stat
+      // returns zero on a filesystem without creation-time support.
+    })
+    owner.commitCandidateObservation(changedObservation, candidate)
+
+    expect(leases).toEqual([])
+    expect(owner.inspect()).toMatchObject({ leasedPathCount: 0 })
+  })
+
   it('reports an opaque ignored-fork decision for insufficient recorded lineage', () => {
     const fixture = loadFixture('subagent-0149-exact-attachment')
     const candidate = candidateFromFixture(fixture)
