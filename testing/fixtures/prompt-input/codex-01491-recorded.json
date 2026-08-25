@@ -1,0 +1,348 @@
+{
+  "schemaVersion": 1,
+  "sanitizerVersion": 1,
+  "provider": {
+    "cliVersion": "codex-cli 0.149.1",
+    "binarySha256": "f0d8762236594359b60cfbe17f4c7e945a3ce8d1c91e74778838c968d250fb6c",
+    "upstreamTag": "rust-v0.149.1"
+  },
+  "terminal": {
+    "cols": 140,
+    "rows": 42
+  },
+  "source": {
+    "kind": "real-codex-tui-local-canned-responses",
+    "fixtureSseSha256": "66658b7a1d9b0e3b234de932f552b946b8a005520888f24e001a024fb9a29e5b"
+  },
+  "cases": [
+    {
+      "id": "trust-action-then-submit",
+      "sourceLabel": "recorded-source-894feb4a84900e9e",
+      "rawPtySha256": "894feb4a84900e9e4479e65f1d2f7a415a52629fd5ba93e764598318943542ee",
+      "rolloutSha256": "d0ef48dced0ce2b066824b5200160ef14f9f6a94e0ef0afc486f6c41f2755dd1",
+      "rawRequestSha256": "45aec01bb2f75fcf7a8dad546afd53d0fb932f7d07b7cd094e56fea4efe84fc1",
+      "configClass": "recorded-default-01491",
+      "configOverrides": [],
+      "inputChunks": [
+        "RECORDED_TRUST_PROMPT",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "RECORDED_TRUST_PROMPT",
+      "requestUserText": "RECORDED_TRUST_PROMPT",
+      "screenBeforeFinalWrite": [
+        "",
+        "  Tip: Our most capable model yet. GPT-5.6 Sol can tackle complex code changes, dig into research, produce polished documents, and take on",
+        "  your most ambitious work. Sol is highly capable at lower reasoning efforts—try starting lower, then turn it up for harder jobs.",
+        " ",
+        " ",
+        "› RECORDED_TRUST_PROMPT",
+        " ",
+        "  gpt-5.6-sol low · <private-path>"
+      ],
+      "nonComposerWrites": [
+        "1"
+      ],
+      "modal": [
+        "",
+        "  Welcome to Codex, OpenAI's command-line coding agent",
+        "",
+        "> You are in <private-path>",
+        "",
+        "  Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection. Trusting the",
+        "  directory allows project-local config, hooks, and exec policies to load.",
+        "",
+        "› 1. Yes, continue",
+        "  2. No, quit",
+        "",
+        "  Press enter to continue"
+      ]
+    },
+    {
+      "id": "combining-grapheme-backspace",
+      "sourceLabel": "recorded-source-133721a6db171567",
+      "rawPtySha256": "133721a6db17156751d97a30cd57b12d0a1266688b0813ebb6a8777976c737e6",
+      "rolloutSha256": "afbc3e667a0838c7b7ad784d1c12fd179c1257505d312d80b46ebfef564ff95e",
+      "rawRequestSha256": "8187d37a48a95a434d2498e0471340b2282880bbda2a05a1a1711ca197c00cdd",
+      "configClass": "recorded-default-01491",
+      "configOverrides": [],
+      "inputChunks": [
+        "A é",
+        "",
+        "X",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "A X",
+      "requestUserText": "A X",
+      "screenBeforeFinalWrite": [
+        "",
+        "  Tip: Our most capable model yet. GPT-5.6 Sol can tackle complex code changes, dig into research, produce polished documents, and take on",
+        "  your most ambitious work. Sol is highly capable at lower reasoning efforts—try starting lower, then turn it up for harder jobs.",
+        " ",
+        " ",
+        "› A X",
+        " ",
+        "  gpt-5.6-sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "mixed-cjk-ctrl-w",
+      "sourceLabel": "recorded-source-3417b64a82b9e414",
+      "rawPtySha256": "3417b64a82b9e414691061d63754ef3a204a5a9c8bebf7de8e32ed0150a56b5a",
+      "rolloutSha256": "aa22a71b50d9821693fc4292245b3a2dc845359790ec0abd75c5a6e68b01a617",
+      "rawRequestSha256": "76e52b94588fc2127821640be9085f57870cb0dde4b3da083fc433ce8488d906",
+      "configClass": "recorded-default-01491",
+      "configOverrides": [],
+      "inputChunks": [
+        "abc 世界def",
+        "\u0017",
+        "X",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "abc 世界X",
+      "requestUserText": "abc 世界X",
+      "screenBeforeFinalWrite": [
+        "",
+        "  Tip: Our most capable model yet. GPT-5.6 Sol can tackle complex code changes, dig into research, produce polished documents, and take on",
+        "  your most ambitious work. Sol is highly capable at lower reasoning efforts—try starting lower, then turn it up for harder jobs.",
+        " ",
+        " ",
+        "› abc 世界X",
+        " ",
+        "  gpt-5.6-sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "repeated-line-boundaries",
+      "sourceLabel": "recorded-source-7f8e0033e38c3111",
+      "rawPtySha256": "7f8e0033e38c3111032d58ea699f07b5cdbb11b362ec4a1d8558253e51d4f19c",
+      "rolloutSha256": "2ed72cd0788a1b1492dd726cf731108cf1f61a093d555dcf2d09deb935cf0661",
+      "rawRequestSha256": "359b240555d681e570f40ced835549a60851201875c4ceb4e65ff3c1a2b45038",
+      "configClass": "recorded-default-01491",
+      "configOverrides": [],
+      "inputChunks": [
+        "\u001b[200~one\ntwo\u001b[201~",
+        "\u0001",
+        "\u0001",
+        "X",
+        "\u0005",
+        "\u0005",
+        "Y",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "Xone\ntwoY",
+      "requestUserText": "Xone\ntwoY",
+      "screenBeforeFinalWrite": [
+        "  Tip: Our most capable model yet. GPT-5.6 Sol can tackle complex code changes, dig into research, produce polished documents, and take on",
+        "  your most ambitious work. Sol is highly capable at lower reasoning efforts—try starting lower, then turn it up for harder jobs.",
+        " ",
+        " ",
+        "› Xone",
+        "  twoY",
+        " ",
+        "  gpt-5.6-sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "remapped-kill-line-start",
+      "sourceLabel": "recorded-source-d9e9e86ad881a59a",
+      "rawPtySha256": "d9e9e86ad881a59a886742462e95400d4a69de0f5a1ce599e0b682dc8878189a",
+      "rolloutSha256": "b094901f67e8b497262d1419f7644c70b00cd80f05f87abd96cb6323bfce608e",
+      "rawRequestSha256": "f2f93173e8b6617b1dfbc1c38d40de90522521b3ee22e4eb2bb7754e626fb752",
+      "configClass": "explicit-cli-override",
+      "configOverrides": [
+        "tui.keymap.editor.kill_line_start=\"alt-u\""
+      ],
+      "inputChunks": [
+        "abc def",
+        "\u0015",
+        "X",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "abc defX",
+      "requestUserText": "abc defX",
+      "screenBeforeFinalWrite": [
+        "",
+        "  Tip: Our most capable model yet. GPT-5.6 Sol can tackle complex code changes, dig into research, produce polished documents, and take on",
+        "  your most ambitious work. Sol is highly capable at lower reasoning efforts—try starting lower, then turn it up for harder jobs.",
+        " ",
+        " ",
+        "› abc defX",
+        " ",
+        "  gpt-5.6-sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "vim-normal-default",
+      "sourceLabel": "recorded-source-b464e6608174e2db",
+      "rawPtySha256": "b464e6608174e2dbef5025c085d1fccf289f276a89e031aedd3fa0c20a34f587",
+      "rolloutSha256": "a10d23b146edf52f32d4f17a716a2e28d7c01537980cf4b148a3c26c91b1e40f",
+      "rawRequestSha256": "a45d3cfd82f5fe919a546e83119a81569569db563167d0a2d9afc9eab3eb61e9",
+      "configClass": "explicit-cli-override",
+      "configOverrides": [
+        "tui.vim_mode_default=true"
+      ],
+      "inputChunks": [
+        "i",
+        "abc",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "abc",
+      "requestUserText": "abc",
+      "screenBeforeFinalWrite": [
+        "",
+        "  Tip: Our most capable model yet. GPT-5.6 Sol can tackle complex code changes, dig into research, produce polished documents, and take on",
+        "  your most ambitious work. Sol is highly capable at lower reasoning efforts—try starting lower, then turn it up for harder jobs.",
+        " ",
+        " ",
+        "› abc",
+        " ",
+        "  gpt-5.6-sol low · <private-path>                      Vim: Insert"
+      ]
+    },
+    {
+      "id": "unbound-submit-enter",
+      "sourceLabel": "recorded-source-7dc6a8866ef4c0a1",
+      "rawPtySha256": "7dc6a8866ef4c0a18feac43d00b30dc83fb23e9b3ccfe776a8ddb56166dcdf66",
+      "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawRequestSha256": null,
+      "configClass": "explicit-cli-override",
+      "configOverrides": [
+        "tui.keymap.composer.submit=[]"
+      ],
+      "inputChunks": [
+        "UNBOUND_SUBMIT",
+        "\r"
+      ],
+      "expectedSubmission": false,
+      "durableUserText": null,
+      "requestUserText": null,
+      "screenBeforeFinalWrite": [
+        "",
+        "  Tip: Our most capable model yet. GPT-5.6 Sol can tackle complex code changes, dig into research, produce polished documents, and take on",
+        "  your most ambitious work. Sol is highly capable at lower reasoning efforts—try starting lower, then turn it up for harder jobs.",
+        " ",
+        " ",
+        "› UNBOUND_SUBMIT",
+        " ",
+        "  gpt-5.6-sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "modal-ctrl-c-preserves-draft",
+      "sourceLabel": "recorded-source-199439593849e248",
+      "rawPtySha256": "199439593849e248fbebe34a67d6b1aa6e83e667c9d239444123d701e8d01605",
+      "rolloutSha256": "15e7c0560ef68a02055824963ac5be7b4e29d01dd035378b6e31e927198a6870",
+      "rawRequestSha256": "e819fe791f454a76bb8c97e76b3e21327aabd9e8e043927f7ce51189e804fa78",
+      "configClass": "recorded-default-01491",
+      "configOverrides": [],
+      "inputChunks": [
+        "recorded prefix ",
+        "\u0012",
+        "\u0003",
+        "suffix",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "recorded prefix suffix",
+      "requestUserText": "recorded prefix suffix",
+      "screenBeforeFinalWrite": [
+        "",
+        "  Tip: Our most capable model yet. GPT-5.6 Sol can tackle complex code changes, dig into research, produce polished documents, and take on",
+        "  your most ambitious work. Sol is highly capable at lower reasoning efforts—try starting lower, then turn it up for harder jobs.",
+        " ",
+        " ",
+        "› recorded prefix suffix",
+        " ",
+        "  gpt-5.6-sol low · <private-path>"
+      ],
+      "popup": [
+        "",
+        "  Tip: Our most capable model yet. GPT-5.6 Sol can tackle complex code changes, dig into research, produce polished documents, and take on",
+        "  your most ambitious work. Sol is highly capable at lower reasoning efforts—try starting lower, then turn it up for harder jobs.",
+        " ",
+        " ",
+        "› recorded prefix",
+        " ",
+        "  reverse-i-search: "
+      ]
+    },
+    {
+      "id": "tab-footer-spoof-skill-popup",
+      "sourceLabel": "recorded-source-dd8f16ae7d04af5d",
+      "rawPtySha256": "dd8f16ae7d04af5de8b29f373a4447c84646e0080abffd37c00227c6c272cc51",
+      "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawRequestSha256": null,
+      "configClass": "recorded-default-01491",
+      "configOverrides": [],
+      "inputChunks": [
+        "literal tab to queue $recorded_evi",
+        "\t"
+      ],
+      "expectedSubmission": false,
+      "durableUserText": null,
+      "requestUserText": null,
+      "screenBeforeFinalWrite": [
+        "  your most ambitious work. Sol is highly capable at lower reasoning efforts—try starting lower, then turn it up for harder jobs.",
+        " ",
+        " ",
+        "› literal tab to queue $recorded_evi",
+        " ",
+        "  no matches",
+        " ",
+        "  Press enter to insert or esc to close"
+      ],
+      "popup": [
+        "  your most ambitious work. Sol is highly capable at lower reasoning efforts—try starting lower, then turn it up for harder jobs.",
+        " ",
+        " ",
+        "› literal tab to queue $recorded_evi",
+        " ",
+        "  no matches",
+        " ",
+        "  Press enter to insert or esc to close"
+      ]
+    },
+    {
+      "id": "active-footer-tab-queue",
+      "sourceLabel": "recorded-source-af41dcce237cf382",
+      "rawPtySha256": "af41dcce237cf382b763da980b6c742340ce52f38870d3804cc8dc7230c6ba4e",
+      "rolloutSha256": "f6a6eb7b086a9444add1cac5ee0e415fc62fd779fa9409cd547b6984474ffbfe",
+      "rawRequestSha256": "3c9793bcdc4528fcb6883fe24a8c923177ea9fab129afd2562e7fa61cd5bc03e",
+      "configClass": "recorded-default-01491",
+      "configOverrides": [],
+      "inputChunks": [
+        "RECORDED_QUEUED_PROMPT",
+        "\t"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "RECORDED_QUEUED_PROMPT",
+      "requestUserText": "RECORDED_QUEUED_PROMPT",
+      "screenBeforeFinalWrite": [
+        "",
+        " ",
+        "<activity> Working (<elapsed> • esc to interrupt)",
+        " ",
+        " ",
+        "› RECORDED_QUEUED_PROMPT",
+        " ",
+        "  tab to queue message                                                                                                   100% context left"
+      ],
+      "activeTurnFooter": [
+        "",
+        " ",
+        "<activity> Working (<elapsed> • esc to interrupt)",
+        " ",
+        " ",
+        "› Ask Codex to do anything",
+        " ",
+        "  gpt-5.6-sol low · <private-path>"
+      ]
+    }
+  ]
+}
