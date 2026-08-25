@@ -100,7 +100,16 @@ export class CodexResumeRolloutPreparation {
     this.consumed = true
     this.handlers = options.handlers
     for (const decision of this.pendingDecisions.splice(0)) {
-      options.handlers.onDecision(decision)
+      try {
+        options.handlers.onDecision(decision)
+      } catch {
+        // Diagnostics are observational. Live coordinator delivery already
+        // isolates a throwing listener; buffered pre-start replay must preserve
+        // the same contract or an Electron destroyed-window race can close a
+        // valid exact X tail and kill the resumed provider. Lease callbacks are
+        // deliberately not swallowed below because failure there changes
+        // physical-tail ownership and must trigger transactional rollback.
+      }
     }
     for (const lease of this.pendingLeases.splice(0)) {
       options.handlers.onLease(lease)

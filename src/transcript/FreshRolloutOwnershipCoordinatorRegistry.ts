@@ -176,6 +176,7 @@ async function stopRootWatcher(entry: RootEntry): Promise<void> {
     await entry.maintenanceQueue
     await entry.readQueue
     entry.coordinator.compactInactiveState()
+    entry.coordinator.clearStaleCandidateGenerations()
     scheduleInactiveRetention(entry)
   })().finally(() => {
     entry.stopping = null
@@ -201,7 +202,12 @@ function scheduleInactiveRetention(entry: RootEntry): void {
     // shared watcher needed by live siblings. Events admitted after the timer
     // are outside this stopped participant's bounded ownership window.
     entry.readQueue = entry.readQueue
-      .then(() => entry.coordinator.expireInactiveParticipants())
+      // Candidate paths are callback transport, not durable ownership facts.
+      // Once the stopped-owner grace closes behind admitted reads, scrub those
+      // raw paths even when a sibling keeps chokidar live. A later append
+      // restores the path from its new immutable observation before policy is
+      // recomputed; HMAC equality evidence remains available throughout.
+      .then(() => entry.coordinator.compactInactiveState())
       .catch(error => emitError(entry, error))
     void entry.readQueue.then(() => scheduleInactiveRetention(entry))
   }, Math.max(1, delay))
@@ -275,10 +281,15 @@ async function ensureWatcher(root: string, entry: RootEntry): Promise<void> {
       if (!snapshot) return
       if (!ready && snapshot.mtimeMs <
         watchStartedAt - RECENT_INITIAL_FILE_GRACE_MS) {
-        // WHY reject old corpus entries before retaining their observations:
-        // an initial scan can contain years of rollouts. They cannot belong to
-        // a just-started PTY, so even HMAC-only revisions would be needless
-        // process-lifetime state and would make the privacy bound misleading.
+        // WHY remember a content-safe generation HMAC even though we reject the
+        // old corpus entry itself: on filesystems without birth time, a later
+        // change is otherwise indistinguishable from creation. We retain no
+        // parsed candidate, path, UUID, or prompt—only path+inode equality—and
+        // clear the map when the root watcher fully stops.
+        entry.coordinator.rememberStaleCandidateGeneration(
+          filePath,
+          snapshot.generationId,
+        )
         return
       }
       const reserved = reserve(filePath, snapshot)

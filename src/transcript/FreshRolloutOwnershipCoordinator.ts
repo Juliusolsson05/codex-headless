@@ -136,6 +136,13 @@ export class FreshRolloutOwnershipCoordinator {
   private readonly pathLeases = new Map<string, PathLease>()
   private readonly candidateRevisions = new Map<string, number>()
   private readonly candidateCommittedRevisions = new Map<string, number>()
+  // Path and generation are both process-keyed HMACs. The watcher sees stale
+  // initial files before a participant can register; when birth time is not
+  // available, this is the only trustworthy evidence that a later `change`
+  // event did not create a new rollout generation. One value per path lets a
+  // replacement inode supersede the tombstone without retaining either raw
+  // filesystem identity.
+  private readonly staleGenerationFingerprints = new Map<string, string>()
   private recomputing = false
   private recomputeAgain = false
 
@@ -267,6 +274,24 @@ export class FreshRolloutOwnershipCoordinator {
   ): FreshRolloutCandidateObservation {
     const normalizedPath = this.options.normalizePath(filePath)
     const candidateFingerprint = this.fingerprint('path', normalizedPath)
+    const generationId = snapshot.generationId ?? null
+    const generationFingerprint = generationId === null
+      ? null
+      : this.fingerprint(
+          'generation',
+          `${normalizedPath}\0${generationId}`,
+        )
+    const rememberedStaleGeneration =
+      this.staleGenerationFingerprints.get(candidateFingerprint)
+    const generationWasAlreadyStale = generationFingerprint !== null &&
+      rememberedStaleGeneration === generationFingerprint
+    if (rememberedStaleGeneration && generationFingerprint !== null &&
+      rememberedStaleGeneration !== generationFingerprint) {
+      // A different inode/generation at the same pathname is new evidence, not
+      // a mutation of the ignored old file. Remove the old HMAC so replacement
+      // files remain eligible under the ordinary birth/observation checks.
+      this.staleGenerationFingerprints.delete(candidateFingerprint)
+    }
     const revision = (this.candidateRevisions.get(candidateFingerprint) ?? 0) + 1
     this.candidateRevisions.set(candidateFingerprint, revision)
     const sequence = ++this.sequence
@@ -275,11 +300,35 @@ export class FreshRolloutOwnershipCoordinator {
       candidateFingerprint,
       sequence,
       revision,
-      generationObservedAtMs: Date.now(),
+      // Zero is an intentional fail-closed lower bound. Observation time says
+      // when the old inode changed, not when it was created; substituting now
+      // is what allowed copied history from old exact X to look fresh on
+      // filesystems whose stat has no birth time.
+      generationObservedAtMs: generationWasAlreadyStale ? 0 : Date.now(),
       byteLength: snapshot.byteLength ?? null,
-      generationId: snapshot.generationId ?? null,
+      generationId,
       birthtimeMs: snapshot.birthtimeMs ?? null,
     }
+  }
+
+  rememberStaleCandidateGeneration(
+    filePath: string,
+    generationId: string,
+  ): void {
+    const normalizedPath = this.options.normalizePath(filePath)
+    const pathFingerprint = this.fingerprint('path', normalizedPath)
+    this.staleGenerationFingerprints.set(
+      pathFingerprint,
+      this.fingerprint('generation', `${normalizedPath}\0${generationId}`),
+    )
+  }
+
+  clearStaleCandidateGenerations(): void {
+    // Safe only after watcher admission and queued reads have stopped. A later
+    // acquisition completes a fresh initial scan before returning to its
+    // caller, so every still-existing old generation is re-established before
+    // a new participant can register.
+    this.staleGenerationFingerprints.clear()
   }
 
   observeCandidate(candidate: FreshRolloutCandidate): void {

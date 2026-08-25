@@ -507,6 +507,32 @@ describe('recorded process-wide fresh rollout ownership', () => {
     expect(owner.inspect()).toMatchObject({ leasedPathCount: 0 })
   })
 
+  it('allows a replacement generation after an unknown-age stale inode', () => {
+    const fixture = loadFixture('subagent-0149-exact-attachment')
+    const candidate = candidateFromFixture(fixture)
+    const copiedPrompt = candidate.userMessages.at(-1)?.text
+    if (!copiedPrompt) throw new Error('recorded exact fixture has no copied prompt')
+    const owner = coordinator()
+    owner.rememberStaleCandidateGeneration(
+      candidate.filePath,
+      'recorded-stale-inode',
+    )
+    const leases: FreshRolloutLease[] = []
+    const fresh = register(owner, 'fresh-after-replacement-inode', leases)
+    fresh.registerPrompt(copiedPrompt)
+
+    // WHY fail-closed stale knowledge is scoped to path+generation, not path.
+    // A replacement inode can genuinely be the rollout this participant just
+    // caused, even on the same filesystem that cannot report birth time.
+    const replacement = owner.beginCandidateObservation(candidate.filePath, {
+      generationId: 'recorded-replacement-inode',
+    })
+    owner.commitCandidateObservation(replacement, candidate)
+
+    expect(leases).toHaveLength(1)
+    expect(leases[0]?.filePath).toBe(candidate.filePath)
+  })
+
   it('reports an opaque ignored-fork decision for insufficient recorded lineage', () => {
     const fixture = loadFixture('subagent-0149-exact-attachment')
     const candidate = candidateFromFixture(fixture)
