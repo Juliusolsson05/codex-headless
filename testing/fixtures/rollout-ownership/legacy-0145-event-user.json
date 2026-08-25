@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "legacy-0145-event-user",
   "provenance": {
     "sourceBasename": "rollout-2026-07-23T18-39-26-019f8fd8-9f5b-7670-9282-513721a42591.jsonl",
@@ -13,26 +13,88 @@
       {
         "source": "response_item",
         "originalLineIndex": 5,
-        "token": "RECORDED_LEGACY_0145_EVENT_USER_USER_1",
+        "token": "",
         "characterCount": 2630
       },
       {
         "source": "response_item",
         "originalLineIndex": 8,
-        "token": "RECORDED_LEGACY_0145_EVENT_USER_USER_2",
+        "token": "",
         "characterCount": 1263
       },
       {
         "source": "event_msg",
         "originalLineIndex": 9,
-        "token": "RECORDED_LEGACY_0145_EVENT_USER_USER_2",
+        "token": "",
         "characterCount": 1263
       }
     ],
-    "transformation": "ownership-projection-v1"
+    "wireShape": [
+      {
+        "source": "response_item",
+        "originalLineIndex": 5,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 2128,
+              "byteSizeClass": "2048-8191",
+              "wrappers": []
+            }
+          },
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 501,
+              "byteSizeClass": "128-511",
+              "wrappers": []
+            }
+          }
+        ]
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 8,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 1263,
+              "byteSizeClass": "512-2047",
+              "wrappers": []
+            }
+          }
+        ]
+      },
+      {
+        "source": "event_msg",
+        "originalLineIndex": 9,
+        "equalityClass": "",
+        "text": {
+          "characterCount": 1263,
+          "byteSizeClass": "512-2047",
+          "wrappers": []
+        }
+      }
+    ],
+    "transformation": "ownership-projection-v2"
   },
   "ownership": {
-    "localPromptToken": "RECORDED_LEGACY_0145_EVENT_USER_USER_2",
+    "localPromptToken": "",
     "expectedLegacyDecision": "accept",
     "expectedTargetDecision": "accept",
     "note": "Legacy Codex emits the submitted prompt as both response_item and event_msg.user_message; the event message made the old projection work."
@@ -42,7 +104,7 @@
       "timestamp": "2026-07-23T16:39:26.712Z",
       "type": "session_meta",
       "payload": {
-        "id": "recorded-thread-legacy-0145-event-user",
+        "id": "7b1ef804-b419-4021-80a0-58dd72f8bde3",
         "timestamp": "2026-07-23T16:39:26.712Z",
         "cwd": "/recorded/worktree",
         "originator": "codex-tui",
@@ -60,7 +122,11 @@
         "content": [
           {
             "type": "input_text",
-            "text": "RECORDED_LEGACY_0145_EVENT_USER_USER_1"
+            "text": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               "
+          },
+          {
+            "type": "input_text",
+            "text": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     "
           }
         ]
       },
@@ -83,7 +149,7 @@
         "content": [
           {
             "type": "input_text",
-            "text": "RECORDED_LEGACY_0145_EVENT_USER_USER_2"
+            "text": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              "
           }
         ]
       },
@@ -94,7 +160,7 @@
       "type": "event_msg",
       "payload": {
         "type": "user_message",
-        "message": "RECORDED_LEGACY_0145_EVENT_USER_USER_2"
+        "message": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              "
       },
       "_recordedLineIndex": 9
     }

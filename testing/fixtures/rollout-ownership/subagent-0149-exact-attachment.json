@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "subagent-0149-exact-attachment",
   "provenance": {
     "sourceBasename": "rollout-2026-08-23T12-36-14-01a0301f-a116-7e71-bd1a-d5598fe80157.jsonl",
@@ -13,29 +13,131 @@
       {
         "source": "response_item",
         "originalLineIndex": 1,
-        "token": "RECORDED_SUBAGENT_0149_EXACT_ATTACHMENT_USER_1",
+        "token": "",
         "characterCount": 40
       },
       {
         "source": "response_item",
         "originalLineIndex": 5,
-        "token": "RECORDED_SUBAGENT_0149_EXACT_ATTACHMENT_USER_2",
+        "token": "",
         "characterCount": 84
       },
       {
         "source": "response_item",
         "originalLineIndex": 9,
-        "token": "RECORDED_SUBAGENT_0149_EXACT_ATTACHMENT_USER_3",
+        "token": "",
         "characterCount": 1895
       },
       {
         "source": "response_item",
         "originalLineIndex": 15,
-        "token": "RECORDED_SUBAGENT_0149_EXACT_ATTACHMENT_USER_4",
+        "token": "",
         "characterCount": 5909
       }
     ],
-    "transformation": "ownership-projection-v1"
+    "wireShape": [
+      {
+        "source": "response_item",
+        "originalLineIndex": 1,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 40,
+              "byteSizeClass": "32-127",
+              "wrappers": []
+            }
+          }
+        ]
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 5,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 84,
+              "byteSizeClass": "32-127",
+              "wrappers": []
+            }
+          }
+        ]
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 9,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 1895,
+              "byteSizeClass": "512-2047",
+              "wrappers": []
+            }
+          }
+        ]
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 15,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 3383,
+              "byteSizeClass": "2048-8191",
+              "wrappers": []
+            }
+          },
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 2092,
+              "byteSizeClass": "2048-8191",
+              "wrappers": []
+            }
+          },
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 432,
+              "byteSizeClass": "128-511",
+              "wrappers": []
+            }
+          }
+        ]
+      }
+    ],
+    "transformation": "ownership-projection-v2"
   },
   "ownership": {
     "localPromptToken": null,
@@ -48,7 +150,7 @@
       "timestamp": "2026-08-23T19:36:14.396Z",
       "type": "session_meta",
       "payload": {
-        "id": "recorded-thread-subagent-0149-exact-attachment",
+        "id": "81e7e660-e654-4ce0-8239-07a38580860b",
         "timestamp": "2026-08-23T19:36:14.396Z",
         "cwd": "/recorded/worktree",
         "originator": "codex-tui",
@@ -56,7 +158,7 @@
         "source": {
           "subagent": {
             "thread_spawn": {
-              "parent_thread_id": "recorded-parent-thread",
+              "parent_thread_id": "2349a89e-ba7c-49ad-887b-53fa25d65285",
               "depth": 1,
               "agent_path": "/recorded/agent",
               "agent_nickname": "recorded-agent",
@@ -64,7 +166,7 @@
             }
           }
         },
-        "forked_from_id": "recorded-parent-thread",
+        "forked_from_id": "bad8d33c-9f2c-466e-87e9-50bf918a9c20",
         "agent_nickname": "recorded-agent",
         "agent_path": "/recorded/agent"
       },
@@ -79,7 +181,7 @@
         "content": [
           {
             "type": "input_text",
-            "text": "RECORDED_SUBAGENT_0149_EXACT_ATTACHMENT_USER_1"
+            "text": "                                       "
           }
         ]
       },
@@ -94,7 +196,7 @@
         "content": [
           {
             "type": "input_text",
-            "text": "RECORDED_SUBAGENT_0149_EXACT_ATTACHMENT_USER_2"
+            "text": "                                                                                   "
           }
         ]
       },
@@ -109,7 +211,7 @@
         "content": [
           {
             "type": "input_text",
-            "text": "RECORDED_SUBAGENT_0149_EXACT_ATTACHMENT_USER_3"
+            "text": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      "
           }
         ]
       },
@@ -124,7 +226,15 @@
         "content": [
           {
             "type": "input_text",
-            "text": "RECORDED_SUBAGENT_0149_EXACT_ATTACHMENT_USER_4"
+            "text": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      "
+          },
+          {
+            "type": "input_text",
+            "text": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            "
+          },
+          {
+            "type": "input_text",
+            "text": "                                                                                                                                                                                                                                                                                                                                                                                                                                                "
           }
         ]
       },

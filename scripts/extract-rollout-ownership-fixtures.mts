@@ -9,6 +9,7 @@ import {
   normalizePromptForOwnership,
   parseFreshRolloutCandidate,
 } from '../src/transcript/FreshRolloutClaim.js'
+import { decideLegacyFreshRollout } from '../src/transcript/LegacyFreshRolloutOracle.js'
 
 type FixtureSource = {
   id: string
@@ -33,6 +34,9 @@ const defaultOutputRoot = resolve(
   scriptDir,
   '../testing/fixtures/rollout-ownership',
 )
+const TEXT_WRAPPER_RE =
+  /<user_input>|<\/user_input>|USER_MESSAGE_BEGIN|USER_MESSAGE_END/g
+const equalityTokenOwners = new Map<string, string>()
 
 const manifestPath = optionValue('--manifest')
 if (!manifestPath) {
@@ -87,12 +91,11 @@ function buildFixture(source: FixtureSource, raw: string) {
   }
 
   const tokenByNormalizedText = new Map<string, string>()
-  const fixtureTokenPrefix = source.id.toUpperCase().replace(/[^A-Z0-9]+/g, '_')
   for (const message of candidate.userMessages) {
     if (!tokenByNormalizedText.has(message.normalized)) {
       tokenByNormalizedText.set(
         message.normalized,
-        `RECORDED_${fixtureTokenPrefix}_USER_${tokenByNormalizedText.size + 1}`,
+        equalityClassToken(`${source.id}:${tokenByNormalizedText.size}`),
       )
     }
   }
@@ -136,23 +139,53 @@ function buildFixture(source: FixtureSource, raw: string) {
     throw new Error(`${source.id}: sanitized projection no longer parses`)
   }
 
-  const sourceShape = candidate.userMessages.map(message => ({
-    source: message.source,
-    token: tokenByNormalizedText.get(message.normalized),
-  }))
-  const fixtureShape = fixtureCandidate.userMessages.map(message => ({
-    source: message.source,
-    token: message.normalized,
-  }))
+  const sourceShape = collectOwnershipWireShape(
+    raw,
+    normalized => tokenByNormalizedText.get(normalized) ?? null,
+  )
+  const fixtureShape = collectOwnershipWireShape(
+    fixtureText,
+    normalized => normalized,
+  )
   if (JSON.stringify(sourceShape) !== JSON.stringify(fixtureShape)) {
-    throw new Error(`${source.id}: sanitization changed ordered user evidence`)
+    throw new Error(
+      `${source.id}: sanitization changed ordered user wire shape`,
+    )
   }
 
   if (source.expectedLegacyDecision !== 'not-applicable') {
     if (!localPromptToken) {
       throw new Error(`${source.id}: fresh fixture lacks a local prompt token`)
     }
-    const legacyDecision = decideFreshRolloutClaim({
+    const sourceLegacyDecision = decideLegacyFreshRollout(
+      raw,
+      candidate.cwd,
+      localObservation?.text ?? '',
+    )
+    const fixtureLegacyDecision = decideLegacyFreshRollout(
+      fixtureText,
+      '/recorded/worktree',
+      localPromptToken,
+    )
+    if (sourceLegacyDecision !== source.expectedLegacyDecision ||
+      fixtureLegacyDecision !== source.expectedLegacyDecision) {
+      throw new Error(
+        `${source.id}: expected frozen legacy ${source.expectedLegacyDecision}, ` +
+          `observed source=${sourceLegacyDecision}, fixture=${fixtureLegacyDecision}`,
+      )
+    }
+
+    const sourceTargetDecision = decideFreshRolloutClaim({
+      ownCwd: candidate.cwd,
+      prompts: [{
+        text: localObservation?.text ?? '',
+        normalized: localObservation?.normalized ?? '',
+        ts: 0,
+      }],
+      candidates: [candidate],
+      normalizeCwd: value => value,
+    })
+    const fixtureTargetDecision = decideFreshRolloutClaim({
       ownCwd: '/recorded/worktree',
       prompts: [{
         text: localPromptToken,
@@ -162,10 +195,12 @@ function buildFixture(source: FixtureSource, raw: string) {
       candidates: [fixtureCandidate],
       normalizeCwd: value => value,
     })
-    if (legacyDecision.type !== source.expectedLegacyDecision) {
+    if (sourceTargetDecision.type !== source.expectedTargetDecision ||
+      fixtureTargetDecision.type !== source.expectedTargetDecision) {
       throw new Error(
-        `${source.id}: expected legacy ${source.expectedLegacyDecision}, ` +
-          `observed ${legacyDecision.type}`,
+        `${source.id}: expected target ${source.expectedTargetDecision}, ` +
+          `observed source=${sourceTargetDecision.type}, ` +
+          `fixture=${fixtureTargetDecision.type}`,
       )
     }
   }
@@ -185,7 +220,7 @@ function buildFixture(source: FixtureSource, raw: string) {
   }
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: source.id,
     provenance: {
       sourceBasename: basename(source.sourcePath),
@@ -201,7 +236,8 @@ function buildFixture(source: FixtureSource, raw: string) {
         token: tokenByNormalizedText.get(message.normalized),
         characterCount: message.text.length,
       })),
-      transformation: 'ownership-projection-v1',
+      wireShape: sourceShape,
+      transformation: 'ownership-projection-v2',
     },
     ownership: {
       localPromptToken,
@@ -227,11 +263,12 @@ function sanitizeOwnershipLine(
   if (!type || !payload) return null
 
   if (type === 'session_meta') {
+    const threadId = deterministicUuid(`thread:${fixtureId}`)
     return {
       timestamp,
       type,
       payload: {
-        id: `recorded-thread-${fixtureId}`,
+        id: threadId,
         timestamp,
         cwd: '/recorded/worktree',
         originator: typeof payload.originator === 'string'
@@ -240,7 +277,7 @@ function sanitizeOwnershipLine(
         cli_version: payload.cli_version,
         source: sanitizeSessionSource(payload.source),
         ...(payload.forked_from_id
-          ? { forked_from_id: 'recorded-parent-thread' }
+          ? { forked_from_id: deterministicUuid(`parent:${fixtureId}`) }
           : {}),
         ...(payload.agent_nickname
           ? { agent_nickname: 'recorded-agent' }
@@ -269,7 +306,10 @@ function sanitizeOwnershipLine(
     return {
       timestamp,
       type,
-      payload: { type: 'user_message', message: token },
+      payload: {
+        type: 'user_message',
+        message: sanitizeTextAtom(text, token, true),
+      },
       _recordedLineIndex: originalLineIndex,
     }
   }
@@ -280,22 +320,36 @@ function sanitizeOwnershipLine(
     payload.role === 'user'
   ) {
     const content = Array.isArray(payload.content) ? payload.content : []
-    const text = content
-      .map(item => {
-        const record = asRecord(item)
-        return record && typeof record.text === 'string' ? record.text : ''
-      })
+    const records = content.map(item => asRecord(item))
+    if (records.some(item => !item ||
+      typeof item.type !== 'string' || typeof item.text !== 'string' ||
+      Object.keys(item).some(key => key !== 'type' && key !== 'text'))) {
+      throw new Error(
+        `${fixtureId}: unsupported user content item; refusing to flatten it`,
+      )
+    }
+    const text = records
+      .map(item => item?.text as string)
       .filter(Boolean)
       .join('\n')
     const token = tokenByNormalizedText.get(normalizePromptForOwnership(text))
     if (!token) throw new Error('response_item user text lacked a recorded token')
+    let tokenPlaced = false
     return {
       timestamp,
       type,
       payload: {
         type: 'message',
         role: 'user',
-        content: [{ type: 'input_text', text: token }],
+        content: records.map(item => {
+          const originalText = item?.text as string
+          const placeToken = !tokenPlaced && originalText.length > 0
+          if (placeToken) tokenPlaced = true
+          return {
+            type: item?.type,
+            text: sanitizeTextAtom(originalText, token, placeToken),
+          }
+        }),
       },
       _recordedLineIndex: originalLineIndex,
     }
@@ -313,7 +367,7 @@ function sanitizeSessionSource(source: unknown): unknown {
   return {
     subagent: {
       thread_spawn: {
-        parent_thread_id: 'recorded-parent-thread',
+        parent_thread_id: deterministicUuid('recorded-parent-thread'),
         depth: typeof spawn.depth === 'number' ? spawn.depth : 1,
         agent_path: '/recorded/agent',
         agent_nickname: 'recorded-agent',
@@ -321,6 +375,167 @@ function sanitizeSessionSource(source: unknown): unknown {
       },
     },
   }
+}
+
+function equalityClassToken(owner: string): string {
+  // WHY tokens are one UTF-16 code unit yet globally unique across fixtures:
+  // exact text lengths include a recorded one-character user message, while
+  // concurrent ownership tests must still distinguish alpha's class from
+  // beta's. BMP private-use code points preserve that length without leaking
+  // text; deterministic probing makes collisions explicit and reproducible.
+  const privateUseStart = 0xe000
+  const privateUseCount = 0x1900
+  const initial = Number.parseInt(sha256(owner).slice(0, 8), 16) % privateUseCount
+  for (let offset = 0; offset < privateUseCount; offset += 1) {
+    const token = String.fromCharCode(
+      privateUseStart + ((initial + offset) % privateUseCount),
+    )
+    const claimedBy = equalityTokenOwners.get(token)
+    if (!claimedBy || claimedBy === owner) {
+      equalityTokenOwners.set(token, owner)
+      return token
+    }
+  }
+  throw new Error('recorded equality-token namespace exhausted')
+}
+
+function sanitizeTextAtom(
+  text: string,
+  token: string,
+  placeToken: boolean,
+): string {
+  const output = Array<string>(text.length).fill(' ')
+  const protectedPositions = Array<boolean>(text.length).fill(false)
+  TEXT_WRAPPER_RE.lastIndex = 0
+  let wrapper: RegExpExecArray | null
+  while ((wrapper = TEXT_WRAPPER_RE.exec(text)) !== null) {
+    for (let offset = 0; offset < wrapper[0].length; offset += 1) {
+      const index = wrapper.index + offset
+      output[index] = text[index] ?? ' '
+      protectedPositions[index] = true
+    }
+  }
+
+  if (placeToken) {
+    const index = protectedPositions.findIndex(isProtected => !isProtected)
+    if (index < 0) {
+      throw new Error('text atom has no private position for equality token')
+    }
+    output[index] = token
+  }
+  const sanitized = output.join('')
+  if (sanitized.length !== text.length) {
+    throw new Error('sanitizer changed exact text atom length')
+  }
+  return sanitized
+}
+
+function collectOwnershipWireShape(
+  text: string,
+  equalityClass: (normalized: string) => string | null,
+) {
+  return text
+    .split('\n')
+    .map((rawLine, parsedLineIndex) => ({ rawLine, parsedLineIndex }))
+    .filter(item => item.rawLine.trim().length > 0)
+    .flatMap(item => {
+      const line = JSON.parse(item.rawLine) as JsonRecord
+      const payload = asRecord(line.payload)
+      if (!payload) return []
+      const originalLineIndex = typeof line._recordedLineIndex === 'number'
+        ? line._recordedLineIndex
+        : item.parsedLineIndex
+
+      if (line.type === 'event_msg' && payload.type === 'user_message' &&
+        typeof payload.message === 'string') {
+        return [{
+          source: 'event_msg',
+          originalLineIndex,
+          equalityClass: equalityClass(normalizeRecordedText(payload.message)),
+          text: textAtomShape(payload.message),
+        }]
+      }
+
+      if (line.type === 'response_item' && payload.type === 'message' &&
+        payload.role === 'user' && Array.isArray(payload.content)) {
+        const content = payload.content.map(item => {
+          const record = asRecord(item)
+          if (!record || typeof record.type !== 'string') {
+            throw new Error('user content item has no structural type')
+          }
+          return {
+            type: record.type,
+            keys: Object.keys(record).sort(),
+            ...(typeof record.text === 'string'
+              ? { text: textAtomShape(record.text) }
+              : {}),
+          }
+        })
+        const combined = payload.content
+          .map(item => {
+            const record = asRecord(item)
+            return record && typeof record.text === 'string' ? record.text : ''
+          })
+          .filter(Boolean)
+          .join('\n')
+        return [{
+          source: 'response_item',
+          originalLineIndex,
+          equalityClass: equalityClass(normalizeRecordedText(combined)),
+          content,
+        }]
+      }
+      return []
+    })
+}
+
+function textAtomShape(text: string) {
+  TEXT_WRAPPER_RE.lastIndex = 0
+  const wrappers: Array<{ value: string; index: number }> = []
+  let wrapper: RegExpExecArray | null
+  while ((wrapper = TEXT_WRAPPER_RE.exec(text)) !== null) {
+    wrappers.push({ value: wrapper[0], index: wrapper.index })
+  }
+  return {
+    characterCount: text.length,
+    byteSizeClass: sizeClass(Buffer.byteLength(text)),
+    wrappers,
+  }
+}
+
+function sizeClass(size: number): string {
+  if (size === 0) return '0'
+  if (size < 32) return '1-31'
+  if (size < 128) return '32-127'
+  if (size < 512) return '128-511'
+  if (size < 2048) return '512-2047'
+  if (size < 8192) return '2048-8191'
+  return '8192+'
+}
+
+function normalizeRecordedText(text: string): string {
+  return text
+    .replace(/<user_input>\s*/gi, '')
+    .replace(/\s*<\/user_input>/gi, '')
+    .replace(/USER_MESSAGE_BEGIN[\r\n]*/g, '')
+    .replace(/[\r\n]*USER_MESSAGE_END/g, '')
+    .trim()
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function deterministicUuid(seed: string): string {
+  const hex = sha256(seed).slice(0, 32).split('')
+  hex[12] = '4'
+  hex[16] = '8'
+  return [
+    hex.slice(0, 8).join(''),
+    hex.slice(8, 12).join(''),
+    hex.slice(12, 16).join(''),
+    hex.slice(16, 20).join(''),
+    hex.slice(20, 32).join(''),
+  ].join('-')
 }
 
 function asRecord(value: unknown): JsonRecord | null {

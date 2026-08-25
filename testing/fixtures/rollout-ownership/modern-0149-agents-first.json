@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "modern-0149-agents-first",
   "provenance": {
     "sourceBasename": "rollout-2026-08-24T10-09-49-01a034bf-f0a2-7841-82b1-bd4f3900c9d4.jsonl",
@@ -13,56 +13,222 @@
       {
         "source": "response_item",
         "originalLineIndex": 5,
-        "token": "RECORDED_MODERN_0149_AGENTS_FIRST_USER_1",
+        "token": "",
         "characterCount": 2525
       },
       {
         "source": "response_item",
         "originalLineIndex": 8,
-        "token": "RECORDED_MODERN_0149_AGENTS_FIRST_USER_2",
+        "token": "",
         "characterCount": 197
       },
       {
         "source": "response_item",
         "originalLineIndex": 95,
-        "token": "RECORDED_MODERN_0149_AGENTS_FIRST_USER_3",
+        "token": "",
         "characterCount": 360
       },
       {
         "source": "response_item",
         "originalLineIndex": 175,
-        "token": "RECORDED_MODERN_0149_AGENTS_FIRST_USER_4",
+        "token": "",
         "characterCount": 146
       },
       {
         "source": "response_item",
         "originalLineIndex": 263,
-        "token": "RECORDED_MODERN_0149_AGENTS_FIRST_USER_5",
+        "token": "",
         "characterCount": 239
       },
       {
         "source": "response_item",
         "originalLineIndex": 322,
-        "token": "RECORDED_MODERN_0149_AGENTS_FIRST_USER_6",
+        "token": "",
         "characterCount": 11152
       },
       {
         "source": "response_item",
         "originalLineIndex": 373,
-        "token": "RECORDED_MODERN_0149_AGENTS_FIRST_USER_7",
+        "token": "",
         "characterCount": 35
       },
       {
         "source": "response_item",
         "originalLineIndex": 698,
-        "token": "RECORDED_MODERN_0149_AGENTS_FIRST_USER_8",
+        "token": "",
         "characterCount": 217
       }
     ],
-    "transformation": "ownership-projection-v1"
+    "wireShape": [
+      {
+        "source": "response_item",
+        "originalLineIndex": 5,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 2092,
+              "byteSizeClass": "2048-8191",
+              "wrappers": []
+            }
+          },
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 432,
+              "byteSizeClass": "128-511",
+              "wrappers": []
+            }
+          }
+        ]
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 8,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 197,
+              "byteSizeClass": "128-511",
+              "wrappers": []
+            }
+          }
+        ]
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 95,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 360,
+              "byteSizeClass": "128-511",
+              "wrappers": []
+            }
+          }
+        ]
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 175,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 146,
+              "byteSizeClass": "128-511",
+              "wrappers": []
+            }
+          }
+        ]
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 263,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 239,
+              "byteSizeClass": "128-511",
+              "wrappers": []
+            }
+          }
+        ]
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 322,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 11152,
+              "byteSizeClass": "8192+",
+              "wrappers": []
+            }
+          }
+        ]
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 373,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 35,
+              "byteSizeClass": "32-127",
+              "wrappers": []
+            }
+          }
+        ]
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 698,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 217,
+              "byteSizeClass": "128-511",
+              "wrappers": []
+            }
+          }
+        ]
+      }
+    ],
+    "transformation": "ownership-projection-v2"
   },
   "ownership": {
-    "localPromptToken": "RECORDED_MODERN_0149_AGENTS_FIRST_USER_2",
+    "localPromptToken": "",
     "expectedLegacyDecision": "hold",
     "expectedTargetDecision": "accept",
     "note": "Active issue capture: injected AGENTS instructions were selected while the later real prompt was processed by Codex."
@@ -72,7 +238,7 @@
       "timestamp": "2026-08-24T17:10:06.847Z",
       "type": "session_meta",
       "payload": {
-        "id": "recorded-thread-modern-0149-agents-first",
+        "id": "6556cbe2-fdd5-46bd-856e-6f9e3f3ece42",
         "timestamp": "2026-08-24T17:10:06.847Z",
         "cwd": "/recorded/worktree",
         "originator": "codex-tui",
@@ -90,7 +256,11 @@
         "content": [
           {
             "type": "input_text",
-            "text": "RECORDED_MODERN_0149_AGENTS_FIRST_USER_1"
+            "text": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           "
+          },
+          {
+            "type": "input_text",
+            "text": "                                                                                                                                                                                                                                                                                                                                                                                                                                                "
           }
         ]
       },
@@ -113,7 +283,7 @@
         "content": [
           {
             "type": "input_text",
-            "text": "RECORDED_MODERN_0149_AGENTS_FIRST_USER_2"
+            "text": "                                                                                                                                                                                                    "
           }
         ]
       },
@@ -136,7 +306,7 @@
         "content": [
           {
             "type": "input_text",
-            "text": "RECORDED_MODERN_0149_AGENTS_FIRST_USER_3"
+            "text": "                                                                                                                                                                                                                                                                                                                                                                       "
           }
         ]
       },
@@ -151,7 +321,7 @@
         "content": [
           {
             "type": "input_text",
-            "text": "RECORDED_MODERN_0149_AGENTS_FIRST_USER_4"
+            "text": "                                                                                                                                                 "
           }
         ]
       },
@@ -166,7 +336,7 @@
         "content": [
           {
             "type": "input_text",
-            "text": "RECORDED_MODERN_0149_AGENTS_FIRST_USER_5"
+            "text": "                                                                                                                                                                                                                                              "
           }
         ]
       },
@@ -181,7 +351,7 @@
         "content": [
           {
             "type": "input_text",
-            "text": "RECORDED_MODERN_0149_AGENTS_FIRST_USER_6"
+            "text": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               "
           }
         ]
       },
@@ -204,7 +374,7 @@
         "content": [
           {
             "type": "input_text",
-            "text": "RECORDED_MODERN_0149_AGENTS_FIRST_USER_7"
+            "text": "                                  "
           }
         ]
       },
@@ -235,7 +405,7 @@
         "content": [
           {
             "type": "input_text",
-            "text": "RECORDED_MODERN_0149_AGENTS_FIRST_USER_8"
+            "text": "                                                                                                                                                                                                                        "
           }
         ]
       },

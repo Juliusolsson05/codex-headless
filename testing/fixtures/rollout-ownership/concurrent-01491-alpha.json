@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "concurrent-01491-alpha",
   "provenance": {
     "sourceBasename": "rollout-2026-08-24T12-01-07-01a03525-d640-7cf1-a3e6-af95f41483d7.jsonl",
@@ -13,20 +13,72 @@
       {
         "source": "response_item",
         "originalLineIndex": 5,
-        "token": "RECORDED_CONCURRENT_01491_ALPHA_USER_1",
+        "token": "",
         "characterCount": 2636
       },
       {
         "source": "response_item",
         "originalLineIndex": 8,
-        "token": "RECORDED_CONCURRENT_01491_ALPHA_USER_2",
+        "token": "",
         "characterCount": 566
       }
     ],
-    "transformation": "ownership-projection-v1"
+    "wireShape": [
+      {
+        "source": "response_item",
+        "originalLineIndex": 5,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 2129,
+              "byteSizeClass": "2048-8191",
+              "wrappers": []
+            }
+          },
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 506,
+              "byteSizeClass": "128-511",
+              "wrappers": []
+            }
+          }
+        ]
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 8,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 566,
+              "byteSizeClass": "512-2047",
+              "wrappers": []
+            }
+          }
+        ]
+      }
+    ],
+    "transformation": "ownership-projection-v2"
   },
   "ownership": {
-    "localPromptToken": "RECORDED_CONCURRENT_01491_ALPHA_USER_2",
+    "localPromptToken": "",
     "expectedLegacyDecision": "hold",
     "expectedTargetDecision": "accept",
     "note": "Controlled Agent Code MCP sibling alpha, launched concurrently in the same CWD with a distinct prompt."
@@ -36,7 +88,7 @@
       "timestamp": "2026-08-24T19:01:07.607Z",
       "type": "session_meta",
       "payload": {
-        "id": "recorded-thread-concurrent-01491-alpha",
+        "id": "09d8c678-a4d7-4e8d-8d84-88e5888eee6b",
         "timestamp": "2026-08-24T19:01:07.607Z",
         "cwd": "/recorded/worktree",
         "originator": "codex-tui",
@@ -54,7 +106,11 @@
         "content": [
           {
             "type": "input_text",
-            "text": "RECORDED_CONCURRENT_01491_ALPHA_USER_1"
+            "text": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                "
+          },
+          {
+            "type": "input_text",
+            "text": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          "
           }
         ]
       },
@@ -77,7 +133,7 @@
         "content": [
           {
             "type": "input_text",
-            "text": "RECORDED_CONCURRENT_01491_ALPHA_USER_2"
+            "text": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     "
           }
         ]
       },

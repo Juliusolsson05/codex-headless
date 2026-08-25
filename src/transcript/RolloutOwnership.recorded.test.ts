@@ -1,4 +1,14 @@
-import { readFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
@@ -7,13 +17,14 @@ import {
   decideFreshRolloutClaim,
   normalizePromptForOwnership,
   parseFreshRolloutCandidate,
-  summarizeFreshRolloutClaimEvidence,
   type FreshRolloutCandidate,
   type SubmittedPrompt,
 } from './FreshRolloutClaim.js'
+import { decideLegacyFreshRollout } from './LegacyFreshRolloutOracle.js'
+import { findCodexRolloutPathByThreadId } from './RolloutLocator.js'
 
 type RecordedOwnershipFixture = {
-  schemaVersion: 1
+  schemaVersion: 2
   id: string
   provenance: {
     cliVersion: string
@@ -80,6 +91,39 @@ function decide(
 }
 
 describe('recorded fresh rollout ownership corpus', () => {
+  it('executes every cataloged recorded fixture', () => {
+    const committedFixtureIds = readdirSync(fixtureRoot)
+      .filter(name => name.endsWith('.json'))
+      .map(name => name.slice(0, -'.json'.length))
+      .sort()
+
+    // WHY corpus inventory is executable: the exact-id recording previously
+    // appeared in catalog prose while no test loaded it. A future fixture must
+    // choose a route explicitly instead of inflating an unexercised test count.
+    expect(committedFixtureIds).toEqual([
+      ...freshFixtureIds,
+      'subagent-0149-exact-attachment',
+    ].sort())
+  })
+
+  it.each(freshFixtureIds)(
+    'independently reproduces the frozen legacy decision for %s',
+    fixtureId => {
+      const fixture = loadFixture(fixtureId)
+      const prompt = promptFromFixture(fixture)
+      const decision = decideLegacyFreshRollout(
+        fixture.lines.map(line => JSON.stringify(line)).join('\n'),
+        '/recorded/worktree',
+        prompt.text,
+      )
+
+      // WHY this oracle may not share production parsing: these expectations
+      // describe the behavior that failed on the recorded upstream format. A
+      // mutable claimant cannot independently verify its own improvement.
+      expect(decision).toBe(fixture.ownership.expectedLegacyDecision)
+    },
+  )
+
   it.each(freshFixtureIds)(
     'reaches the recorded target decision for %s',
     fixtureId => {
@@ -169,34 +213,51 @@ describe('recorded fresh rollout ownership corpus', () => {
     })
   })
 
-  it('diagnoses the later real match without exposing recorded text', () => {
-    const fixture = loadFixture('modern-0149-agents-first')
-    const candidate = candidateFromFixture(fixture)
-    const prompt = promptFromFixture(fixture)
-    const evidence = summarizeFreshRolloutClaimEvidence({
-      ownCwd: '/recorded/worktree',
-      prompts: [prompt],
-      candidates: [candidate],
-      normalizeCwd: value => value,
-      fingerprint: normalized => normalized === prompt.normalized
-        ? 'local-prompt'
-        : 'not-local',
-    })
+  it('resolves the recorded subagent only by exact filename and session metadata identity', async () => {
+    const fixture = loadFixture('subagent-0149-exact-attachment')
+    const sessionMeta = fixture.lines.find(line => line.type === 'session_meta')
+    const threadId = (sessionMeta?.payload as { id?: unknown } | undefined)?.id
+    if (typeof threadId !== 'string') {
+      throw new Error('recorded subagent fixture has no session_meta.id')
+    }
+    const root = mkdtempSync(join(tmpdir(), 'codex-exact-rollout-'))
+    try {
+      const olderDay = join(root, '2026', '08', '23')
+      const newerDay = join(root, '2026', '08', '24')
+      const invalidDay = join(root, '2026', '08', '25')
+      mkdirSync(olderDay, { recursive: true })
+      mkdirSync(newerDay, { recursive: true })
+      mkdirSync(invalidDay, { recursive: true })
+      const text = `${fixture.lines.map(line => JSON.stringify(line)).join('\n')}\n`
+      const olderPath = join(olderDay, `rollout-older-${threadId}.jsonl`)
+      const newerPath = join(newerDay, `rollout-newer-${threadId}.jsonl`)
+      writeFileSync(olderPath, text)
+      writeFileSync(newerPath, text)
+      utimesSync(olderPath, new Date(1_000), new Date(1_000))
+      utimesSync(newerPath, new Date(2_000), new Date(2_000))
 
-    expect(evidence).toMatchObject({
-      candidateCount: 1,
-      sameCwdCandidateCount: 1,
-      candidates: [{
-        userMessages: expect.arrayContaining([
-          expect.objectContaining({
-            matchesLocalPrompt: true,
-            selectedByLegacyProjection: false,
-          }),
-        ]),
-      }],
-    })
-    expect(JSON.stringify(evidence)).not.toContain(
-      fixture.ownership.localPromptToken,
-    )
+      const invalidLines = structuredClone(fixture.lines)
+      const invalidMeta = invalidLines.find(line => line.type === 'session_meta')
+      if (invalidMeta?.payload && typeof invalidMeta.payload === 'object') {
+        (invalidMeta.payload as { id: string }).id =
+          '00000000-0000-4000-8000-000000000000'
+      }
+      const invalidPath = join(invalidDay, `rollout-invalid-${threadId}.jsonl`)
+      writeFileSync(
+        invalidPath,
+        `${invalidLines.map(line => JSON.stringify(line)).join('\n')}\n`,
+      )
+      utimesSync(invalidPath, new Date(3_000), new Date(3_000))
+
+      expect(await findCodexRolloutPathByThreadId(root, threadId)).toBe(newerPath)
+      expect(await findCodexRolloutPathByThreadId(root, threadId.slice(0, -1)))
+        .toBeNull()
+      expect(await findCodexRolloutPathByThreadId(
+        root,
+        '00000000-0000-4000-8000-000000000000',
+      )).toBeNull()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })

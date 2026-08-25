@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import {
   FreshRolloutOwnershipCoordinator,
   type FreshRolloutLease,
+  type FreshRolloutParticipantDecision,
 } from './FreshRolloutOwnershipCoordinator.js'
 import {
   normalizePromptForOwnership,
@@ -183,6 +184,57 @@ describe('recorded process-wide fresh rollout ownership', () => {
 
     expect(owner.inspect()).toMatchObject({
       activeParticipantCount: 0,
+      leasedPathCount: 0,
+    })
+  })
+
+  it('reports ownership state without paths, provider ids, cwd, or prompt text', () => {
+    const fixture = loadFixture('modern-0149-agents-first')
+    const candidate = candidateFromFixture(fixture)
+    const prompt = promptFromFixture(fixture)
+    const owner = coordinator()
+    const decisions: FreshRolloutParticipantDecision[] = []
+    const handle = owner.registerParticipant({
+      participantId: 'diagnostic-owner',
+      cwd: '/recorded/worktree',
+      onLease: () => undefined,
+      onDecision: decision => decisions.push(decision),
+    })
+
+    handle.registerPrompt(prompt)
+    owner.observeCandidate(candidate)
+
+    expect(decisions.at(-1)).toMatchObject({
+      decision: 'accept',
+      reason: 'path-leased',
+      localPromptCount: 1,
+      candidateCount: 1,
+      sameCwdCandidateCount: 1,
+      tailAuthorized: true,
+    })
+    const serialized = JSON.stringify(decisions)
+    expect(serialized).not.toContain(prompt)
+    expect(serialized).not.toContain(candidate.filePath)
+    expect(serialized).not.toContain(candidate.threadId)
+    expect(serialized).not.toContain(candidate.cwd)
+  })
+
+  it('quarantines recorded evidence when the bounded reader was exhausted', () => {
+    const fixture = loadFixture('modern-0149-large-bootstrap-first')
+    const candidate = candidateFromFixture(fixture)
+    const owner = coordinator()
+    const leases: FreshRolloutLease[] = []
+    const handle = register(owner, 'read-cap-owner', leases)
+    handle.registerPrompt(promptFromFixture(fixture))
+    const observation = owner.beginCandidateObservation(candidate.filePath)
+
+    owner.commitCandidateObservation(observation, candidate, {
+      readCapExceeded: true,
+    })
+
+    expect(leases).toEqual([])
+    expect(owner.inspect()).toMatchObject({
+      quarantinedPathCount: 1,
       leasedPathCount: 0,
     })
   })

@@ -42,27 +42,6 @@ export type FreshRolloutUserMessage = {
   normalized: string
 }
 
-export type FreshRolloutClaimEvidenceSnapshot = {
-  localPromptCount: number
-  localPromptFingerprints: string[]
-  candidateCount: number
-  sameCwdCandidateCount: number
-  candidates: Array<{
-    filePath: string
-    threadId: string | null
-    cliVersion: string | null
-    cwdMatches: boolean
-    selectedLegacyFingerprint: string | null
-    userMessages: Array<{
-      source: FreshRolloutUserMessage['source']
-      lineIndex: number
-      fingerprint: string
-      matchesLocalPrompt: boolean
-      selectedByLegacyProjection: boolean
-    }>
-  }>
-}
-
 export type FreshRolloutClaimDecision =
   | { type: 'hold'; reason: string }
   | { type: 'reject'; reason: string }
@@ -178,56 +157,6 @@ export function parseFreshRolloutCandidate(
     normalizedFirstUserMessage: firstUserMessage
       ? normalizePromptForOwnership(firstUserMessage)
       : null,
-  }
-}
-
-export function summarizeFreshRolloutClaimEvidence(options: {
-  ownCwd: string
-  prompts: readonly SubmittedPrompt[]
-  candidates: Iterable<FreshRolloutCandidate>
-  normalizeCwd: (cwd: string) => string
-  fingerprint: (normalizedText: string) => string
-}): FreshRolloutClaimEvidenceSnapshot {
-  const ownCwd = options.normalizeCwd(options.ownCwd)
-  const candidates = Array.from(options.candidates)
-  const localPromptFingerprints = options.prompts
-    .filter(prompt => prompt.normalized.length > 0)
-    .map(prompt => options.fingerprint(prompt.normalized))
-  const localPrompts = new Set(options.prompts.map(prompt => prompt.normalized))
-
-  // WHY diagnostics describe every ordered user observation instead of only
-  // the claimant's projection: the 0.149 regression is invisible if telemetry
-  // repeats the same lossy "first user message" assumption as the decision.
-  // Equality is reported through a per-process salted fingerprint so bundles
-  // reveal the ownership relationship without adding prompt/bootstrap text.
-  const described = candidates.map(candidate => {
-    const cwdMatches = candidate.cwd !== null &&
-      options.normalizeCwd(candidate.cwd) === ownCwd
-    return {
-      filePath: candidate.filePath,
-      threadId: candidate.threadId,
-      cliVersion: candidate.cliVersion,
-      cwdMatches,
-      selectedLegacyFingerprint: candidate.normalizedFirstUserMessage
-        ? options.fingerprint(candidate.normalizedFirstUserMessage)
-        : null,
-      userMessages: candidate.userMessages.map(message => ({
-        source: message.source,
-        lineIndex: message.lineIndex,
-        fingerprint: options.fingerprint(message.normalized),
-        matchesLocalPrompt: localPrompts.has(message.normalized),
-        selectedByLegacyProjection:
-          message.normalized === candidate.normalizedFirstUserMessage,
-      })),
-    }
-  })
-
-  return {
-    localPromptCount: localPromptFingerprints.length,
-    localPromptFingerprints,
-    candidateCount: candidates.length,
-    sameCwdCandidateCount: described.filter(candidate => candidate.cwdMatches).length,
-    candidates: described,
   }
 }
 

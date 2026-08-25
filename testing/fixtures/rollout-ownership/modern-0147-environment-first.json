@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "modern-0147-environment-first",
   "provenance": {
     "sourceBasename": "rollout-2026-08-14T00-21-27-019ffd37-4c86-7e82-b81b-a93a1498a859.jsonl",
@@ -13,20 +13,60 @@
       {
         "source": "response_item",
         "originalLineIndex": 5,
-        "token": "RECORDED_MODERN_0147_ENVIRONMENT_FIRST_USER_1",
+        "token": "",
         "characterCount": 475
       },
       {
         "source": "response_item",
         "originalLineIndex": 8,
-        "token": "RECORDED_MODERN_0147_ENVIRONMENT_FIRST_USER_2",
+        "token": "",
         "characterCount": 459
       }
     ],
-    "transformation": "ownership-projection-v1"
+    "wireShape": [
+      {
+        "source": "response_item",
+        "originalLineIndex": 5,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 475,
+              "byteSizeClass": "128-511",
+              "wrappers": []
+            }
+          }
+        ]
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 8,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 459,
+              "byteSizeClass": "128-511",
+              "wrappers": []
+            }
+          }
+        ]
+      }
+    ],
+    "transformation": "ownership-projection-v2"
   },
   "ownership": {
-    "localPromptToken": "RECORDED_MODERN_0147_ENVIRONMENT_FIRST_USER_2",
+    "localPromptToken": "",
     "expectedLegacyDecision": "hold",
     "expectedTargetDecision": "accept",
     "note": "First captured version with no event_msg.user_message; injected environment context precedes the submitted prompt."
@@ -36,7 +76,7 @@
       "timestamp": "2026-08-13T22:22:21.920Z",
       "type": "session_meta",
       "payload": {
-        "id": "recorded-thread-modern-0147-environment-first",
+        "id": "5ee27b26-0e39-43fa-8b70-d21aee40908a",
         "timestamp": "2026-08-13T22:22:21.920Z",
         "cwd": "/recorded/worktree",
         "originator": "codex-tui",
@@ -54,7 +94,7 @@
         "content": [
           {
             "type": "input_text",
-            "text": "RECORDED_MODERN_0147_ENVIRONMENT_FIRST_USER_1"
+            "text": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          "
           }
         ]
       },
@@ -77,7 +117,7 @@
         "content": [
           {
             "type": "input_text",
-            "text": "RECORDED_MODERN_0147_ENVIRONMENT_FIRST_USER_2"
+            "text": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                          "
           }
         ]
       },

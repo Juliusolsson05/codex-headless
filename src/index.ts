@@ -85,6 +85,10 @@ export {
   type CodexSessionInfo,
 } from './transcript/SessionList.js'
 
+export {
+  findCodexRolloutPathByThreadId,
+} from './transcript/RolloutLocator.js'
+
 // --- Transcript (codex-specific) ---
 export {
   // Rollout envelope

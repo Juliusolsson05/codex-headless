@@ -1,9 +1,9 @@
 import { EventEmitter } from 'events'
-import { createHmac, randomBytes } from 'crypto'
+import { randomUUID } from 'crypto'
 import type { IPty } from 'node-pty'
-import { mkdir, readdir, readFile, stat } from 'fs/promises'
+import { mkdir, readFile, stat } from 'fs/promises'
 import { realpathSync } from 'fs'
-import { join, resolve } from 'path'
+import { resolve } from 'path'
 import { watch } from 'chokidar'
 
 import {
@@ -12,15 +12,16 @@ import {
 } from './terminal/HeadlessTerminal.js'
 import { tailSessionFile } from './transcript/JsonlTailer.js'
 import {
-  decideFreshRolloutClaim,
   extractSubmittedPromptFromWrite,
-  normalizePromptForOwnership,
-  parseFreshRolloutCandidate,
-  summarizeFreshRolloutClaimEvidence,
-  type FreshRolloutCandidate,
-  type FreshRolloutClaimEvidenceSnapshot,
-  type SubmittedPrompt,
 } from './transcript/FreshRolloutClaim.js'
+import type {
+  FreshRolloutParticipantDecision,
+  FreshRolloutParticipantHandle,
+} from './transcript/FreshRolloutOwnershipCoordinator.js'
+import {
+  acquireFreshRolloutCoordinator,
+  type FreshRolloutCoordinatorAcquisition,
+} from './transcript/FreshRolloutOwnershipCoordinatorRegistry.js'
 import {
   collectRolloutLineageIds,
   decideResumeForkCandidate,
@@ -70,6 +71,10 @@ import {
   extractCodexMessageText,
 } from './transcript/TranscriptTypes.js'
 import { getCodexSessionsDir } from './transcript/ProjectDir.js'
+import {
+  CODEX_ROLLOUT_FILENAME_RE,
+  findCodexRolloutPathByThreadId,
+} from './transcript/RolloutLocator.js'
 
 // Three-channel truth surface. The semantic channel consumes the
 // rollout delta stream (agent_message_delta / turn lifecycle / tool
@@ -142,9 +147,6 @@ export type CodexRolloutDiagnostic =
   | {
       type: 'resume-fork-ignored'
       ts: number
-      message: string
-      candidatePath: string
-      initialPath: string
       reason: 'missing-lineage' | 'insufficient-lineage-overlap'
       lineageOverlap: number
       requiredOverlap: number
@@ -152,11 +154,13 @@ export type CodexRolloutDiagnostic =
   | {
       type: 'fresh-rollout-ownership-decision'
       ts: number
-      changedPath: string | null
-      decision: 'hold' | 'reject' | 'accept' | 'ambiguous'
-      reason: string
+      decision: FreshRolloutParticipantDecision['decision']
+      reason: FreshRolloutParticipantDecision['reason']
       tailStarted: boolean
-      evidence: FreshRolloutClaimEvidenceSnapshot
+      evidence: Omit<
+        FreshRolloutParticipantDecision,
+        'decision' | 'reason' | 'tailAuthorized'
+      >
     }
 
 export type CodexHeadlessEvent =
@@ -204,10 +208,6 @@ export interface CodexHeadless {
   ): boolean
 }
 
-// Rollout filename pattern: rollout-<date>-<uuid>.jsonl
-const CODEX_ROLLOUT_RE =
-  /^rollout-(.+)-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i
-
 // Canonicalise a cwd for comparison. The rollout fork detector
 // compares the cwd we were launched with against the cwd Codex
 // recorded into a candidate rollout's session_meta. A raw `===` is
@@ -247,30 +247,22 @@ export class CodexHeadless extends EventEmitter {
   private stopRolloutTail: (() => Promise<void>) | null = null
   private activeRolloutPath: string | null = null
   private tailedRolloutPaths = new Set<string>()
-  // WHY fresh sessions keep their own prompt ledger:
+  // WHY fresh sessions register with the shared ownership coordinator:
   //
   // A fresh Codex PTY does not expose its provider `ThreadId` to Agent
   // Code until a rollout file eventually writes `session_meta`. The
   // old fallback guessed that the first new global rollout file after
   // spawn belonged to this PTY. That guess is exactly what breaks
   // orchestration: four sibling PTYs in the same cwd can all see the
-  // same first JSONL and then permanently capture the sibling's
-  // provider id. The prompt bytes are one of the few signals that are
-  // private to THIS headless instance, so the fresh tailer requires a
-  // candidate rollout to contain a durable user observation matching a prompt
-  // that passed through this instance before it starts tailing committed
-  // transcript lines. We deliberately do not assume the first role-user item
-  // is real input: Codex 0.147+ writes injected startup context first.
-  private submittedPrompts: SubmittedPrompt[] = []
-  private freshRolloutCandidates = new Map<string, FreshRolloutCandidate>()
-  private freshRolloutClaimTask: Promise<void> = Promise.resolve()
+  // same first JSONL and then permanently capture the sibling's provider id.
+  // Prompt bytes remain private to THIS participant, but candidate visibility
+  // and path leases must be process-wide so identical sibling prompts are seen
+  // as contention before either instance can tail. We deliberately do not
+  // assume the first role-user item is real input: Codex 0.147+ writes injected
+  // startup context first.
+  private freshRolloutParticipant: FreshRolloutParticipantHandle | null = null
   private freshRolloutStopTail: (() => Promise<void>) | null = null
-  // WHY the diagnostic fingerprint key is random per headless lifetime: a
-  // stable unsalted digest would make short prompts in exported debug bundles
-  // vulnerable to dictionary recovery. We need equality within one ownership
-  // incident, not identity across sessions, so an ephemeral HMAC preserves the
-  // useful relationship while deliberately preventing cross-run correlation.
-  private readonly freshRolloutDiagnosticKey = randomBytes(32)
+  private readonly freshRolloutParticipantId = randomUUID()
   private lastActivity: string | null = null
   // See ClaudeCodeHeadless.idleDebounceTimer for the rationale —
   // briefly empty bottom-working-row snapshots between TUI redraws
@@ -878,7 +870,7 @@ export class CodexHeadless extends EventEmitter {
       // First try: locate the existing rollout file by thread id. The
       // common case for `codex resume <id>` — file already exists from
       // the original session and Codex appends to it on reopen.
-      const rolloutPath = await this.findRolloutByThreadId(
+      const rolloutPath = await findCodexRolloutPathByThreadId(
         sessionsDir,
         this.resumeThreadId,
       )
@@ -939,29 +931,12 @@ export class CodexHeadless extends EventEmitter {
   private recordSubmittedPromptFromWrite(data: string): void {
     const prompt = extractSubmittedPromptFromWrite(data)
     if (prompt === null) return
-    this.recordSubmittedPrompt(prompt)
-  }
-
-  private recordSubmittedPrompt(text: string): void {
-    const normalized = normalizePromptForOwnership(text)
-    if (!normalized) return
-    this.submittedPrompts.push({ text, normalized, ts: Date.now() })
-    if (this.submittedPrompts.length > 20) {
-      this.submittedPrompts.splice(0, this.submittedPrompts.length - 20)
-    }
-    this.reconsiderFreshRolloutCandidates()
-  }
-
-  private reconsiderFreshRolloutCandidates(): void {
-    if (this.activeRolloutPath) return
-    this.freshRolloutClaimTask = this.freshRolloutClaimTask
-      .then(() => this.evaluateFreshRolloutCandidates())
-      .catch(err => {
-        this.emit(
-          'rollout-error',
-          err instanceof Error ? err : new Error(String(err)),
-        )
-      })
+    // WHY registration stays immediately before terminal.write in write(): the
+    // coordinator's causal proof depends on knowing that an earlier rollout
+    // observation cannot have been authored by bytes this PTY has not received
+    // yet. Moving this into sendPrompt or making it asynchronous would silently
+    // invalidate the late-identical-prompt safety argument.
+    this.freshRolloutParticipant?.registerPrompt(prompt)
   }
 
   // --- State queries ---
@@ -1094,69 +1069,6 @@ export class CodexHeadless extends EventEmitter {
     )
   }
 
-  private async evaluateFreshRolloutCandidates(changedPath?: string): Promise<void> {
-    if (this.activeRolloutPath) return
-    const decision = decideFreshRolloutClaim({
-      ownCwd: this.cwd,
-      prompts: this.submittedPrompts,
-      candidates: this.freshRolloutCandidates.values(),
-      normalizeCwd,
-    })
-
-    const evidence = summarizeFreshRolloutClaimEvidence({
-      ownCwd: this.cwd,
-      prompts: this.submittedPrompts,
-      candidates: this.freshRolloutCandidates.values(),
-      normalizeCwd,
-      fingerprint: normalizedText => createHmac(
-        'sha256',
-        this.freshRolloutDiagnosticKey,
-      ).update(normalizedText).digest('hex'),
-    })
-    this.emit('rollout-diagnostic', {
-      type: 'fresh-rollout-ownership-decision',
-      ts: Date.now(),
-      changedPath: changedPath ?? null,
-      decision: decision.type,
-      reason: 'reason' in decision
-        ? decision.reason
-        : 'one same-cwd rollout candidate uniquely matched a local submitted prompt',
-      tailStarted: decision.type === 'accept',
-      evidence,
-    })
-
-    if (decision.type === 'accept') {
-      // This is the only fresh-session path that may call tailFile().
-      // Cwd is only a gate; prompt ownership is the proof. Failing
-      // closed here is intentional: a delayed committed transcript is
-      // annoying but recoverable, while tailing the wrong rollout
-      // poisons `providerSessionId` and makes the renderer believe a
-      // sibling conversation belongs to this pane.
-      this.freshRolloutStopTail = this.tailFile(decision.filePath)
-      return
-    }
-
-    if (decision.type === 'ambiguous') {
-      this.emit(
-        'rollout-error',
-        new Error(
-          `Codex fresh rollout ownership ambiguous; refusing to attach by recency. ` +
-            `Candidates: ${decision.filePaths.join(', ')}`,
-        ),
-      )
-      return
-    }
-
-    if (decision.type === 'reject' && changedPath) {
-      this.emit(
-        'rollout-error',
-        new Error(
-          `Codex fresh rollout ${changedPath} rejected: ${decision.reason}`,
-        ),
-      )
-    }
-  }
-
   /**
    * Resume tailing is deliberately wider than "tail the file whose
    * filename contains the provider session id".
@@ -1195,6 +1107,19 @@ export class CodexHeadless extends EventEmitter {
     initialPath: string,
   ): Promise<() => Promise<void>> {
     await mkdir(sessionsDir, { recursive: true })
+    const acquisition = await this.acquireRolloutCoordinator(sessionsDir)
+    const initialReserved = acquisition.coordinator.reservePath({
+      ownerId: this.freshRolloutParticipantId,
+      filePath: initialPath,
+      kind: 'exact-id',
+      proofIdentity: this.resumeThreadId ?? undefined,
+    })
+    if (!initialReserved) {
+      await acquisition.release()
+      throw new Error(
+        'Codex exact rollout path is already leased by another live session',
+      )
+    }
 
     // Fingerprint the resumed file's existing conversation so the
     // fork watcher can tell a genuine reconstruction of THIS session
@@ -1211,6 +1136,20 @@ export class CodexHeadless extends EventEmitter {
       if (stopped) return
       if (this.activeRolloutPath === filePath) return
       if (this.tailedRolloutPaths.has(filePath)) return
+      if (!acquisition.coordinator.reservePath({
+        ownerId: this.freshRolloutParticipantId,
+        filePath,
+        kind: 'resume-lineage',
+        proofIdentity: this.resumeThreadId ?? undefined,
+      })) {
+        this.emit(
+          'rollout-error',
+          new Error(
+            'Codex resume fork path is already leased by another live session',
+          ),
+        )
+        return
+      }
       // Open the new tail BEFORE closing the stale one: a gap would
       // drop any entry written in between. The brief overlap is safe
       // — a forked rollout begins with this session's copied history,
@@ -1263,7 +1202,19 @@ export class CodexHeadless extends EventEmitter {
         if (!stop) continue
         try { await stop() } catch { /* best-effort */ }
       }
+      await acquisition.release()
     }
+  }
+
+  private acquireRolloutCoordinator(
+    sessionsDir: string,
+  ): Promise<FreshRolloutCoordinatorAcquisition> {
+    return acquireFreshRolloutCoordinator({
+      sessionsRoot: sessionsDir,
+      normalizeCwd,
+      normalizePath: normalizeCwd,
+      onError: error => this.emit('rollout-error', error),
+    })
   }
 
   private async watchResumeForkRollout(
@@ -1319,7 +1270,7 @@ export class CodexHeadless extends EventEmitter {
     watcher.on('add', (filePath: string) => {
       if (closed) return
       const name = filePath.split('/').pop() ?? ''
-      if (!CODEX_ROLLOUT_RE.test(name)) return
+      if (!CODEX_ROLLOUT_FILENAME_RE.test(name)) return
       if (filePath === options.initialPath) return
       if (this.tailedRolloutPaths.has(filePath)) return
       pending.add(filePath)
@@ -1386,9 +1337,6 @@ export class CodexHeadless extends EventEmitter {
       this.emit('rollout-diagnostic', {
         type: 'resume-fork-ignored',
         ts: Date.now(),
-        message: decision.message,
-        candidatePath: filePath,
-        initialPath: options.initialPath,
         reason: decision.reason,
         lineageOverlap: decision.lineageOverlap,
         requiredOverlap: decision.requiredOverlap,
@@ -1778,119 +1726,79 @@ export class CodexHeadless extends EventEmitter {
   private async tailNewRolloutFile(
     sessionsDir: string,
   ): Promise<() => Promise<void>> {
-    await mkdir(sessionsDir, { recursive: true })
-
-    // Snapshot existing files so we only tail NEW ones.
-    const existing = new Set<string>()
-    const primingWatcher = watch(sessionsDir, {
-      persistent: true,
-      ignoreInitial: false,
-      depth: 4,
-    })
-    await new Promise<void>(resolve => {
-      primingWatcher.on('add', (filePath: string) => existing.add(filePath))
-      primingWatcher.on('ready', resolve)
-    })
-    await primingWatcher.close()
-
     let stopped = false
-
-    const tryClaim = async (filePath: string): Promise<void> => {
-      if (stopped) return
-      if (this.activeRolloutPath) return
-      if (this.tailedRolloutPaths.has(filePath)) return
-      const name = filePath.split('/').pop() ?? ''
-      if (!CODEX_ROLLOUT_RE.test(name)) return
-      if (existing.has(filePath)) return
-      let text: string
-      try {
-        const raw = await readFile(filePath)
-        text = raw
-          .subarray(0, CodexHeadless.ROLLOUT_CANDIDATE_READ_BYTES)
-          .toString('utf8')
-      } catch {
-        return
-      }
-      const candidate = parseFreshRolloutCandidate(filePath, text)
-      if (!candidate) return
-      this.freshRolloutCandidates.set(filePath, candidate)
-      await this.evaluateFreshRolloutCandidates(candidate.filePath)
-    }
-
-    const enqueueClaim = (filePath: string): void => {
-      this.freshRolloutClaimTask = this.freshRolloutClaimTask
-        .then(() => tryClaim(filePath))
-        .catch(err => {
-          this.emit(
-            'rollout-error',
-            err instanceof Error ? err : new Error(String(err)),
-          )
-        })
-    }
-
-    const watcher = watch(sessionsDir, {
-      persistent: true,
-      ignoreInitial: true,
-      depth: 4,
+    let latestDecision: FreshRolloutParticipantDecision | null = null
+    const acquisition = await acquireFreshRolloutCoordinator({
+      sessionsRoot: sessionsDir,
+      normalizeCwd,
+      normalizePath: normalizeCwd,
+      onError: error => this.emit('rollout-error', error),
     })
-    watcher.on('add', enqueueClaim)
-    watcher.on('change', enqueueClaim)
-    watcher.on('error', (err: unknown) => this.emit('rollout-error', err instanceof Error ? err : new Error(String(err))))
+
+    let participant: FreshRolloutParticipantHandle
+    try {
+      participant = acquisition.coordinator.registerParticipant({
+        participantId: this.freshRolloutParticipantId,
+        cwd: this.cwd,
+        onDecision: state => {
+          latestDecision = state
+          if (state.decision === 'accept') return
+          const { decision, reason, tailAuthorized: _tailAuthorized, ...evidence } = state
+          this.emit('rollout-diagnostic', {
+            type: 'fresh-rollout-ownership-decision',
+            ts: Date.now(),
+            decision,
+            reason,
+            tailStarted: false,
+            evidence,
+          })
+        },
+        onLease: lease => {
+          if (stopped || this.activeRolloutPath) return
+
+          // WHY this remains the only physical fresh tail call: the shared
+          // coordinator has already installed an irreversible path lease before
+          // invoking us. CodexHeadless owns I/O, while the transcript layer owns
+          // identity; neither renderer nor parent adapter gets a second policy.
+          this.freshRolloutStopTail = this.tailFile(lease.filePath)
+          const state = latestDecision
+          if (!state) return
+          const {
+            decision,
+            reason,
+            tailAuthorized: _tailAuthorized,
+            ...evidence
+          } = state
+          this.emit('rollout-diagnostic', {
+            type: 'fresh-rollout-ownership-decision',
+            ts: Date.now(),
+            decision,
+            reason,
+            tailStarted: true,
+            evidence,
+          })
+        },
+      })
+    } catch (error) {
+      await acquisition.release()
+      throw error
+    }
+    this.freshRolloutParticipant = participant
 
     return async () => {
+      if (stopped) return
       stopped = true
-      await watcher.close()
+      participant.unregister()
+      if (this.freshRolloutParticipant === participant) {
+        this.freshRolloutParticipant = null
+      }
       const stopTail = this.freshRolloutStopTail
       this.freshRolloutStopTail = null
-      if (stopTail) await stopTail()
+      if (stopTail) {
+        try { await stopTail() } catch { /* best-effort */ }
+      }
+      await acquisition.release()
     }
   }
 
-  /**
-   * Find a rollout file by thread ID. Walks the date tree backwards
-   * (most recent dates first) looking for an exact rollout UUID
-   * suffix.
-   *
-   * WHY not `filename.includes(threadId)`: Codex's session tree is
-   * global, so lookup helpers must never degrade into substring
-   * matches. The rollout filename already has a structured
-   * `rollout-<timestamp>-<uuid>.jsonl` shape; using the parsed UUID
-   * keeps resume lookup on the same exact-provider-id rule as the
-   * fresh claimant once it finally captures `session_meta.id`.
-   */
-  private async findRolloutByThreadId(
-    sessionsDir: string,
-    threadId: string,
-  ): Promise<string | null> {
-    try {
-      const years = await readdir(sessionsDir)
-      // Walk backwards: most recent first
-      for (const year of years.sort().reverse()) {
-        const yearDir = join(sessionsDir, year)
-        const yStat = await stat(yearDir).catch(() => null)
-        if (!yStat?.isDirectory()) continue
-        const months = await readdir(yearDir)
-        for (const month of months.sort().reverse()) {
-          const monthDir = join(yearDir, month)
-          const mStat = await stat(monthDir).catch(() => null)
-          if (!mStat?.isDirectory()) continue
-          const days = await readdir(monthDir)
-          for (const day of days.sort().reverse()) {
-            const dayDir = join(monthDir, day)
-            const dStat = await stat(dayDir).catch(() => null)
-            if (!dStat?.isDirectory()) continue
-            const files = await readdir(dayDir)
-            const match = files.find(f => {
-              const parsed = CODEX_ROLLOUT_RE.exec(f)
-              return parsed?.[2] === threadId
-            })
-            if (match) return join(dayDir, match)
-          }
-        }
-      }
-    } catch {
-      // sessions dir might not exist yet
-    }
-    return null
-  }
 }
