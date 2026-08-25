@@ -80,6 +80,11 @@ describe('fresh rollout ownership', () => {
       'hello\nworld',
     )
     expect(extractSubmittedPromptFromWrite('hello\r')).toBe('hello')
+    // WHY a paste closing marker only updates the composer. Agent Code sends
+    // Enter in a later xterm onData chunk; treating the paste itself as a local
+    // submission makes this idle pane contend with another pane that really did
+    // submit the same text.
+    expect(extractSubmittedPromptFromWrite('\x1b[200~draft only\x1b[201~')).toBeNull()
     expect(extractSubmittedPromptFromWrite('\x1b[A')).toBeNull()
   })
 

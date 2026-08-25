@@ -50,6 +50,14 @@ type RootEntry = {
   readQueue: Promise<void>
   referenceCount: number
   errorListeners: Set<(error: Error) => void>
+  // WHY these transport caches are visible on the private registry entry:
+  // privacy regressions cannot be proved through coordinator inspection once
+  // coordinator compaction has (correctly) erased its own raw paths. Keeping
+  // count-only test visibility here lets the recorded system corpus detect a
+  // watcher closure that still retains UUID-bearing paths without exposing any
+  // path through the public package API.
+  knownPaths: Set<string>
+  lastFingerprints: Map<string, string>
 }
 
 type Registry = {
@@ -121,6 +129,8 @@ export async function acquireFreshRolloutCoordinator(options: {
       readQueue: Promise.resolve(),
       referenceCount: 0,
       errorListeners: new Set(),
+      knownPaths: new Set(),
+      lastFingerprints: new Map(),
     }
     registry.roots.set(rootFingerprint, entry)
   }
@@ -223,8 +233,6 @@ async function ensureWatcher(root: string, entry: RootEntry): Promise<void> {
     let settled = false
     let maintenanceStopped = false
     const watchStartedAt = Date.now()
-    const knownPaths = new Set<string>()
-    const lastFingerprints = new Map<string, string>()
     const primedObservations: ReservedObservation[] = []
     const watcher = watch(root, {
       persistent: true,
@@ -252,8 +260,11 @@ async function ensureWatcher(root: string, entry: RootEntry): Promise<void> {
     }
 
     const enqueue = (reserved: ReservedObservation): void => {
-      knownPaths.add(reserved.filePath)
-      lastFingerprints.set(reserved.filePath, reserved.snapshot.fingerprint)
+      entry.knownPaths.add(reserved.filePath)
+      entry.lastFingerprints.set(
+        reserved.filePath,
+        reserved.snapshot.fingerprint,
+      )
       entry.readQueue = entry.readQueue
         .then(async () => {
           const prefix = await readReservedPrefix(reserved)
@@ -324,11 +335,11 @@ async function ensureWatcher(root: string, entry: RootEntry): Promise<void> {
           if (maintenanceStopped) return
           entry.maintenanceQueue = entry.maintenanceQueue
             .then(() => {
-              for (const filePath of knownPaths) {
+              for (const filePath of entry.knownPaths) {
                 if (maintenanceStopped) break
                 const snapshot = snapshotFile(filePath)
                 if (!snapshot ||
-                  lastFingerprints.get(filePath) === snapshot.fingerprint) {
+                  entry.lastFingerprints.get(filePath) === snapshot.fingerprint) {
                   continue
                 }
                 const reserved = reserve(filePath, snapshot)

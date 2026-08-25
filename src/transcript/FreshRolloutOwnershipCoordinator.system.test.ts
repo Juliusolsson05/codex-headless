@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -65,6 +66,15 @@ async function waitFor(predicate: () => boolean, ms = 3000): Promise<boolean> {
     await new Promise(resolve => setTimeout(resolve, 25))
   }
   return predicate()
+}
+
+function inertPty(): IPty {
+  return {
+    write: () => undefined,
+    resize: () => undefined,
+    onData: () => ({ dispose: () => undefined }),
+    onExit: () => ({ dispose: () => undefined }),
+  } as unknown as IPty
 }
 
 afterEach(() => {
@@ -229,6 +239,56 @@ describe('process-wide fresh rollout watcher', () => {
       await cancelled.stop()
       if (previousCodexHome === undefined) delete process.env.CODEX_HOME
       else process.env.CODEX_HOME = previousCodexHome
+    }
+  })
+
+  it('releases a prepared exact resume when stopped without ever starting', async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'codex-never-started-resume-'))
+    temporaryDirectories.push(codexHome)
+    const fixture = loadFixture('subagent-0149-exact-attachment')
+    const sessionMeta = fixture.lines.find(line => line.type === 'session_meta')
+    const threadId = (sessionMeta?.payload as { id?: unknown } | undefined)?.id
+    if (typeof threadId !== 'string') {
+      throw new Error('recorded exact-id fixture has no thread id')
+    }
+    const day = join(codexHome, 'sessions', '2026', '08', '24')
+    mkdirSync(day, { recursive: true })
+    writeFileSync(
+      join(day, `rollout-recorded-${threadId}.jsonl`),
+      rolloutText(fixture),
+    )
+    const cancelledPreparation = await prepareRecordedResume({
+      codexHome,
+      cwd: '/recorded/worktree',
+      resumeThreadId: threadId,
+    })
+    const cancelled = new CodexHeadless({
+      pty: inertPty(),
+      cwd: '/recorded/worktree',
+      resumeThreadId: threadId,
+      resumeRolloutPreparation: cancelledPreparation,
+    })
+    let replacementPreparation: CodexResumeRolloutPreparation | null = null
+
+    try {
+      // WHY this intentionally never calls start(): callers can cancel after
+      // preparing ownership but before provider startup is admitted. The opaque
+      // capability moved into CodexHeadless at construction, so stop() is the
+      // only remaining owner that can release its exact lease and watcher.
+      await cancelled.stop()
+      replacementPreparation = await prepareRecordedResume({
+        codexHome,
+        cwd: '/recorded/worktree',
+        resumeThreadId: threadId,
+      })
+      expect(replacementPreparation.initialPath).not.toBeNull()
+    } finally {
+      await replacementPreparation?.dispose(true)
+      // Current RED behavior leaves the capability owned by the never-started
+      // instance. Explicit fixture cleanup prevents that expected failure from
+      // poisoning later same-process registry tests.
+      await cancelledPreparation.dispose(true)
+      await cancelled.stop()
     }
   })
 
@@ -475,6 +535,107 @@ describe('process-wide fresh rollout watcher', () => {
     }
   })
 
+  it('does not commit replacement-inode bytes under a reserved generation', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'codex-rollout-open-generation-'))
+    temporaryDirectories.push(root)
+    const day = join(root, '2026', '08', '24')
+    mkdirSync(day, { recursive: true })
+    const fixture = loadFixture('modern-0149-agents-first')
+    const prompt = fixture.ownership.localPromptToken
+    const rolloutPath = join(
+      day,
+      'rollout-generation-00000000-0000-4000-8000-000000000071.jsonl',
+    )
+    const replacementPath = join(day, 'recorded-old-generation.tmp')
+    writeFileSync(replacementPath, rolloutText(fixture))
+    // WHY B exists before the participant: if the watcher observes B under its
+    // own birth/generation identity, the active fresh lower bound rejects it.
+    // Only the buggy A-snapshot/B-read combination can make this old recorded
+    // history appear causally eligible.
+    await new Promise(resolve => setTimeout(resolve, 25))
+
+    const errors: Error[] = []
+    const acquisition = await acquireFreshRolloutCoordinator({
+      sessionsRoot: root,
+      normalizeCwd: value => value,
+      normalizePath: value => value,
+      onError: error => errors.push(error),
+    })
+    const symbol = Symbol.for(
+      'codex-headless.fresh-rollout-ownership-coordinator-registry',
+    )
+    const registry = (globalThis as typeof globalThis & {
+      [symbol]?: {
+        roots: Map<string, {
+          coordinator: unknown
+          readQueue: Promise<void>
+        }>
+      }
+    })[symbol]
+    const rootEntry = [...(registry?.roots.values() ?? [])].find(
+      entry => entry.coordinator === acquisition.coordinator,
+    )
+    if (!rootEntry) throw new Error('recorded watcher registry entry is missing')
+    let releaseRead!: () => void
+    const readGate = new Promise<void>(resolve => { releaseRead = resolve })
+    rootEntry.readQueue = readGate
+    const leases: string[] = []
+    const participantId = `open-generation-${root}`
+    const handle = acquisition.coordinator.registerParticipant({
+      participantId,
+      cwd: '/recorded/worktree',
+      onLease: lease => leases.push(lease.filePath),
+    })
+
+    try {
+      handle.registerPrompt(prompt)
+      await new Promise(resolve => setTimeout(resolve, 25))
+      const firstCodePoint = prompt.codePointAt(0)
+      if (firstCodePoint === undefined) {
+        throw new Error('recorded fixture prompt token is empty')
+      }
+      const nonMatchingPrompt = String.fromCodePoint(firstCodePoint + 1)
+      const firstGeneration = rolloutText(fixture).replaceAll(
+        prompt,
+        nonMatchingPrompt,
+      )
+      // WHY A is the same byte length as B: the immutable prefix cap correctly
+      // prevents later appended bytes from borrowing an earlier sequence. This
+      // separate race requires B's matching recorded bytes to fit entirely
+      // inside A's already-reserved boundary so only generation identity can
+      // distinguish the two physical files.
+      expect(Buffer.byteLength(firstGeneration)).toBe(
+        Buffer.byteLength(rolloutText(fixture)),
+      )
+      writeFileSync(rolloutPath, firstGeneration)
+      expect(await waitFor(() => rootEntry.readQueue !== readGate)).toBe(true)
+      const watcherEntry = rootEntry as typeof rootEntry & {
+        watcher?: { close(): Promise<void> } | null
+        stopWatcherMaintenance?: (() => void) | null
+      }
+      // WHY the queued-open invariant must stand without help from a later
+      // change event: close admission after A is reserved, exactly as shutdown
+      // can do, then replace the pathname. Otherwise an O2 reservation for B
+      // can hide an O1-open bug by superseding the test's causal sequence.
+      watcherEntry.stopWatcherMaintenance?.()
+      await watcherEntry.watcher?.close()
+      watcherEntry.watcher = null
+      // WHY rename is the real pathname race: the reserved stat belongs to A,
+      // while the later open resolves the same path to old inode B. A prefix
+      // length cap does not establish that both operations addressed one file.
+      renameSync(replacementPath, rolloutPath)
+      releaseRead()
+      await new Promise(resolve => setTimeout(resolve, 750))
+      expect(leases).toEqual([])
+      expect(errors).toEqual([])
+    } finally {
+      releaseRead()
+      handle.unregister()
+      acquisition.coordinator.retireOwnerLeases(participantId, true)
+      await acquisition.release()
+    }
+  })
+
   it('shares sequential candidate visibility across two live acquisitions', async () => {
     const root = mkdtempSync(join(tmpdir(), 'codex-rollout-owner-'))
     temporaryDirectories.push(root)
@@ -568,6 +729,93 @@ describe('process-wide fresh rollout watcher', () => {
     await betaAcquisition.release()
   })
 
+  it('continues queued candidate reads after an error observer throws', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'codex-rollout-error-observer-'))
+    temporaryDirectories.push(root)
+    const day = join(root, '2026', '08', '24')
+    mkdirSync(day, { recursive: true })
+    let errorCalls = 0
+    const acquisition = await acquireFreshRolloutCoordinator({
+      sessionsRoot: root,
+      normalizeCwd: value => value,
+      normalizePath: value => value,
+      onError: () => {
+        errorCalls += 1
+        if (errorCalls === 1) throw new Error('recorded observer failure')
+      },
+    })
+    const symbol = Symbol.for(
+      'codex-headless.fresh-rollout-ownership-coordinator-registry',
+    )
+    const registry = (globalThis as typeof globalThis & {
+      [symbol]?: {
+        roots: Map<string, {
+          coordinator: unknown
+          readQueue: Promise<void>
+          knownPaths: Set<string>
+        }>
+      }
+    })[symbol]
+    const rootEntry = [...(registry?.roots.values() ?? [])].find(
+      entry => entry.coordinator === acquisition.coordinator,
+    )
+    if (!rootEntry) throw new Error('recorded watcher registry entry is missing')
+    let releaseRead!: () => void
+    const readGate = new Promise<void>(resolve => { releaseRead = resolve })
+    rootEntry.readQueue = readGate
+    const first = loadFixture('concurrent-01491-alpha')
+    const second = loadFixture('concurrent-01491-beta')
+    const secondLeases: string[] = []
+    const participantId = `after-observer-failure-${root}`
+    const handle = acquisition.coordinator.registerParticipant({
+      participantId,
+      cwd: '/recorded/worktree',
+      onLease: lease => secondLeases.push(lease.filePath),
+    })
+    handle.registerPrompt(second.ownership.localPromptToken)
+    const originalCommit = acquisition.coordinator.commitCandidateObservation
+      .bind(acquisition.coordinator)
+    let failFirstCommit = true
+    acquisition.coordinator.commitCandidateObservation = (
+      observation,
+      candidate,
+      options,
+    ) => {
+      if (failFirstCommit) {
+        failFirstCommit = false
+        throw new Error('recorded first queued commit failure')
+      }
+      return originalCommit(observation, candidate, options)
+    }
+    const firstPath = join(
+      day,
+      'rollout-errors-00000000-0000-4000-8000-000000000072.jsonl',
+    )
+    const secondPath = join(
+      day,
+      'rollout-errors-00000000-0000-4000-8000-000000000073.jsonl',
+    )
+
+    try {
+      writeFileSync(firstPath, rolloutText(first))
+      writeFileSync(secondPath, rolloutText(second))
+      // WHY both real watcher events are admitted behind one gate before the
+      // injected commit failure: this removes unhandled-rejection timing from
+      // the test and proves the second recorded observation was already queued.
+      expect(await waitFor(() => rootEntry.knownPaths.size === 2)).toBe(true)
+      releaseRead()
+      expect(await waitFor(() => secondLeases.length === 1)).toBe(true)
+      expect(secondLeases).toEqual([secondPath])
+      expect(errorCalls).toBe(1)
+    } finally {
+      releaseRead()
+      acquisition.coordinator.commitCandidateObservation = originalCommit
+      handle.unregister()
+      acquisition.coordinator.retireOwnerLeases(participantId, true)
+      await acquisition.release()
+    }
+  })
+
   it('expires a stopped owner while a sibling acquisition keeps the root live', async () => {
     const root = mkdtempSync(join(tmpdir(), 'codex-rollout-live-sibling-'))
     temporaryDirectories.push(root)
@@ -628,6 +876,8 @@ describe('process-wide fresh rollout watcher', () => {
             coordinator: unknown
             referenceCount: number
             watcher: unknown
+            knownPaths: Set<string>
+            lastFingerprints: Map<string, string>
           }>
         }
       })[symbol]
@@ -636,9 +886,150 @@ describe('process-wide fresh rollout watcher', () => {
       )
       expect(rootEntry).toMatchObject({ referenceCount: 1 })
       expect(rootEntry?.watcher).not.toBeNull()
+      // WHY coordinator inspection was insufficient evidence for the fifth
+      // gate's privacy invariant: the watcher closure kept a second raw copy of
+      // every UUID-bearing path after the graph reported hasRawPath:false.
+      expect(rootEntry?.knownPaths.size).toBe(0)
+      expect(rootEntry?.lastFingerprints.size).toBe(0)
     } finally {
       vi.useRealTimers()
       await siblingAcquisition.release()
+    }
+  })
+
+  it('claims a recorded fresh rollout after ordinary chunked terminal typing', async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'codex-chunked-terminal-input-'))
+    temporaryDirectories.push(codexHome)
+    const previousCodexHome = process.env.CODEX_HOME
+    process.env.CODEX_HOME = codexHome
+    const fixture = loadFixture('modern-0149-agents-first')
+    const day = join(codexHome, 'sessions', '2026', '08', '24')
+    mkdirSync(day, { recursive: true })
+    const rolloutPath = join(
+      day,
+      'rollout-typed-00000000-0000-4000-8000-000000000074.jsonl',
+    )
+    const headless = new CodexHeadless({
+      pty: inertPty(),
+      cwd: '/recorded/worktree',
+    })
+
+    try {
+      await headless.start()
+      // WHY xterm's onData contract is the production boundary: interactive
+      // typing arrives as arbitrary key chunks, not sendPrompt's atomic string.
+      // Feeding the recorded prompt one scalar at a time prevents this test
+      // from blessing the automation-only delivery shape again.
+      for (const character of fixture.ownership.localPromptToken) {
+        headless.write(character)
+      }
+      headless.write('\r')
+      writeFileSync(rolloutPath, rolloutText(fixture))
+      expect(await waitFor(() =>
+        (headless as unknown as { activeRolloutPath: string | null })
+          .activeRolloutPath?.endsWith(rolloutPath.split('/').pop()!) === true,
+      )).toBe(true)
+    } finally {
+      await headless.stop()
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = previousCodexHome
+    }
+  })
+
+  it('does not claim a sibling rollout for pasted but unsubmitted text', async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'codex-unsubmitted-paste-'))
+    temporaryDirectories.push(codexHome)
+    const previousCodexHome = process.env.CODEX_HOME
+    process.env.CODEX_HOME = codexHome
+    const fixture = loadFixture('modern-0149-agents-first')
+    const prompt = fixture.ownership.localPromptToken
+    const day = join(codexHome, 'sessions', '2026', '08', '24')
+    mkdirSync(day, { recursive: true })
+    const rolloutPath = join(
+      day,
+      'rollout-paste-00000000-0000-4000-8000-000000000075.jsonl',
+    )
+    const pastedOnly = new CodexHeadless({
+      pty: inertPty(),
+      cwd: '/recorded/worktree',
+    })
+    const submitted = new CodexHeadless({
+      pty: inertPty(),
+      cwd: '/recorded/worktree',
+    })
+
+    try {
+      await Promise.all([pastedOnly.start(), submitted.start()])
+      // WHY bracketed paste completion is not submission: the real renderer
+      // deliberately sends Enter later. Recording at the closing marker makes
+      // an idle composer a false claimant for a sibling that actually submits.
+      pastedOnly.write(`\x1b[200~${prompt}\x1b[201~`)
+      submitted.write(`${prompt}\r`)
+      writeFileSync(rolloutPath, rolloutText(fixture))
+      expect(await waitFor(() =>
+        (submitted as unknown as { activeRolloutPath: string | null })
+          .activeRolloutPath?.endsWith(rolloutPath.split('/').pop()!) === true,
+      )).toBe(true)
+      expect(
+        (pastedOnly as unknown as { activeRolloutPath: string | null })
+          .activeRolloutPath,
+      ).toBeNull()
+    } finally {
+      await Promise.all([pastedOnly.stop(), submitted.stop()])
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = previousCodexHome
+    }
+  })
+
+  it('keeps a clean fresh lease when its accepted diagnostic observer throws', async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'codex-accepted-diagnostic-'))
+    temporaryDirectories.push(codexHome)
+    const previousCodexHome = process.env.CODEX_HOME
+    process.env.CODEX_HOME = codexHome
+    const fixture = loadFixture('modern-0149-agents-first')
+    const sessionMeta = fixture.lines.find(line => line.type === 'session_meta')
+    const threadId = (sessionMeta?.payload as { id?: unknown } | undefined)?.id
+    if (typeof threadId !== 'string') {
+      throw new Error('recorded fresh fixture has no thread id')
+    }
+    const day = join(codexHome, 'sessions', '2026', '08', '24')
+    mkdirSync(day, { recursive: true })
+    const rolloutPath = join(day, `rollout-recorded-${threadId}.jsonl`)
+    const headless = new CodexHeadless({
+      pty: inertPty(),
+      cwd: '/recorded/worktree',
+    })
+    headless.on('rollout-diagnostic', diagnostic => {
+      if (diagnostic.type === 'fresh-rollout-ownership-decision' &&
+        diagnostic.decision === 'accept' && diagnostic.tailStarted) {
+        throw new Error('recorded accepted-decision observer failure')
+      }
+    })
+    let reopened: CodexResumeRolloutPreparation | null = null
+
+    try {
+      await headless.start()
+      headless.write(`${fixture.ownership.localPromptToken}\r`)
+      writeFileSync(rolloutPath, rolloutText(fixture))
+      expect(await waitFor(() =>
+        (headless as unknown as { activeRolloutPath: string | null })
+          .activeRolloutPath?.endsWith(rolloutPath.split('/').pop()!) === true,
+      )).toBe(true)
+      await headless.stop()
+      // WHY the physical tail opened before the diagnostic threw. A clean stop
+      // must therefore leave an exact-id reopenable lease; observational UI
+      // code cannot retroactively convert successful I/O into uncertainty.
+      reopened = await prepareRecordedResume({
+        codexHome,
+        cwd: '/recorded/worktree',
+        resumeThreadId: threadId,
+      })
+      expect(reopened.initialPath).not.toBeNull()
+    } finally {
+      await reopened?.dispose(true)
+      await headless.stop()
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = previousCodexHome
     }
   })
 
