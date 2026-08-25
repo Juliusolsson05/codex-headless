@@ -7,7 +7,7 @@ between duplicated messages, the locally submitted prompt, and the old/new
 claim decision.
 
 Raw prompt, bootstrap, path, agent, and thread text is replaced. Every fixture
-stores the source basename, SHA-256, original line/user counts, original user
+stores an opaque source label, SHA-256, original line/user counts, original user
 line indices, source recording ID when available, and sanitizer version. The
 private source files are deliberately not committed.
 

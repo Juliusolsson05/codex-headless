@@ -1,4 +1,11 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -46,6 +53,63 @@ afterEach(() => {
 })
 
 describe('process-wide fresh rollout watcher', () => {
+  it('does not assign later appended prompt bytes to an earlier watcher sequence', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'codex-rollout-prefix-'))
+    temporaryDirectories.push(root)
+    const day = join(root, '2026', '08', '24')
+    mkdirSync(day, { recursive: true })
+    const fixture = loadFixture('modern-0149-agents-first')
+    const prompt = fixture.ownership.localPromptToken
+    const promptLineIndex = fixture.lines.findIndex(line =>
+      JSON.stringify(line).includes(prompt),
+    )
+    if (promptLineIndex <= 0) {
+      throw new Error('recorded fixture has no appendable prompt boundary')
+    }
+    const rolloutPath = join(
+      day,
+      'rollout-prefix-00000000-0000-4000-8000-000000000003.jsonl',
+    )
+    const bootstrap = fixture.lines.slice(0, promptLineIndex)
+    const appended = fixture.lines.slice(promptLineIndex)
+    writeFileSync(
+      rolloutPath,
+      `${bootstrap.map(line => JSON.stringify(line)).join('\n')}\n`,
+    )
+
+    const errors: Error[] = []
+    const acquisition = await acquireFreshRolloutCoordinator({
+      sessionsRoot: root,
+      normalizeCwd: value => value,
+      normalizePath: value => value,
+      onError: error => errors.push(error),
+    })
+    const leases: string[] = []
+    const handle = acquisition.coordinator.registerParticipant({
+      participantId: `prefix-${root}`,
+      cwd: '/recorded/worktree',
+      onLease: lease => leases.push(lease.filePath),
+    })
+
+    try {
+      // WHY the file and its initial watcher observation predate the prompt:
+      // this reproduces the actual queued-read race. Only the later append's
+      // immutable byte boundary is causally eligible to prove ownership.
+      handle.registerPrompt(prompt)
+      appendFileSync(
+        rolloutPath,
+        `${appended.map(line => JSON.stringify(line)).join('\n')}\n`,
+      )
+      expect(await waitFor(() => leases.length === 1)).toBe(true)
+      expect(leases).toEqual([rolloutPath])
+      expect(errors).toEqual([])
+    } finally {
+      handle.unregister()
+      acquisition.coordinator.retireOwnerLeases(`prefix-${root}`, true)
+      await acquisition.release()
+    }
+  })
+
   it('shares sequential candidate visibility across two live acquisitions', async () => {
     const root = mkdtempSync(join(tmpdir(), 'codex-rollout-owner-'))
     temporaryDirectories.push(root)
@@ -170,24 +234,33 @@ describe('process-wide fresh rollout watcher', () => {
         return { dispose: () => exitListeners.delete(listener) }
       },
     } as unknown as IPty
-    const headless = new CodexHeadless({
-      pty,
-      cwd: '/recorded/worktree',
-      resumeThreadId: threadId,
-    })
-    const seenThreadIds: string[] = []
-    headless.on('rollout-entry', line => {
-      if (line.type !== 'session_meta') return
-      const id = (line.payload as { id?: unknown }).id
-      if (typeof id === 'string') seenThreadIds.push(id)
-    })
-
     try {
-      await headless.start()
-      expect(await waitFor(() => seenThreadIds.includes(threadId))).toBe(true)
-      expect(headless.getSessionMeta()?.id).toBe(threadId)
+      const startAndStop = async (): Promise<void> => {
+        const headless = new CodexHeadless({
+          pty,
+          cwd: '/recorded/worktree',
+          resumeThreadId: threadId,
+        })
+        const seenThreadIds: string[] = []
+        headless.on('rollout-entry', line => {
+          if (line.type !== 'session_meta') return
+          const id = (line.payload as { id?: unknown }).id
+          if (typeof id === 'string') seenThreadIds.push(id)
+        })
+        try {
+          await headless.start()
+          expect(await waitFor(() => seenThreadIds.includes(threadId))).toBe(true)
+          expect(headless.getSessionMeta()?.id).toBe(threadId)
+        } finally {
+          await headless.stop()
+        }
+      }
+
+      await startAndStop()
+      // WHY this happens in one Node process: the regression was a permanent
+      // process-global lease, so a new test process would hide the failure.
+      await startAndStop()
     } finally {
-      await headless.stop()
       if (previousCodexHome === undefined) delete process.env.CODEX_HOME
       else process.env.CODEX_HOME = previousCodexHome
     }

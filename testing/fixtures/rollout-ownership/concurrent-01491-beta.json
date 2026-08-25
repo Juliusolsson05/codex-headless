@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "concurrent-01491-beta",
   "provenance": {
-    "sourceBasename": "rollout-2026-08-24T12-01-07-01a03525-d53f-7990-a7c0-da6fb7cb6480.jsonl",
+    "sourceLabel": "recorded-source-5ac3a3571ba99f12",
     "sourceSha256": "0eb215640abcd7dd36ea014f7b205297828d47e425a0214c091537663cc3df79",
     "sessionRecordingId": "8101283c-4189-4b44-975e-fa81708f90ac",
     "cliVersion": "0.149.1",

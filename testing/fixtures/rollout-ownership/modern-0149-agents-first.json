@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "modern-0149-agents-first",
   "provenance": {
-    "sourceBasename": "rollout-2026-08-24T10-09-49-01a034bf-f0a2-7841-82b1-bd4f3900c9d4.jsonl",
+    "sourceLabel": "recorded-source-0ace12372351a5cc",
     "sourceSha256": "e6655ac15950047fb729be1dfa24e29f42fee318ea6c57500e830ee9d18ad502",
     "sessionRecordingId": "17ee1e36-12ff-4d08-8470-f52de6b5f100",
     "cliVersion": "0.149.0",

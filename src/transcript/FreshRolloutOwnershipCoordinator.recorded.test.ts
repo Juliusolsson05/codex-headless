@@ -188,6 +188,120 @@ describe('recorded process-wide fresh rollout ownership', () => {
     })
   })
 
+  it('keeps a stopped recorded owner as a contender for its delayed file generation', () => {
+    const fixture = loadFixture('concurrent-01491-alpha')
+    const candidate = candidateFromFixture(fixture)
+    const owner = coordinator()
+    const stoppedLeases: FreshRolloutLease[] = []
+    const siblingLeases: FreshRolloutLease[] = []
+    const siblingDecisions: FreshRolloutParticipantDecision[] = []
+    const stopped = register(owner, 'stopped-owner', stoppedLeases)
+    stopped.registerPrompt(promptFromFixture(fixture))
+    stopped.unregister()
+    // WHY generation is deliberately after local teardown: Codex can flush a
+    // new rollout after the PTY wrapper stops. Treating stop time as identity
+    // would hand those delayed bytes to a later identical-prompt sibling.
+    const candidateBirthtimeMs = Date.now() + 1
+    const sibling = owner.registerParticipant({
+      participantId: 'live-sibling',
+      cwd: '/recorded/worktree',
+      onLease: lease => siblingLeases.push(lease),
+      onDecision: decision => siblingDecisions.push(decision),
+    })
+    sibling.registerPrompt(promptFromFixture(fixture))
+    const observation = owner.beginCandidateObservation(candidate.filePath, {
+      birthtimeMs: candidateBirthtimeMs,
+      byteLength: 1,
+      generationId: 'recorded-generation',
+    })
+
+    owner.commitCandidateObservation(observation, candidate)
+
+    expect(stoppedLeases).toEqual([])
+    expect(siblingLeases).toEqual([])
+    expect(owner.inspect()).toMatchObject({
+      historicallyContestedPathCount: 1,
+      leasedPathCount: 0,
+    })
+    sibling.registerPrompt('a later unrelated prompt triggers recomputation')
+    expect(siblingDecisions.at(-1)).toMatchObject({
+      decision: 'ambiguous',
+      reason: 'ownership-contended',
+      historicallyContestedCandidateCount: 1,
+      matchingCandidateCount: 1,
+      tailAuthorized: false,
+    })
+    expect(siblingDecisions.at(-1)?.matchingCandidateFingerprints).toEqual([
+      expect.stringMatching(/^[0-9a-f]{64}$/),
+    ])
+  })
+
+  it('leases when a later immutable prefix first reveals the recorded prompt', () => {
+    const fixture = loadFixture('modern-0149-agents-first')
+    const candidate = candidateFromFixture(fixture)
+    const prompt = normalizePromptForOwnership(promptFromFixture(fixture))
+    const incomplete: FreshRolloutCandidate = {
+      ...candidate,
+      userMessages: candidate.userMessages.filter(
+        message => message.normalized !== prompt,
+      ),
+    }
+    const owner = coordinator()
+    const leases: FreshRolloutLease[] = []
+    const handle = register(owner, 'growing-prefix', leases)
+    owner.observeCandidate(incomplete)
+    handle.registerPrompt(promptFromFixture(fixture))
+
+    owner.observeCandidate(candidate)
+
+    expect(leases).toMatchObject([{
+      participantId: 'growing-prefix',
+      filePath: candidate.filePath,
+    }])
+  })
+
+  it('allows exact identity to reopen a cleanly retired path but not overlap it', () => {
+    const owner = coordinator()
+    const filePath = '/recorded/exact.jsonl'
+    const proofIdentity = '00000000-0000-4000-8000-000000000001'
+
+    expect(owner.reservePath({
+      ownerId: 'first', filePath, kind: 'exact-id', proofIdentity,
+    })).toBe(true)
+    expect(owner.reservePath({
+      ownerId: 'overlap', filePath, kind: 'exact-id', proofIdentity,
+    })).toBe(false)
+    owner.retireOwnerLeases('first', true)
+    expect(owner.reservePath({
+      ownerId: 'reopen', filePath, kind: 'exact-id', proofIdentity,
+    })).toBe(true)
+  })
+
+  it('tombstones a path when the tail consumer fails after lease publication', () => {
+    const fixture = loadFixture('modern-0147-environment-first')
+    const candidate = candidateFromFixture(fixture)
+    const owner = coordinator()
+    const handle = owner.registerParticipant({
+      participantId: 'failing-tail-owner',
+      cwd: '/recorded/worktree',
+      onLease: () => { throw new Error('recorded tail-open failure') },
+    })
+    handle.registerPrompt(promptFromFixture(fixture))
+
+    owner.observeCandidate(candidate)
+
+    // WHY callback publication is the uncertainty boundary: tailFile may have
+    // opened resources before throwing. Releasing this path would permit a
+    // second consumer to overlap a partially initialized first tail.
+    expect(owner.reservePath({
+      ownerId: 'retry-owner',
+      filePath: candidate.filePath,
+      kind: 'exact-id',
+      proofIdentity: candidate.threadId ?? undefined,
+    })).toBe(false)
+    expect(owner.inspect()).toMatchObject({ activeParticipantCount: 0 })
+  })
+
   it('reports ownership state without paths, provider ids, cwd, or prompt text', () => {
     const fixture = loadFixture('modern-0149-agents-first')
     const candidate = candidateFromFixture(fixture)
@@ -237,5 +351,29 @@ describe('recorded process-wide fresh rollout ownership', () => {
       quarantinedPathCount: 1,
       leasedPathCount: 0,
     })
+  })
+
+  it('compacts raw recorded evidence after cleanup while retaining opaque tombstones', () => {
+    const fixture = loadFixture('modern-0147-environment-first')
+    const candidate = candidateFromFixture(fixture)
+    const prompt = promptFromFixture(fixture)
+    const owner = coordinator()
+    const handle = register(owner, 'retention-owner', [])
+    handle.registerPrompt(prompt)
+    owner.observeCandidate(candidate)
+    handle.unregister()
+    owner.retireOwnerLeases('retention-owner', true)
+    owner.compactInactiveState()
+
+    const retained = JSON.stringify(owner.inspectRetentionForTesting())
+    expect(retained).not.toContain(prompt)
+    expect(retained).not.toContain(candidate.filePath)
+    expect(retained).not.toContain(candidate.cwd)
+    expect(retained).not.toContain(candidate.threadId)
+    for (const message of candidate.userMessages) {
+      expect(retained).not.toContain(message.text)
+    }
+    expect(retained).toContain('retired-clean')
+    expect(retained).not.toContain('"hasLeaseCallback":true')
   })
 })

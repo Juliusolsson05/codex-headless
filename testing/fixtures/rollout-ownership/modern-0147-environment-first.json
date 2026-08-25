@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "modern-0147-environment-first",
   "provenance": {
-    "sourceBasename": "rollout-2026-08-14T00-21-27-019ffd37-4c86-7e82-b81b-a93a1498a859.jsonl",
+    "sourceLabel": "recorded-source-43dd8a6229b8c9b3",
     "sourceSha256": "a0013ad2d28774bb379e2fc2ef9fcbb41681788d1610953ddeee468cbe27f390",
     "sessionRecordingId": null,
     "cliVersion": "0.147.0",

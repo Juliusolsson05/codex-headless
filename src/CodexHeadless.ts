@@ -1121,16 +1121,34 @@ export class CodexHeadless extends EventEmitter {
       )
     }
 
-    // Fingerprint the resumed file's existing conversation so the
-    // fork watcher can tell a genuine reconstruction of THIS session
-    // apart from an unrelated sibling agent that merely shares the
-    // cwd. See isResumeForkCandidate / readRolloutLineageIds.
-    const lineageIds = await this.readRolloutLineageIds(initialPath)
-
     let stopped = false
-    let currentStop: (() => Promise<void>) | null = this.tailFile(initialPath)
+    let currentStop: (() => Promise<void>) | null = null
     let watcherStop: (() => Promise<void>) | null = null
+    let priorTailCloseFailed = false
+    let initialTailOpenAttempted = false
     const watchStartedAt = Date.now()
+
+    let lineageIds: Set<string>
+    try {
+      // Fingerprint the resumed file's existing conversation so the
+      // fork watcher can tell a genuine reconstruction of THIS session
+      // apart from an unrelated sibling agent that merely shares the
+      // cwd. See isResumeForkCandidate / readRolloutLineageIds.
+      lineageIds = await this.readRolloutLineageIds(initialPath)
+      initialTailOpenAttempted = true
+      currentStop = this.tailFile(initialPath)
+    } catch (error) {
+      // WHY reservation precedes all I/O: at-most-one tail must already hold
+      // when tailFile opens. That ordering means every initialization failure
+      // must retire the reservation explicitly or a recoverable read/open
+      // error becomes a process-lifetime phantom owner.
+      acquisition.coordinator.retireOwnerLeases(
+        this.freshRolloutParticipantId,
+        !initialTailOpenAttempted,
+      )
+      await acquisition.release()
+      throw error
+    }
 
     const switchTo = async (filePath: string): Promise<void> => {
       if (stopped) return
@@ -1159,7 +1177,25 @@ export class CodexHeadless extends EventEmitter {
       // first to avoid the overlap would trade a harmless duplicate
       // (deduped) for a real lost-entry window.
       const previous = currentStop
-      currentStop = this.tailFile(filePath)
+      let nextStop: () => Promise<void>
+      try {
+        nextStop = this.tailFile(filePath)
+      } catch (error) {
+        // The new path was reserved before opening to preserve at-most-one
+        // tail. Retire only that failed switch: the original tail remains live
+        // and must keep its own active lease.
+        acquisition.coordinator.retirePathLease(
+          this.freshRolloutParticipantId,
+          filePath,
+          true,
+        )
+        this.emit(
+          'rollout-error',
+          error instanceof Error ? error : new Error(String(error)),
+        )
+        return
+      }
+      currentStop = nextStop
       // A successful tail switch is NOT an error. It used to emit
       // `rollout-error`, which the Agent Code parent surfaces as a
       // transcript failure ("transcript unavailable: …") even though
@@ -1170,7 +1206,7 @@ export class CodexHeadless extends EventEmitter {
       // then this switch is observable through the `rollout-entry`
       // stream that immediately resumes from the new file.
       if (previous) {
-        try { await previous() } catch { /* best-effort stale tail close */ }
+        try { await previous() } catch { priorTailCloseFailed = true }
       }
       if (watcherStop) {
         try { await watcherStop() } catch { /* best-effort watcher close */ }
@@ -1178,12 +1214,23 @@ export class CodexHeadless extends EventEmitter {
       }
     }
 
-    watcherStop = await this.watchResumeForkRollout(sessionsDir, {
-      startedAt: watchStartedAt,
-      initialPath,
-      lineageIds,
-      onCandidate: switchTo,
-    })
+    try {
+      watcherStop = await this.watchResumeForkRollout(sessionsDir, {
+        startedAt: watchStartedAt,
+        initialPath,
+        lineageIds,
+        onCandidate: switchTo,
+      })
+    } catch (error) {
+      let clean = !priorTailCloseFailed
+      try { await currentStop?.() } catch { clean = false }
+      acquisition.coordinator.retireOwnerLeases(
+        this.freshRolloutParticipantId,
+        clean,
+      )
+      await acquisition.release()
+      throw error
+    }
 
     const timeout = setTimeout(() => {
       if (!watcherStop) return
@@ -1195,13 +1242,21 @@ export class CodexHeadless extends EventEmitter {
     return async () => {
       stopped = true
       clearTimeout(timeout)
-      const stops = [watcherStop, currentStop]
+      const stopWatcher = watcherStop
+      const stopTail = currentStop
       watcherStop = null
       currentStop = null
-      for (const stop of stops) {
-        if (!stop) continue
-        try { await stop() } catch { /* best-effort */ }
+      if (stopWatcher) {
+        try { await stopWatcher() } catch { /* best-effort watcher close */ }
       }
+      let cleanTailClose = !priorTailCloseFailed
+      if (stopTail) {
+        try { await stopTail() } catch { cleanTailClose = false }
+      }
+      acquisition.coordinator.retireOwnerLeases(
+        this.freshRolloutParticipantId,
+        cleanTailClose,
+      )
       await acquisition.release()
     }
   }
@@ -1794,9 +1849,14 @@ export class CodexHeadless extends EventEmitter {
       }
       const stopTail = this.freshRolloutStopTail
       this.freshRolloutStopTail = null
+      let cleanTailClose = true
       if (stopTail) {
-        try { await stopTail() } catch { /* best-effort */ }
+        try { await stopTail() } catch { cleanTailClose = false }
       }
+      acquisition.coordinator.retireOwnerLeases(
+        this.freshRolloutParticipantId,
+        cleanTailClose,
+      )
       await acquisition.release()
     }
   }

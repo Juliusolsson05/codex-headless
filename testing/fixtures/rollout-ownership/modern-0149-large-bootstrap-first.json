@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "modern-0149-large-bootstrap-first",
   "provenance": {
-    "sourceBasename": "rollout-2026-08-23T16-51-39-01a03109-780e-7633-b173-5f88ca54d8a6.jsonl",
+    "sourceLabel": "recorded-source-bbfcde5ef2ff21d2",
     "sourceSha256": "47983f887b5a763a834c719ea01c3fa7d9e3ed9ef1905b90cef6414e2c1afcdd",
     "sessionRecordingId": "dc734595-6426-4e49-bede-a07bd9651ca1",
     "cliVersion": "0.149.0",

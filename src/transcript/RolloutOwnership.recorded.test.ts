@@ -27,6 +27,7 @@ type RecordedOwnershipFixture = {
   schemaVersion: 2
   id: string
   provenance: {
+    sourceLabel: string
     cliVersion: string
     sessionClass: 'fresh' | 'resume' | 'subagent'
   }
@@ -105,6 +106,21 @@ describe('recorded fresh rollout ownership corpus', () => {
       'subagent-0149-exact-attachment',
     ].sort())
   })
+
+  it.each([...freshFixtureIds, 'subagent-0149-exact-attachment'])(
+    'publishes only opaque private-source provenance for %s',
+    fixtureId => {
+      const fixture = loadFixture(fixtureId)
+
+      // WHY Codex filenames contain the provider thread UUID. Recording-based
+      // tests need a reproducible private lookup bridge, but committing that
+      // basename would turn a sanitized fixture into an identity disclosure.
+      expect(fixture.provenance.sourceLabel).toMatch(
+        /^recorded-source-[0-9a-f]{16}$/,
+      )
+      expect(fixture.provenance).not.toHaveProperty('sourceBasename')
+    },
+  )
 
   it.each(freshFixtureIds)(
     'independently reproduces the frozen legacy decision for %s',

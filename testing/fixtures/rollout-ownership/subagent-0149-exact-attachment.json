@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "subagent-0149-exact-attachment",
   "provenance": {
-    "sourceBasename": "rollout-2026-08-23T12-36-14-01a0301f-a116-7e71-bd1a-d5598fe80157.jsonl",
+    "sourceLabel": "recorded-source-359676feb047a524",
     "sourceSha256": "b2920108163ddc9af1baae526852f9d8602468903fd28dd98fba825f68cfebc7",
     "sessionRecordingId": "1e53c93f-a9fa-4ea8-bb6f-888e9c9b8482",
     "cliVersion": "0.149.0",

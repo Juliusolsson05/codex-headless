@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "legacy-0145-event-user",
   "provenance": {
-    "sourceBasename": "rollout-2026-07-23T18-39-26-019f8fd8-9f5b-7670-9282-513721a42591.jsonl",
+    "sourceLabel": "recorded-source-965be9758c81d546",
     "sourceSha256": "c18b592ae2f03cf51e40c2d199476d24669812880128fa60bea0f1875fb27aa3",
     "sessionRecordingId": null,
     "cliVersion": "0.145.0",

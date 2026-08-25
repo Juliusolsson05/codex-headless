@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
-import { basename, dirname, resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 
@@ -223,7 +223,14 @@ function buildFixture(source: FixtureSource, raw: string) {
     schemaVersion: 2,
     id: source.id,
     provenance: {
-      sourceBasename: basename(source.sourcePath),
+      // WHY the committed projection keeps only an opaque source label: Codex
+      // rollout basenames embed the real provider thread UUID. The private
+      // manifest is the authorized lookup bridge; provenance must not publish
+      // that identity merely to make local regeneration convenient.
+      // Derive this from the public fixture id, not the private basename. Even
+      // a one-way basename digest is a stable provider-identity correlator for
+      // someone who already possesses another copy of that rollout name.
+      sourceLabel: `recorded-source-${sha256(source.id).slice(0, 16)}`,
       sourceSha256: sha256(raw),
       sessionRecordingId: source.sessionRecordingId,
       cliVersion: candidate.cliVersion,
