@@ -8,9 +8,7 @@ import {
   type ScreenSnapshot,
 } from './terminal/HeadlessTerminal.js'
 import { tailSessionFile } from './transcript/JsonlTailer.js'
-import {
-  extractSubmittedPromptFromWrite,
-} from './transcript/FreshRolloutClaim.js'
+import { SubmittedPromptInput } from './transcript/SubmittedPromptInput.js'
 import type {
   FreshRolloutParticipantDecision,
   FreshRolloutParticipantHandle,
@@ -227,10 +225,12 @@ export class CodexHeadless extends EventEmitter {
   private readonly cwd: string
   private readonly resumeThreadId: string | null
   private readonly resumeRolloutPreparation: CodexResumeRolloutPreparation | null
+  private readonly submittedPromptInput = new SubmittedPromptInput()
   private stopRolloutTail: (() => Promise<void>) | null = null
   private stopPromise: Promise<void> | null = null
   private cleanupPromise: Promise<void> | null = null
   private stopRequested = false
+  private startRequested = false
   private activeRolloutPath: string | null = null
   private tailedRolloutPaths = new Set<string>()
   // WHY fresh sessions register with the shared ownership coordinator:
@@ -866,6 +866,15 @@ export class CodexHeadless extends EventEmitter {
   async start(): Promise<{ sessionsDir: string }> {
     const sessionsDir =
       this.resumeRolloutPreparation?.sessionsDir ?? getCodexSessionsDir()
+    this.startRequested = true
+    if (this.stopRequested) {
+      // WHY a caller may cancel after constructing the headless wrapper but
+      // before start() is ever admitted. stop() already disposed the opaque
+      // pre-spawn capability in that ordering; this idempotent join prevents a
+      // later queued start from trying to consume the released exact lease.
+      try { await this.resumeRolloutPreparation?.dispose(true) } catch { /* best-effort */ }
+      return { sessionsDir }
+    }
     let acquiredStop: () => Promise<void>
 
     if (this.resumeThreadId) {
@@ -937,14 +946,16 @@ export class CodexHeadless extends EventEmitter {
   }
 
   private recordSubmittedPromptFromWrite(data: string): void {
-    const prompt = extractSubmittedPromptFromWrite(data)
-    if (prompt === null) return
     // WHY registration stays immediately before terminal.write in write(): the
     // coordinator's causal proof depends on knowing that an earlier rollout
     // observation cannot have been authored by bytes this PTY has not received
     // yet. Moving this into sendPrompt or making it asynchronous would silently
-    // invalidate the late-identical-prompt safety argument.
-    this.freshRolloutParticipant?.registerPrompt(prompt)
+    // invalidate the late-identical-prompt safety argument. The accumulator is
+    // equally important: real xterm typing arrives in arbitrary chunks, while a
+    // closing bracketed-paste marker is not a submission until a later Enter.
+    for (const prompt of this.submittedPromptInput.consume(data)) {
+      this.freshRolloutParticipant?.registerPrompt(prompt)
+    }
   }
 
   // --- State queries ---
@@ -1044,7 +1055,19 @@ export class CodexHeadless extends EventEmitter {
     }
     const stopRolloutTail = this.stopRolloutTail
     this.stopRolloutTail = null
-    if (!stopRolloutTail) return
+    if (!stopRolloutTail) {
+      if (!this.startRequested && this.resumeRolloutPreparation) {
+        // WHY construction transfers ownership of the prepared exact lease to
+        // this instance. If start never runs, there is no tail cleanup closure
+        // that could release it later; stop() must dispose the capability itself
+        // or every sequential resume in this process remains blocked forever.
+        this.cleanupPromise = (async () => {
+          try { await this.resumeRolloutPreparation?.dispose(true) } catch { /* best-effort */ }
+        })()
+        await this.cleanupPromise
+      }
+      return
+    }
 
     // WHY terminal exit and explicit stop are independent callers. Publishing
     // this promise before awaiting makes them join the same physical close;
@@ -1217,7 +1240,7 @@ export class CodexHeadless extends EventEmitter {
             // Missing/weak lineage is expected to fail closed, but it must stay
             // observable. Without this diagnostic, a held candidate is
             // indistinguishable from a dead filesystem watcher in field logs.
-            this.emit('rollout-diagnostic', {
+            this.emitRolloutDiagnostic({
               type: 'resume-fork-ignored',
               ts: Date.now(),
               reason: decision.reason,
@@ -1666,7 +1689,7 @@ export class CodexHeadless extends EventEmitter {
           latestDecision = state
           if (state.decision === 'accept') return
           const { decision, reason, tailAuthorized: _tailAuthorized, ...evidence } = state
-          this.emit('rollout-diagnostic', {
+          this.emitRolloutDiagnostic({
             type: 'fresh-rollout-ownership-decision',
             ts: Date.now(),
             decision,
@@ -1691,7 +1714,7 @@ export class CodexHeadless extends EventEmitter {
             tailAuthorized: _tailAuthorized,
             ...evidence
           } = state
-          this.emit('rollout-diagnostic', {
+          this.emitRolloutDiagnostic({
             type: 'fresh-rollout-ownership-decision',
             ts: Date.now(),
             decision,
@@ -1728,4 +1751,15 @@ export class CodexHeadless extends EventEmitter {
     }
   }
 
+  private emitRolloutDiagnostic(diagnostic: CodexRolloutDiagnostic): void {
+    try {
+      this.emit('rollout-diagnostic', diagnostic)
+    } catch {
+      // WHY ownership diagnostics are explicitly non-authoritative. Electron
+      // teardown can leave a destroyed-window listener that throws; allowing
+      // that observer failure to escape an onLease callback tells the
+      // coordinator that a successfully opened physical tail failed, which
+      // tombstones the path and blocks every later exact resume in this process.
+    }
+  }
 }

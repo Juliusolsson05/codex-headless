@@ -185,7 +185,7 @@ async function stopRootWatcher(entry: RootEntry): Promise<void> {
     await watcher?.close()
     await entry.maintenanceQueue
     await entry.readQueue
-    entry.coordinator.compactInactiveState()
+    compactInactiveTransport(entry)
     entry.coordinator.clearStaleCandidateGenerations()
     scheduleInactiveRetention(entry)
   })().finally(() => {
@@ -217,7 +217,7 @@ function scheduleInactiveRetention(entry: RootEntry): void {
       // raw paths even when a sibling keeps chokidar live. A later append
       // restores the path from its new immutable observation before policy is
       // recomputed; HMAC equality evidence remains available throughout.
-      .then(() => entry.coordinator.compactInactiveState())
+      .then(() => compactInactiveTransport(entry))
       .catch(error => emitError(entry, error))
     void entry.readQueue.then(() => scheduleInactiveRetention(entry))
   }, Math.max(1, delay))
@@ -378,6 +378,18 @@ async function readReservedPrefix(
   let handle
   try {
     handle = await open(reserved.filePath, 'r')
+    const openedStat = await handle.stat()
+    const openedGenerationId = `${openedStat.dev}:${openedStat.ino}`
+    if (openedGenerationId !== reserved.snapshot.generationId ||
+      openedStat.size < reserved.snapshot.byteLength) {
+      // WHY stat(path) and open(path) are not one operation. An atomic rename
+      // can replace inode A with old recorded inode B while this read waits in
+      // the serialized queue. Committing B's bytes with A's eligible birth and
+      // generation metadata would let old copied history lease as a fresh
+      // rollout. fstat binds the opened handle back to the reserved generation;
+      // a later watcher observation may reconsider B under B's own metadata.
+      return null
+    }
     const byteLength = Math.min(
       reserved.snapshot.byteLength,
       ROLLOUT_CANDIDATE_READ_BYTES,
@@ -419,5 +431,25 @@ function isRolloutPath(filePath: string): boolean {
 
 function emitError(entry: RootEntry, error: unknown): void {
   const normalized = error instanceof Error ? error : new Error(String(error))
-  for (const listener of entry.errorListeners) listener(normalized)
+  for (const listener of entry.errorListeners) {
+    try {
+      listener(normalized)
+    } catch {
+      // WHY an observer cannot become the rejection value of readQueue or
+      // maintenanceQueue. Every future task chains from that promise; allowing
+      // one EventEmitter listener to throw here skips later recorded candidates
+      // and can also prevent watcher shutdown from ever crossing its drain.
+    }
+  }
+}
+
+function compactInactiveTransport(entry: RootEntry): void {
+  entry.coordinator.compactInactiveState()
+  // WHY candidate paths are live callback transport, not process-lifetime
+  // evidence. The graph already retained the HMAC facts needed after the grace
+  // barrier. Keeping a second raw copy in the rescan maps defeated that privacy
+  // boundary while a sibling watcher stayed live. A later add/change event
+  // re-admits its path and snapshot before policy is recomputed.
+  entry.knownPaths.clear()
+  entry.lastFingerprints.clear()
 }

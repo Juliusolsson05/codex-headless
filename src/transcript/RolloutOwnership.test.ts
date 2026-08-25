@@ -8,6 +8,7 @@ import {
   type FreshRolloutCandidate,
   type SubmittedPrompt,
 } from './FreshRolloutClaim.js'
+import { SubmittedPromptInput } from './SubmittedPromptInput.js'
 import {
   collectRolloutLineageIds,
   decideResumeForkCandidate,
@@ -86,6 +87,31 @@ describe('fresh rollout ownership', () => {
     // submit the same text.
     expect(extractSubmittedPromptFromWrite('\x1b[200~draft only\x1b[201~')).toBeNull()
     expect(extractSubmittedPromptFromWrite('\x1b[A')).toBeNull()
+  })
+
+  it('reconstructs real xterm chunks and waits for an explicit submit', () => {
+    const typed = new SubmittedPromptInput()
+    expect(typed.consume('h')).toEqual([])
+    expect(typed.consume('i')).toEqual([])
+    expect(typed.consume('\r')).toEqual(['hi'])
+
+    const pasted = new SubmittedPromptInput()
+    expect(pasted.consume('\x1b[20')).toEqual([])
+    expect(pasted.consume('0~hello\nworld\x1b[20')).toEqual([])
+    expect(pasted.consume('1~')).toEqual([])
+    expect(pasted.consume('\r')).toEqual(['hello\nworld'])
+
+    // WHY these are edits xterm sends as concrete bytes, so reconstructing them
+    // is safer than discarding an otherwise knowable prompt. History completion
+    // is different: Up replaces text without sending replacement bytes and must
+    // remain invalid until Ctrl+U clears the unknown composer state.
+    const edited = new SubmittedPromptInput()
+    expect(edited.consume('helo\x1b[D')).toEqual([])
+    expect(edited.consume('l\r')).toEqual(['hello'])
+    expect(edited.consume('\x1b[Aunknown\r')).toEqual([])
+    expect(edited.consume('\x1b[A\x15known\r')).toEqual(['known'])
+    expect(edited.consume('cancelled\x03')).toEqual([])
+    expect(edited.consume('next\r')).toEqual(['next'])
   })
 
   it('parses the first user message and normalizes transport wrappers', () => {

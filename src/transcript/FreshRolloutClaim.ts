@@ -12,6 +12,7 @@ import {
   isCodexSessionMeta,
 } from './TranscriptTypes.js'
 import { collectRolloutLineageIds } from './ResumeForkCandidate.js'
+import { SubmittedPromptInput } from './SubmittedPromptInput.js'
 
 export type SubmittedPrompt = {
   text: string
@@ -54,7 +55,6 @@ const USER_INPUT_OPEN = /<user_input>\s*/gi
 const USER_INPUT_CLOSE = /\s*<\/user_input>/gi
 const USER_MESSAGE_BEGIN = /USER_MESSAGE_BEGIN[\r\n]*/g
 const USER_MESSAGE_END = /[\r\n]*USER_MESSAGE_END/g
-const BRACKETED_PASTE_RE = /\x1b\[200~([\s\S]*?)\x1b\[201~/g
 
 // Keep this normalization intentionally aligned with renderer-side
 // optimistic reconciliation instead of byte-for-byte JSONL matching.
@@ -68,19 +68,12 @@ export function normalizePromptForOwnership(text: string): string {
 }
 
 export function extractSubmittedPromptFromWrite(data: string): string | null {
-  BRACKETED_PASTE_RE.lastIndex = 0
-  let match: RegExpExecArray | null
-  let last: string | null = null
-  while ((match = BRACKETED_PASTE_RE.exec(data)) !== null) {
-    last = match[1] ?? ''
-  }
-  if (last !== null) return cleanUserText(last)
-
-  if (!data.endsWith('\r')) return null
-  if (data.includes('\x1b')) return null
-  const text = data.slice(0, -1)
-  if (!text.trim()) return null
-  return cleanUserText(text)
+  // WHY the stateless helper remains for callers/tests that already have one
+  // atomic write, but it must share the exact submission semantics of the live
+  // incremental boundary. In particular, a completed paste frame without Enter
+  // is composer state, not ownership evidence.
+  const [last] = new SubmittedPromptInput().consume(data).slice(-1)
+  return last === undefined ? null : cleanUserText(last)
 }
 
 export function parseFreshRolloutCandidate(
