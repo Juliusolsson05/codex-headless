@@ -53,6 +53,61 @@ afterEach(() => {
 })
 
 describe('process-wide fresh rollout watcher', () => {
+  it('does not retain a raw sessions root in the process-global registry', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'codex-rollout-private-root-'))
+    temporaryDirectories.push(root)
+    const acquisition = await acquireFreshRolloutCoordinator({
+      sessionsRoot: root,
+      normalizeCwd: value => value,
+      normalizePath: value => value,
+      onError: () => undefined,
+    })
+    await acquisition.release()
+
+    const symbol = Symbol.for(
+      'codex-headless.fresh-rollout-ownership-coordinator-registry',
+    )
+    const registry = (globalThis as typeof globalThis & {
+      [symbol]?: { roots: Map<string, unknown> }
+    })[symbol]
+    expect(registry).toBeDefined()
+    const serialized = JSON.stringify([...registry!.roots.entries()])
+    expect(serialized).not.toContain(root)
+    for (const key of registry!.roots.keys()) {
+      expect(key).toMatch(/^[0-9a-f]{64}$/)
+    }
+  })
+
+  it('serializes overlapping headless stop calls around one tail cleanup', async () => {
+    const pty = {
+      write: () => undefined,
+      resize: () => undefined,
+      onData: () => ({ dispose: () => undefined }),
+      onExit: () => ({ dispose: () => undefined }),
+    } as unknown as IPty
+    const headless = new CodexHeadless({
+      pty,
+      cwd: '/recorded/worktree',
+    })
+    let cleanupCalls = 0
+    let releaseCleanup!: () => void
+    const cleanupGate = new Promise<void>(resolve => { releaseCleanup = resolve })
+    ;(headless as unknown as {
+      stopRolloutTail: (() => Promise<void>) | null
+    }).stopRolloutTail = async () => {
+      cleanupCalls += 1
+      await cleanupGate
+    }
+
+    const first = headless.stop()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    const second = headless.stop()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(cleanupCalls).toBe(1)
+    releaseCleanup()
+    await Promise.all([first, second])
+  })
+
   it('does not assign later appended prompt bytes to an earlier watcher sequence', async () => {
     const root = mkdtempSync(join(tmpdir(), 'codex-rollout-prefix-'))
     temporaryDirectories.push(root)
@@ -261,6 +316,74 @@ describe('process-wide fresh rollout watcher', () => {
       // process-global lease, so a new test process would hide the failure.
       await startAndStop()
     } finally {
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = previousCodexHome
+    }
+  })
+
+  it('reopens the original exact path after a recorded lineage switch closes it', async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'codex-lineage-switch-'))
+    temporaryDirectories.push(codexHome)
+    const previousCodexHome = process.env.CODEX_HOME
+    process.env.CODEX_HOME = codexHome
+    const fixture = loadFixture('subagent-0149-exact-attachment')
+    const sessionMetaIndex = fixture.lines.findIndex(line => line.type === 'session_meta')
+    const sessionMeta = fixture.lines[sessionMetaIndex]
+    const threadId = (sessionMeta?.payload as { id?: unknown } | undefined)?.id
+    if (typeof threadId !== 'string') {
+      throw new Error('recorded exact-id fixture has no thread id')
+    }
+    const forkThreadId = '00000000-0000-4000-8000-000000000044'
+    const forkLines = structuredClone(fixture.lines)
+    ;(forkLines[sessionMetaIndex]!.payload as { id: string }).id = forkThreadId
+    const day = join(codexHome, 'sessions', '2026', '08', '24')
+    mkdirSync(day, { recursive: true })
+    const initialPath = join(day, `rollout-recorded-${threadId}.jsonl`)
+    const forkPath = join(day, `rollout-recorded-${forkThreadId}.jsonl`)
+    writeFileSync(initialPath, rolloutText(fixture))
+
+    const makePty = (): IPty => ({
+      write: () => undefined,
+      resize: () => undefined,
+      onData: () => ({ dispose: () => undefined }),
+      onExit: () => ({ dispose: () => undefined }),
+    }) as unknown as IPty
+    const resumed = new CodexHeadless({
+      pty: makePty(),
+      cwd: '/recorded/worktree',
+      resumeThreadId: threadId,
+    })
+    const forkFiles: string[] = []
+    resumed.on('rollout-entry', (_line, filePath) => {
+      if (filePath === forkPath) forkFiles.push(filePath)
+    })
+    let reopened: CodexHeadless | null = null
+
+    try {
+      await resumed.start()
+      writeFileSync(
+        forkPath,
+        `${forkLines.map(line => JSON.stringify(line)).join('\n')}\n`,
+      )
+      expect(await waitFor(() => forkFiles.length > 0)).toBe(true)
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      // WHY A remains live on Y while B opens X: a lease belongs to a physical
+      // tail, not forever to every path a logical resumed session once used.
+      // Reopening X must wait for X's close, but not for A's eventual stop.
+      reopened = new CodexHeadless({
+        pty: makePty(),
+        cwd: '/recorded/worktree',
+        resumeThreadId: threadId,
+      })
+      await expect(reopened.start()).resolves.toMatchObject({
+        sessionsDir: join(codexHome, 'sessions'),
+      })
+      expect(await waitFor(() => reopened?.getSessionMeta()?.id === threadId))
+        .toBe(true)
+    } finally {
+      await reopened?.stop()
+      await resumed.stop()
       if (previousCodexHome === undefined) delete process.env.CODEX_HOME
       else process.env.CODEX_HOME = previousCodexHome
     }

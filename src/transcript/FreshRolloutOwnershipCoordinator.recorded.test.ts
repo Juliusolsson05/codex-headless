@@ -13,6 +13,7 @@ import {
   parseFreshRolloutCandidate,
   type FreshRolloutCandidate,
 } from './FreshRolloutClaim.js'
+import { collectRolloutLineageIds } from './ResumeForkCandidate.js'
 
 type RecordedOwnershipFixture = {
   id: string
@@ -234,6 +235,83 @@ describe('recorded process-wide fresh rollout ownership', () => {
     expect(siblingDecisions.at(-1)?.matchingCandidateFingerprints).toEqual([
       expect.stringMatching(/^[0-9a-f]{64}$/),
     ])
+  })
+
+  it('keeps the stopped owner through the production post-drain compaction boundary', () => {
+    const fixture = loadFixture('concurrent-01491-alpha')
+    const candidate = candidateFromFixture(fixture)
+    const owner = coordinator()
+    const stopped = register(owner, 'compacted-owner', [])
+    const siblingLeases: FreshRolloutLease[] = []
+    stopped.registerPrompt(promptFromFixture(fixture))
+    stopped.unregister()
+
+    // WHY this call is the missing production boundary: the final watcher
+    // release drains current reads before the parent kills Codex. A provider
+    // flush can therefore create its rollout after this compaction returns.
+    owner.compactInactiveState()
+    const sibling = register(owner, 'post-compact-sibling', siblingLeases)
+    sibling.registerPrompt(promptFromFixture(fixture))
+    const observation = owner.beginCandidateObservation(candidate.filePath, {
+      birthtimeMs: Date.now() + 1,
+      generationId: 'post-drain-provider-flush',
+    })
+    owner.commitCandidateObservation(observation, candidate)
+
+    expect(siblingLeases).toEqual([])
+    expect(owner.inspect()).toMatchObject({
+      historicallyContestedPathCount: 1,
+      leasedPathCount: 0,
+    })
+  })
+
+  it('gives recorded copied lineage precedence over a fresh prompt equality', () => {
+    const fixture = loadFixture('subagent-0149-exact-attachment')
+    const candidate = candidateFromFixture(fixture)
+    const copiedPrompt = candidate.userMessages.at(-1)?.text
+    if (!copiedPrompt) throw new Error('recorded exact fixture has no copied prompt')
+    const lineageIds = new Set<string>()
+    collectRolloutLineageIds(
+      fixture.lines.map(line => JSON.stringify(line)).join('\n'),
+      lineageIds,
+      8000,
+    )
+    if (lineageIds.size === 0) {
+      throw new Error('recorded exact fixture has no lineage ids')
+    }
+    const owner = coordinator()
+    const freshLeases: FreshRolloutLease[] = []
+    const resumeLeases: FreshRolloutLease[] = []
+    const fresh = register(owner, 'fresh-sibling', freshLeases)
+    fresh.registerPrompt(copiedPrompt)
+
+    // The cast states the Stage 11 boundary before implementation exists. It
+    // keeps this red checkpoint executable instead of making TypeScript failure
+    // the only evidence that the old coordinator lacks lineage arbitration.
+    const resumeOwner = owner as FreshRolloutOwnershipCoordinator & {
+      registerResumeParticipant(options: {
+        participantId: string
+        cwd: string
+        lineageIds: ReadonlySet<string>
+        requiredOverlapLimit: number
+        onLease: (lease: FreshRolloutLease) => void
+      }): { unregister(): void }
+    }
+    resumeOwner.registerResumeParticipant({
+      participantId: 'resume-owner',
+      cwd: '/recorded/worktree',
+      lineageIds,
+      requiredOverlapLimit: 3,
+      onLease: lease => resumeLeases.push(lease),
+    })
+
+    owner.observeCandidate(candidate)
+
+    expect(freshLeases).toEqual([])
+    expect(resumeLeases).toMatchObject([{
+      participantId: 'resume-owner',
+      filePath: candidate.filePath,
+    }])
   })
 
   it('leases when a later immutable prefix first reveals the recorded prompt', () => {
