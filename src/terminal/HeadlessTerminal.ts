@@ -99,6 +99,23 @@ export type ScreenSnapshot = {
   recentMarkdown: string
 }
 
+export type StableTerminalRow = {
+  /** Attribute-blind text for semantic matching, trimmed only on the right. */
+  text: string
+  /** Physical cell symbols preserve row geometry without exposing xterm mutability. */
+  cells: readonly string[]
+  /** Native xterm wrap bit; false for rows painted explicitly by a TUI. */
+  isWrapped: boolean
+}
+
+export type StableTerminalFrame = {
+  /** Monotonic generation advanced only after xterm has parsed a PTY chunk. */
+  generation: number
+  cols: number
+  rows: readonly StableTerminalRow[]
+  cursor: Readonly<{ x: number; y: number }>
+}
+
 export type HeadlessTerminalEvents = {
   /** Raw PTY bytes received. Use for recording/fidelity. */
   'pty-data': [string]
@@ -222,6 +239,7 @@ export class HeadlessTerminal extends EventEmitter {
   // only schedule a flush once the *latest* write completes, so we
   // don't snapshot a half-parsed buffer. See attach() for the use.
   private pendingWrites = 0
+  private parsedFrameGeneration = 0
   private exited = false
   private attached = false
   private readonly snapshotIntervalMs: number
@@ -279,6 +297,7 @@ export class HeadlessTerminal extends EventEmitter {
       this.pendingWrites++
       this.term.write(data, () => {
         this.pendingWrites--
+        this.parsedFrameGeneration++
         // Only schedule when there are no more pending parses.
         // Otherwise rapid PTY chunks would each schedule a flush
         // and we'd snapshot mid-parse. The throttle inside
@@ -326,6 +345,45 @@ export class HeadlessTerminal extends EventEmitter {
     }
     while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
     return lines.join('\n')
+  }
+
+  /**
+   * Capture an immutable, cell-structured viewport only after xterm has parsed
+   * every PTY chunk currently in flight.
+   *
+   * WHY prompt ownership cannot use `snapshotPlain()`: a string has no stable
+   * generation and invites searches across transcript history. Returning null
+   * during parsing makes callers fail closed, while physical rows/cells let the
+   * provider adapter inspect only the current bottom composer and footer.
+   */
+  snapshotStableFrame(): StableTerminalFrame | null {
+    if (this.pendingWrites !== 0) return null
+
+    const buffer = this.term.buffer.active
+    const rows: StableTerminalRow[] = []
+    for (let viewportRow = 0; viewportRow < this.term.rows; viewportRow += 1) {
+      const line = buffer.getLine(buffer.viewportY + viewportRow)
+      const cells: string[] = []
+      for (let column = 0; column < this.term.cols; column += 1) {
+        cells.push(line?.getCell(column)?.getChars() ?? '')
+      }
+      rows.push(Object.freeze({
+        text: line?.translateToString(true) ?? '',
+        cells: Object.freeze(cells),
+        isWrapped: line?.isWrapped ?? false,
+      }))
+    }
+
+    const absoluteCursorY = buffer.baseY + buffer.cursorY
+    return Object.freeze({
+      generation: this.parsedFrameGeneration,
+      cols: this.term.cols,
+      rows: Object.freeze(rows),
+      cursor: Object.freeze({
+        x: buffer.cursorX,
+        y: absoluteCursorY - buffer.viewportY,
+      }),
+    })
   }
 
   /** Capture the viewport with bold/italic reconstructed as markdown. */

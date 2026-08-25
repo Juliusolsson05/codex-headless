@@ -121,6 +121,59 @@ function inertPty(): IPty {
   } as unknown as IPty
 }
 
+type ProviderFramePty = {
+  pty: IPty
+  renderComposer(draft: string, options?: { queueWithTab?: boolean }): string
+}
+
+function providerFramePty(): ProviderFramePty {
+  const listeners = new Set<(data: string) => void>()
+  return {
+    pty: {
+      write: () => undefined,
+      resize: () => undefined,
+      onData: (listener: (data: string) => void) => {
+        listeners.add(listener)
+        return { dispose: () => { listeners.delete(listener) } }
+      },
+      onExit: () => ({ dispose: () => undefined }),
+    } as unknown as IPty,
+    renderComposer: (draft, options) => {
+      const footer = options?.queueWithTab
+        ? '  tab to queue message  100% context left'
+        : '  gpt-5.6-sol low · /recorded/worktree'
+      // WHY these are the recorded 0.149.1 bottom-pane rows, delivered through
+      // the real PTY -> xterm boundary. A whole-screen substring or a prompt
+      // injected directly into the ownership graph would bypass the precise
+      // production proof this system suite exists to protect. Cursor row 37
+      // keeps the composer/footer at the physical bottom of the 40-row frame.
+      const frame = `\x1b[2J\x1b[H\x1b[37;1H› ${draft}\r\n\r\n${footer}`
+      for (const listener of listeners) listener(frame)
+      return footer
+    },
+  }
+}
+
+function recordedPromptInputProfile() {
+  // WHY the production path accepts only a package-issued capability paired
+  // with frozen highest-precedence launch overrides. System tests must cross
+  // that same authority boundary; a caller-authored "default keymap" claim
+  // would recreate the configuration ambiguity the repair intentionally closes.
+  return codexHeadlessApi.createCodex01491PromptInputProfile({
+    cliVersion: 'codex-cli 0.149.1',
+  })
+}
+
+async function waitForComposerFrame(
+  headless: CodexHeadless,
+  provider: ProviderFramePty,
+  draft: string,
+  options?: { queueWithTab?: boolean },
+): Promise<void> {
+  const footer = provider.renderComposer(draft, options)
+  expect(await waitFor(() => headless.getScreen().includes(footer))).toBe(true)
+}
+
 afterEach(() => {
   vi.useRealTimers()
   while (temporaryDirectories.length > 0) {
@@ -325,12 +378,13 @@ describe('process-wide fresh rollout watcher', () => {
         cwd: '/recorded/worktree',
         resumeThreadId: threadId,
       })
-      expect(replacementPreparation.initialPath).not.toBeNull()
+      // Factory success is the public proof that exact X was released and could
+      // be reserved again; the capability intentionally exposes no path getter.
+      expect(replacementPreparation).toBeDefined()
     } finally {
       await replacementPreparation?.dispose(true)
-      // Current RED behavior leaves the capability owned by the never-started
-      // instance. Explicit fixture cleanup prevents that expected failure from
-      // poisoning later same-process registry tests.
+      // Parent rollback and CodexHeadless stop may converge here. Repeating the
+      // public operation proves disposal remains idempotent across that handoff.
       await cancelledPreparation.dispose(true)
       await cancelled.stop()
     }
@@ -953,9 +1007,11 @@ describe('process-wide fresh rollout watcher', () => {
       day,
       'rollout-typed-00000000-0000-4000-8000-000000000074.jsonl',
     )
+    const provider = providerFramePty()
     const headless = new CodexHeadless({
-      pty: inertPty(),
+      pty: provider.pty,
       cwd: '/recorded/worktree',
+      promptInputProfile: recordedPromptInputProfile(),
     })
 
     try {
@@ -967,6 +1023,11 @@ describe('process-wide fresh rollout watcher', () => {
       for (const character of fixture.ownership.localPromptToken) {
         headless.write(character)
       }
+      await waitForComposerFrame(
+        headless,
+        provider,
+        fixture.ownership.localPromptToken,
+      )
       headless.write('\r')
       writeFileSync(rolloutPath, rolloutText(fixture))
       expect(await waitFor(() =>
@@ -992,9 +1053,11 @@ describe('process-wide fresh rollout watcher', () => {
       day,
       'rollout-startup-00000000-0000-4000-8000-000000000076.jsonl',
     )
+    const provider = providerFramePty()
     const headless = new CodexHeadless({
-      pty: inertPty(),
+      pty: provider.pty,
       cwd: '/recorded/worktree',
+      promptInputProfile: recordedPromptInputProfile(),
     })
 
     try {
@@ -1006,6 +1069,11 @@ describe('process-wide fresh rollout watcher', () => {
       for (const character of fixture.ownership.localPromptToken) {
         headless.write(character)
       }
+      await waitForComposerFrame(
+        headless,
+        provider,
+        fixture.ownership.localPromptToken,
+      )
       headless.write('\r')
       await starting
       writeFileSync(rolloutPath, rolloutText(fixture))
@@ -1033,9 +1101,11 @@ describe('process-wide fresh rollout watcher', () => {
       'rollout-fresh-generation-00000000-0000-4000-8000-000000000078.jsonl',
     )
     const replacementSentinel = 'fresh-replacement-must-not-commit'
+    const provider = providerFramePty()
     const headless = new CodexHeadless({
-      pty: inertPty(),
+      pty: provider.pty,
       cwd: '/recorded/worktree',
+      promptInputProfile: recordedPromptInputProfile(),
     })
     const internal = headless as unknown as {
       tailFile(filePath: string, generationId?: string | null): () => Promise<void>
@@ -1068,7 +1138,12 @@ describe('process-wide fresh rollout watcher', () => {
 
     try {
       await headless.start()
-      headless.write(`${fixture.ownership.localPromptToken}\r`)
+      await waitForComposerFrame(
+        headless,
+        provider,
+        fixture.ownership.localPromptToken,
+      )
+      headless.write('\r')
       writeFileSync(rolloutPath, rolloutText(fixture))
       expect(await waitFor(() => swapped)).toBe(true)
       await new Promise(resolve => setTimeout(resolve, 300))
@@ -1097,19 +1172,11 @@ describe('process-wide fresh rollout watcher', () => {
       day,
       'rollout-tab-00000000-0000-4000-8000-000000000079.jsonl',
     )
-    const terminalDataListeners = new Set<(data: string) => void>()
-    const pty = {
-      write: () => undefined,
-      resize: () => undefined,
-      onData: (listener: (data: string) => void) => {
-        terminalDataListeners.add(listener)
-        return { dispose: () => { terminalDataListeners.delete(listener) } }
-      },
-      onExit: () => ({ dispose: () => undefined }),
-    } as unknown as IPty
+    const provider = providerFramePty()
     const headless = new CodexHeadless({
-      pty,
+      pty: provider.pty,
       cwd: '/recorded/worktree',
+      promptInputProfile: recordedPromptInputProfile(),
     })
 
     try {
@@ -1117,15 +1184,15 @@ describe('process-wide fresh rollout watcher', () => {
       // Exact rust-v0.149.1 renders this footer only while the active keymap
       // assigns Tab to queue/submit. The screen is real provider state at the
       // pre-write boundary, not an assumption attached to the input byte.
-      for (const listener of terminalDataListeners) {
-        listener('  tab to queue message  100% context left  ')
-      }
-      expect(await waitFor(() =>
-        headless.getScreen().toLowerCase().includes('tab to queue'),
-      )).toBe(true)
       for (const character of fixture.ownership.localPromptToken) {
         headless.write(character)
       }
+      await waitForComposerFrame(
+        headless,
+        provider,
+        fixture.ownership.localPromptToken,
+        { queueWithTab: true },
+      )
       headless.write('\t')
       writeFileSync(rolloutPath, rolloutText(fixture))
       expect(await waitFor(() =>
@@ -1152,13 +1219,17 @@ describe('process-wide fresh rollout watcher', () => {
       day,
       'rollout-paste-00000000-0000-4000-8000-000000000075.jsonl',
     )
+    const pastedProvider = providerFramePty()
+    const submittedProvider = providerFramePty()
     const pastedOnly = new CodexHeadless({
-      pty: inertPty(),
+      pty: pastedProvider.pty,
       cwd: '/recorded/worktree',
+      promptInputProfile: recordedPromptInputProfile(),
     })
     const submitted = new CodexHeadless({
-      pty: inertPty(),
+      pty: submittedProvider.pty,
       cwd: '/recorded/worktree',
+      promptInputProfile: recordedPromptInputProfile(),
     })
 
     try {
@@ -1167,7 +1238,9 @@ describe('process-wide fresh rollout watcher', () => {
       // deliberately sends Enter later. Recording at the closing marker makes
       // an idle composer a false claimant for a sibling that actually submits.
       pastedOnly.write(`\x1b[200~${prompt}\x1b[201~`)
-      submitted.write(`${prompt}\r`)
+      await waitForComposerFrame(pastedOnly, pastedProvider, prompt)
+      await waitForComposerFrame(submitted, submittedProvider, prompt)
+      submitted.write('\r')
       writeFileSync(rolloutPath, rolloutText(fixture))
       expect(await waitFor(() =>
         (submitted as unknown as { activeRolloutPath: string | null })
@@ -1198,9 +1271,11 @@ describe('process-wide fresh rollout watcher', () => {
     const day = join(codexHome, 'sessions', '2026', '08', '24')
     mkdirSync(day, { recursive: true })
     const rolloutPath = join(day, `rollout-recorded-${threadId}.jsonl`)
+    const provider = providerFramePty()
     const headless = new CodexHeadless({
-      pty: inertPty(),
+      pty: provider.pty,
       cwd: '/recorded/worktree',
+      promptInputProfile: recordedPromptInputProfile(),
     })
     headless.on('rollout-diagnostic', diagnostic => {
       if (diagnostic.type === 'fresh-rollout-ownership-decision' &&
@@ -1212,7 +1287,12 @@ describe('process-wide fresh rollout watcher', () => {
 
     try {
       await headless.start()
-      headless.write(`${fixture.ownership.localPromptToken}\r`)
+      await waitForComposerFrame(
+        headless,
+        provider,
+        fixture.ownership.localPromptToken,
+      )
+      headless.write('\r')
       writeFileSync(rolloutPath, rolloutText(fixture))
       expect(await waitFor(() =>
         (headless as unknown as { activeRolloutPath: string | null })
@@ -1227,7 +1307,10 @@ describe('process-wide fresh rollout watcher', () => {
         cwd: '/recorded/worktree',
         resumeThreadId: threadId,
       })
-      expect(reopened.initialPath).not.toBeNull()
+      // Successful factory return is the public proof that exact X reopened.
+      // Reaching into initialPath would make this regression test depend on the
+      // very capability internals the opacity boundary deliberately removes.
+      expect(reopened).toBeDefined()
     } finally {
       await reopened?.dispose(true)
       await headless.stop()

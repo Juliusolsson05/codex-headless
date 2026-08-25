@@ -9,9 +9,10 @@ import {
 } from './terminal/HeadlessTerminal.js'
 import { tailSessionFile } from './transcript/JsonlTailer.js'
 import {
-  inferCodexTabBehavior,
-  SubmittedPromptInput,
-} from './transcript/SubmittedPromptInput.js'
+  assertIssuedCodexPromptInputProfile,
+  type CodexPromptInputProfile,
+} from './transcript/prompt-input/CodexPromptInputProfile.js'
+import { PromptInputEvidence } from './transcript/prompt-input/PromptInputEvidence.js'
 import type {
   FreshRolloutParticipantDecision,
   FreshRolloutParticipantHandle,
@@ -19,7 +20,11 @@ import type {
 import {
   beginFreshRolloutCoordinatorAcquisition,
 } from './transcript/FreshRolloutOwnershipCoordinatorRegistry.js'
-import type { CodexResumeRolloutPreparation } from './transcript/CodexResumeRolloutPreparation.js'
+import {
+  unwrapCodexResumeRolloutPreparation,
+  type CodexResumeRolloutPreparation,
+  type CodexResumeRolloutPreparationInternal,
+} from './transcript/CodexResumeRolloutPreparation.js'
 import { normalizeRolloutOwnershipPath } from './transcript/OwnershipNormalization.js'
 import {
   detectCodexActivity,
@@ -110,6 +115,12 @@ type CodexHeadlessBaseOptions = {
    *  HeadlessTerminal's default (100ms — see the WHY on
    *  HeadlessTerminalOptions.snapshotIntervalMs; agent-code#390). */
   snapshotIntervalMs?: number
+  /**
+   * Package-issued launch/profile capability for prompt ownership evidence.
+   * Omission keeps screen/transcript parsing available but disables fresh
+   * rollout prompt registration; caller-authored lookalikes are rejected.
+   */
+  promptInputProfile?: CodexPromptInputProfile
 }
 
 export type CodexHeadlessOptions = CodexHeadlessBaseOptions & (
@@ -227,8 +238,9 @@ export class CodexHeadless extends EventEmitter {
   private readonly terminal: HeadlessTerminal
   private readonly cwd: string
   private readonly resumeThreadId: string | null
-  private readonly resumeRolloutPreparation: CodexResumeRolloutPreparation | null
-  private readonly submittedPromptInput = new SubmittedPromptInput()
+  private readonly resumeRolloutPreparation:
+    CodexResumeRolloutPreparationInternal | null
+  private readonly promptInputEvidence: PromptInputEvidence
   private stopRolloutTail: (() => Promise<void>) | null = null
   private stopPromise: Promise<void> | null = null
   private cleanupPromise: Promise<void> | null = null
@@ -386,8 +398,21 @@ export class CodexHeadless extends EventEmitter {
     super()
     this.cwd = options.cwd
     this.resumeThreadId = options.resumeThreadId ?? null
+    // WHY validate before allocating HeadlessTerminal for the same reason as
+    // resume issuance below: a structural lookalike does not prove the caller
+    // launched Codex with the package's frozen highest-precedence input args.
+    // Missing proof is allowed only as an explicitly fail-closed observer mode.
+    const promptInputProfile = options.promptInputProfile === undefined
+      ? null
+      : assertIssuedCodexPromptInputProfile(options.promptInputProfile)
+    this.promptInputEvidence = new PromptInputEvidence(promptInputProfile)
+    // WHY issuer validation is synchronous and precedes HeadlessTerminal: a
+    // forged preparation must not allocate terminal listeners/timers and then
+    // fail later in start(). Shape checks accept a duck object; instanceof can
+    // be forged with Object.create. The preparation module's WeakSet is the
+    // runtime authority that the factory performed exact reservation/lineage.
     this.resumeRolloutPreparation = options.resumeThreadId
-      ? options.resumeRolloutPreparation
+      ? unwrapCodexResumeRolloutPreparation(options.resumeRolloutPreparation)
       : null
     // WHY resume and fresh ownership share one owner id: exact X, lineage Y,
     // and the missing-X fresh fallback are mutually exclusive claims made by
@@ -867,8 +892,6 @@ export class CodexHeadless extends EventEmitter {
    * reserved exact file and consumes callbacks buffered during that boundary.
    */
   async start(): Promise<{ sessionsDir: string }> {
-    const sessionsDir =
-      this.resumeRolloutPreparation?.sessionsDir ?? getCodexSessionsDir()
     this.startRequested = true
     if (this.stopRequested) {
       // WHY a caller may cancel after constructing the headless wrapper but
@@ -876,9 +899,11 @@ export class CodexHeadless extends EventEmitter {
       // pre-spawn capability in that ordering; this idempotent join prevents a
       // later queued start from trying to consume the released exact lease.
       try { await this.resumeRolloutPreparation?.dispose(true) } catch { /* best-effort */ }
-      return { sessionsDir }
+      return { sessionsDir: getCodexSessionsDir() }
     }
-    let acquiredStop: () => Promise<void>
+    const sessionsDir =
+      this.resumeRolloutPreparation?.sessionsDir ?? getCodexSessionsDir()
+    let acquiringStop: Promise<() => Promise<void>>
 
     if (this.resumeThreadId) {
       const preparation = this.resumeRolloutPreparation
@@ -891,7 +916,7 @@ export class CodexHeadless extends EventEmitter {
         )
       }
       if (preparation.initialPath) {
-        acquiredStop = await this.tailPreparedResumeRolloutFile(preparation)
+        acquiringStop = this.tailPreparedResumeRolloutFile(preparation)
       } else {
         // A pre-spawn lookup miss cannot contribute exact or lineage evidence.
         // Dispose the empty capability before entering fresh evidence policy so
@@ -903,11 +928,22 @@ export class CodexHeadless extends EventEmitter {
             `Codex resume: rollout file for thread ${this.resumeThreadId} not found under ${sessionsDir}; falling back to new-file watcher`,
           ),
         )
-        acquiredStop = await this.tailNewRolloutFile(sessionsDir)
+        acquiringStop = this.tailNewRolloutFile(sessionsDir)
       }
     } else {
-      acquiredStop = await this.tailNewRolloutFile(sessionsDir)
+      acquiringStop = this.tailNewRolloutFile(sessionsDir)
     }
+
+    // WHY both ownership helpers deliberately perform their causal setup before
+    // their first await: fresh startup installs its participant, while exact
+    // resume opens X and consumes the prepared lineage capability. Only after
+    // that synchronous prefix is it safe to subscribe the terminal mirror. We
+    // must nevertheless subscribe *before* watcher readiness settles because
+    // Agent Code publishes the already-spawned PTY while start() is pending;
+    // otherwise provider composer frames emitted during priming disappear and
+    // the later Enter has no provider-rendered prompt evidence.
+    this.terminal.attach()
+    const acquiredStop = await acquiringStop
 
     if (this.stopRequested) {
       // WHY SessionManager deliberately stops once before start settles and
@@ -920,11 +956,6 @@ export class CodexHeadless extends EventEmitter {
       return { sessionsDir }
     }
     this.stopRolloutTail = acquiredStop
-
-    // Tailer is wired — let PTY data flow into the headless terminal
-    // mirror. See HeadlessTerminal file header for why this is split
-    // out of the constructor.
-    this.terminal.attach()
 
     return { sessionsDir }
   }
@@ -954,13 +985,11 @@ export class CodexHeadless extends EventEmitter {
     // observation cannot have been authored by bytes this PTY has not received
     // yet. Moving this into sendPrompt or making it asynchronous would silently
     // invalidate the late-identical-prompt safety argument. The accumulator is
-    // equally important: real xterm typing arrives in arbitrary chunks, while a
-    // closing bracketed-paste marker is not a submission until a later Enter.
-    const screenBeforeWrite = data.includes('\t')
-      ? this.terminal.snapshotPlain().toLowerCase()
-      : ''
-    const tabBehavior = inferCodexTabBehavior(screenBeforeWrite)
-    for (const prompt of this.submittedPromptInput.consume(data, { tabBehavior })) {
+    // equally important: the provider-rendered stable frame, rather than a raw
+    // byte-level editor replica, decides whether Enter/Tab belongs to the
+    // current composer and what draft it will submit.
+    const frame = this.terminal.snapshotStableFrame()
+    for (const prompt of this.promptInputEvidence.consume(data, { frame })) {
       this.freshRolloutParticipant?.registerPrompt(prompt)
     }
   }
@@ -1170,7 +1199,7 @@ export class CodexHeadless extends EventEmitter {
    * repair for the permanent committed-channel outage.
    */
   private async tailPreparedResumeRolloutFile(
-    preparation: CodexResumeRolloutPreparation,
+    preparation: CodexResumeRolloutPreparationInternal,
   ): Promise<() => Promise<void>> {
     const initialPath = preparation.initialPath
     const initialGenerationId = preparation.initialGenerationId

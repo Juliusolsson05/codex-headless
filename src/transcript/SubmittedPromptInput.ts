@@ -1,3 +1,11 @@
+import type { StableTerminalFrame } from '../terminal/HeadlessTerminal.js'
+import {
+  createCodex01491PromptInputProfile,
+  isIssuedCodexPromptInputProfile,
+  type CodexPromptInputProfile,
+} from './prompt-input/CodexPromptInputProfile.js'
+import { PromptInputEvidence } from './prompt-input/PromptInputEvidence.js'
+
 const PASTE_START = '\x1b[200~'
 const PASTE_END = '\x1b[201~'
 const CSI = /^\x1b\[([0-9;?]*)([@-~])/
@@ -15,6 +23,14 @@ export type SubmittedPromptInputContext = {
    * infer ownership from `\t` alone.
    */
   tabBehavior?: 'submit' | 'complete-or-unknown'
+  /** Provider-rendered current viewport retained by recorded-contract callers. */
+  screenBeforeWrite?: string
+  /**
+   * Compatibility input profile. Live CodexHeadless callers use the opaque
+   * package-issued profile directly; this structural shape exists so the
+   * committed Stage 26 fixture can remain an independent pre-repair contract.
+   */
+  inputProfile?: unknown
 }
 
 export function inferCodexTabBehavior(
@@ -45,8 +61,15 @@ export class SubmittedPromptInput {
   private valid = true
   private pending = ''
   private inBracketedPaste = false
+  private strictEvidence: PromptInputEvidence | null = null
+  private strictProfileKey: string | null = null
+  private strictFrameGeneration = 0
 
   consume(data: string, context: SubmittedPromptInputContext = {}): string[] {
+    if (context.inputProfile !== undefined) {
+      return this.consumeRecordedContract(data, context)
+    }
+
     this.pending += data
     const submitted: string[] = []
 
@@ -153,6 +176,39 @@ export class SubmittedPromptInput {
     }
 
     return submitted
+  }
+
+  private consumeRecordedContract(
+    data: string,
+    context: SubmittedPromptInputContext,
+  ): string[] {
+    const profileKey = compatibilityProfileKey(context.inputProfile)
+    if (profileKey !== this.strictProfileKey) {
+      this.strictProfileKey = profileKey
+      this.strictEvidence = new PromptInputEvidence(
+        compatibilityProfile(context.inputProfile),
+      )
+      this.strictFrameGeneration = 0
+    }
+
+    let frame: StableTerminalFrame | null = null
+    if (typeof context.screenBeforeWrite === 'string') {
+      this.strictFrameGeneration++
+      const rowTexts = context.screenBeforeWrite.split('\n')
+      const cols = Math.max(140, ...rowTexts.map(row => [...row].length))
+      frame = {
+        generation: this.strictFrameGeneration,
+        cols,
+        rows: rowTexts.map(text => ({
+          text,
+          cells: [...text],
+          isWrapped: false,
+        })),
+        cursor: { x: 0, y: 0 },
+      }
+    }
+
+    return this.strictEvidence?.consume(data, { frame }) ?? []
   }
 
   private applyCsi(parameters: string, final: string): void {
@@ -303,6 +359,42 @@ export class SubmittedPromptInput {
     this.text = ''
     this.cursor = 0
     this.valid = true
+  }
+}
+
+function compatibilityProfile(value: unknown): CodexPromptInputProfile | null {
+  if (isIssuedCodexPromptInputProfile(value)) return value
+  if (typeof value !== 'object' || value === null) return null
+  const profile = value as {
+    cliVersion?: unknown
+    upstreamTag?: unknown
+    configClass?: unknown
+    configOverrides?: unknown
+  }
+  if (profile.upstreamTag !== 'rust-v0.149.1' ||
+    profile.configClass !== 'recorded-default-01491' ||
+    !Array.isArray(profile.configOverrides) ||
+    profile.configOverrides.length !== 0 ||
+    typeof profile.cliVersion !== 'string') {
+    return null
+  }
+  try {
+    return createCodex01491PromptInputProfile({
+      cliVersion: profile.cliVersion,
+    })
+  } catch {
+    return null
+  }
+}
+
+function compatibilityProfileKey(value: unknown): string {
+  if (isIssuedCodexPromptInputProfile(value)) {
+    return `issued:${value.cliVersion}:${value.configOverrides.join('\u0000')}`
+  }
+  try {
+    return `recorded:${JSON.stringify(value)}`
+  } catch {
+    return 'recorded:unserializable'
   }
 }
 

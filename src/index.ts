@@ -38,8 +38,16 @@ export {
   type HeadlessTerminalOptions,
   type HeadlessTerminalEvents,
   type ScreenSnapshot,
+  type StableTerminalFrame,
+  type StableTerminalRow,
   terminalToMarkdown,
 } from './terminal/HeadlessTerminal.js'
+
+export {
+  createCodex01491PromptInputProfile,
+  type Codex01491PromptInputProfileOptions,
+  type CodexPromptInputProfile,
+} from './transcript/prompt-input/CodexPromptInputProfile.js'
 
 // --- Parsers (codex-specific) ---
 export {
