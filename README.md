@@ -121,6 +121,34 @@ await codex.start()
 codex.sendPrompt('Explain this repository in two sentences.')
 ```
 
+For `codex resume <id>`, ownership must be prepared before the PTY is
+spawned. This prevents Codex from creating a reconstructed rollout before the
+old rollout's exact identity and copied lineage are registered:
+
+```ts
+import { CodexHeadless, prepareCodexResumeRollout } from 'codex-headless'
+
+const resumeThreadId = 'provider-thread-uuid'
+const preparation = await prepareCodexResumeRollout({
+  cwd: process.cwd(),
+  resumeThreadId,
+})
+const pty = spawn('codex', ['resume', resumeThreadId], {
+  name: 'xterm-256color', cols: 120, rows: 40, cwd: process.cwd(),
+})
+const codex = new CodexHeadless({
+  pty,
+  cwd: process.cwd(),
+  resumeThreadId,
+  resumeRolloutPreparation: preparation,
+})
+await codex.start()
+```
+
+If spawning or construction fails, call `await preparation.dispose()` before
+killing the PTY. After successful construction, `CodexHeadless.stop()` owns
+that cleanup.
+
 ## How it works
 
 The package combines these pieces:

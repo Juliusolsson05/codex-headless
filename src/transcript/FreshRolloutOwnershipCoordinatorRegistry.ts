@@ -146,7 +146,15 @@ export async function acquireFreshRolloutCoordinator(options: {
       entry?.errorListeners.delete(options.onError)
       if (!entry) return
       entry.referenceCount = Math.max(0, entry.referenceCount - 1)
-      if (entry.referenceCount !== 0) return
+      if (entry.referenceCount !== 0) {
+        // WHY watcher transport is shared but participant lifetime is not. A
+        // long-lived sibling keeps filesystem admission open; it must not keep
+        // every stopped sibling's prompt/lineage HMAC in the graph forever.
+        // Arm the same grace timer used at final shutdown, with expiry ordered
+        // behind the reads admitted before that timer fires.
+        scheduleInactiveRetention(entry)
+        return
+      }
       await stopRootWatcher(entry)
     },
   }
@@ -187,8 +195,15 @@ function scheduleInactiveRetention(entry: RootEntry): void {
   // window closes protects provider flushes that occur before parent PTY kill.
   entry.retentionTimer = setTimeout(() => {
     entry.retentionTimer = null
-    entry.coordinator.expireInactiveParticipants()
-    scheduleInactiveRetention(entry)
+    // WHY the timer marks the end of the provider-file grace, but cannot jump
+    // ahead of a prefix read already admitted during that grace. Appending the
+    // expiry to readQueue preserves that causal barrier without stopping the
+    // shared watcher needed by live siblings. Events admitted after the timer
+    // are outside this stopped participant's bounded ownership window.
+    entry.readQueue = entry.readQueue
+      .then(() => entry.coordinator.expireInactiveParticipants())
+      .catch(error => emitError(entry, error))
+    void entry.readQueue.then(() => scheduleInactiveRetention(entry))
   }, Math.max(1, delay))
   entry.retentionTimer.unref?.()
 }

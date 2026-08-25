@@ -20,6 +20,13 @@ export type ResumeRolloutParticipantHandle = {
   unregister(): void
 }
 
+export type ResumeRolloutParticipantDecision = {
+  reason: 'missing-lineage' | 'insufficient-lineage-overlap'
+  lineageOverlap: number
+  requiredOverlap: number
+  candidateFingerprint: string
+}
+
 export type FreshRolloutCandidateObservation = {
   filePath: string
   candidateFingerprint: string
@@ -84,6 +91,8 @@ type ResumeParticipant = {
   lineageFingerprints: Set<string>
   requiredOverlapLimit: number
   onLease: ((lease: FreshRolloutLease) => void) | null
+  onDecision: ((decision: ResumeRolloutParticipantDecision) => void) | null
+  publishedDecisionKeys: Map<string, string>
   active: boolean
   withdrawnAtMs: number | null
   leasedCandidateFingerprint: string | null
@@ -126,6 +135,7 @@ export class FreshRolloutOwnershipCoordinator {
   private readonly candidates = new Map<string, CandidateState>()
   private readonly pathLeases = new Map<string, PathLease>()
   private readonly candidateRevisions = new Map<string, number>()
+  private readonly candidateCommittedRevisions = new Map<string, number>()
   private recomputing = false
   private recomputeAgain = false
 
@@ -201,6 +211,7 @@ export class FreshRolloutOwnershipCoordinator {
     lineageIds: ReadonlySet<string>
     requiredOverlapLimit: number
     onLease: (lease: FreshRolloutLease) => void
+    onDecision?: (decision: ResumeRolloutParticipantDecision) => void
   }): ResumeRolloutParticipantHandle {
     if (this.resumeParticipants.has(options.participantId)) {
       throw new Error(
@@ -225,6 +236,8 @@ export class FreshRolloutOwnershipCoordinator {
       ),
       requiredOverlapLimit: options.requiredOverlapLimit,
       onLease: options.onLease,
+      onDecision: options.onDecision ?? null,
+      publishedDecisionKeys: new Map(),
       active: true,
       withdrawnAtMs: null,
       leasedCandidateFingerprint: null,
@@ -238,6 +251,7 @@ export class FreshRolloutOwnershipCoordinator {
         participant.active = false
         participant.withdrawnAtMs = Date.now()
         participant.onLease = null
+        participant.onDecision = null
         this.recompute()
       },
     }
@@ -282,13 +296,23 @@ export class FreshRolloutOwnershipCoordinator {
   ): void {
     const normalizedPath = this.options.normalizePath(candidate.filePath)
     const candidateFingerprint = this.fingerprint('path', normalizedPath)
+    const committedRevision = this.candidateCommittedRevisions.get(
+      candidateFingerprint,
+    ) ?? 0
     if (candidateFingerprint !== observation.candidateFingerprint ||
-      this.candidateRevisions.get(candidateFingerprint) !== observation.revision) {
-      // WHY reads complete out of order under rapid append events. Applying an
-      // older prefix after a newer one can manufacture truncation or erase a
-      // contender, so only the newest reserved revision commits.
+      observation.revision <= committedRevision) {
+      // WHY reservation order and completion order are different facts. The
+      // registry deliberately serializes reads, so O1 must commit even when O2
+      // was reserved while O1 was queued; discarding O1 would make bytes already
+      // durable in its prefix look causally newer. If a non-registry caller
+      // actually completes O2 first, the committed-revision fence still rejects
+      // the later-arriving O1 and prevents evidence rollback.
       return
     }
+    this.candidateCommittedRevisions.set(
+      candidateFingerprint,
+      observation.revision,
+    )
 
     const cwdFingerprint = candidate.cwd
       ? this.fingerprint('cwd', this.options.normalizeCwd(candidate.cwd))
@@ -529,6 +553,7 @@ export class FreshRolloutOwnershipCoordinator {
           cwdFingerprint: participant.cwdFingerprint,
           lineageFingerprints: [...participant.lineageFingerprints],
           hasLeaseCallback: participant.onLease !== null,
+          hasDecisionCallback: participant.onDecision !== null,
           active: participant.active,
         })),
       candidates: [...this.candidates.values()].map(candidate => ({
@@ -569,6 +594,10 @@ export class FreshRolloutOwnershipCoordinator {
   private recomputeOnce(): void {
     const activeResumeEdges = new Map<string, Set<string>>()
     const resumeCandidateEdges = new Map<string, Set<string>>()
+    const resumeDecisionCallbacks: Array<{
+      participant: ResumeParticipant
+      decision: ResumeRolloutParticipantDecision
+    }> = []
 
     // WHY lineage runs before prompt equality: a reconstructed fork carries
     // copied user messages and copied opaque item IDs in the same durable
@@ -581,7 +610,6 @@ export class FreshRolloutOwnershipCoordinator {
         participant.requiredOverlapLimit,
         participant.lineageFingerprints.size,
       )
-      if (requiredOverlap <= 0) continue
       for (const [candidateFingerprint, candidate] of this.candidates) {
         if (candidate.quarantined || candidate.blocked || candidate.leased ||
           this.pathLeases.has(candidateFingerprint) ||
@@ -596,7 +624,28 @@ export class FreshRolloutOwnershipCoordinator {
           if (participant.lineageFingerprints.has(lineage)) overlap += 1
           if (overlap >= requiredOverlap) break
         }
-        if (overlap < requiredOverlap) continue
+        if (requiredOverlap <= 0 || overlap < requiredOverlap) {
+          if (participant.active && participant.onDecision) {
+            const decision: ResumeRolloutParticipantDecision = {
+              reason: requiredOverlap <= 0
+                ? 'missing-lineage'
+                : 'insufficient-lineage-overlap',
+              lineageOverlap: overlap,
+              requiredOverlap,
+              candidateFingerprint,
+            }
+            const decisionKey = `${decision.reason}:${overlap}:${requiredOverlap}`
+            if (participant.publishedDecisionKeys.get(candidateFingerprint) !==
+              decisionKey) {
+              participant.publishedDecisionKeys.set(
+                candidateFingerprint,
+                decisionKey,
+              )
+              resumeDecisionCallbacks.push({ participant, decision })
+            }
+          }
+          continue
+        }
 
         let claimantIds = resumeCandidateEdges.get(candidateFingerprint)
         if (!claimantIds) {
@@ -676,10 +725,11 @@ export class FreshRolloutOwnershipCoordinator {
           candidate.cwdFingerprint !== participant.cwdFingerprint) {
           continue
         }
-        if (!participant.active && !this.inactiveParticipantCouldOwn(
-          participant,
-          candidate,
-        )) {
+        // WHY a live participant removes only the generation-window upper
+        // bound. The lower bound applies to everyone: a change event can make
+        // an old exact file newly observable, but cannot make that file a
+        // generation this newly registered PTY could have authored.
+        if (!this.participantGenerationWindowContains(participant, candidate)) {
           continue
         }
         const matched = [...participant.prompts.values()].some(prompt => {
@@ -763,6 +813,14 @@ export class FreshRolloutOwnershipCoordinator {
 
     this.publishDecisions(activeParticipantEdges, candidateEdges)
 
+    for (const { participant, decision } of resumeDecisionCallbacks) {
+      try {
+        participant.onDecision?.(decision)
+      } catch {
+        // Resume diagnostics are observational and cannot mutate ownership.
+      }
+    }
+
     for (const { participant, lease } of resumeCallbacks) {
       try {
         participant.onLease?.(lease)
@@ -770,6 +828,7 @@ export class FreshRolloutOwnershipCoordinator {
         participant.active = false
         participant.withdrawnAtMs = Date.now()
         participant.onLease = null
+        participant.onDecision = null
         this.retireOwnerLeases(participant.id, false)
       }
     }
@@ -877,14 +936,6 @@ export class FreshRolloutOwnershipCoordinator {
         // Diagnostics are observational and cannot mutate ownership.
       }
     }
-  }
-
-  private inactiveParticipantCouldOwn(
-    participant: Participant,
-    candidate: CandidateState,
-  ): boolean {
-    if (participant.withdrawnAtMs === null) return false
-    return this.participantGenerationWindowContains(participant, candidate)
   }
 
   private participantGenerationWindowContains(

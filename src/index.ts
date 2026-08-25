@@ -89,6 +89,13 @@ export {
   findCodexRolloutPathByThreadId,
 } from './transcript/RolloutLocator.js'
 
+export {
+  prepareCodexResumeRollout,
+} from './transcript/CodexResumeRolloutPreparation.js'
+export type {
+  CodexResumeRolloutPreparation,
+} from './transcript/CodexResumeRolloutPreparation.js'
+
 // --- Transcript (codex-specific) ---
 export {
   // Rollout envelope

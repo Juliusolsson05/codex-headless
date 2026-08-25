@@ -18,6 +18,10 @@ import {
   parseFreshRolloutCandidate,
 } from './FreshRolloutClaim.js'
 import { acquireFreshRolloutCoordinator } from './FreshRolloutOwnershipCoordinatorRegistry.js'
+import {
+  prepareCodexResumeRollout,
+  type CodexResumeRolloutPreparation,
+} from './CodexResumeRolloutPreparation.js'
 import { CodexHeadless } from '../CodexHeadless.js'
 import * as codexHeadlessApi from '../index.js'
 
@@ -39,6 +43,18 @@ function loadFixture(id: string): RecordedOwnershipFixture {
 
 function rolloutText(fixture: RecordedOwnershipFixture): string {
   return `${fixture.lines.map(line => JSON.stringify(line)).join('\n')}\n`
+}
+
+function prepareRecordedResume(options: {
+  codexHome: string
+  cwd: string
+  resumeThreadId: string
+}): Promise<CodexResumeRolloutPreparation> {
+  return prepareCodexResumeRollout({
+    sessionsDir: join(options.codexHome, 'sessions'),
+    cwd: options.cwd,
+    resumeThreadId: options.resumeThreadId,
+  })
 }
 
 async function waitFor(predicate: () => boolean, ms = 3000): Promise<boolean> {
@@ -173,10 +189,16 @@ describe('process-wide fresh rollout watcher', () => {
       onData: () => ({ dispose: () => undefined }),
       onExit: () => ({ dispose: () => undefined }),
     }) as unknown as IPty
+    const cancelledPreparation = await prepareRecordedResume({
+      codexHome,
+      cwd: '/recorded/worktree',
+      resumeThreadId: threadId,
+    })
     const cancelled = new CodexHeadless({
       pty: makePty(),
       cwd: '/recorded/worktree',
       resumeThreadId: threadId,
+      resumeRolloutPreparation: cancelledPreparation,
     })
     let replacement: CodexHeadless | null = null
 
@@ -187,10 +209,16 @@ describe('process-wide fresh rollout watcher', () => {
       await cancelled.stop()
       await cancelled.start()
 
+      const replacementPreparation = await prepareRecordedResume({
+        codexHome,
+        cwd: '/recorded/worktree',
+        resumeThreadId: threadId,
+      })
       replacement = new CodexHeadless({
         pty: makePty(),
         cwd: '/recorded/worktree',
         resumeThreadId: threadId,
+        resumeRolloutPreparation: replacementPreparation,
       })
       await expect(replacement.start()).resolves.toMatchObject({
         sessionsDir: join(codexHome, 'sessions'),
@@ -535,10 +563,16 @@ describe('process-wide fresh rollout watcher', () => {
     } as unknown as IPty
     try {
       const startAndStop = async (): Promise<void> => {
+        const preparation = await prepareRecordedResume({
+          codexHome,
+          cwd: '/recorded/worktree',
+          resumeThreadId: threadId,
+        })
         const headless = new CodexHeadless({
           pty,
           cwd: '/recorded/worktree',
           resumeThreadId: threadId,
+          resumeRolloutPreparation: preparation,
         })
         const seenPaths: string[] = []
         headless.on('rollout-entry', (_line, filePath) => {
@@ -585,7 +619,12 @@ describe('process-wide fresh rollout watcher', () => {
     }) as unknown as IPty
     const ctor = CodexHeadless as unknown as {
       RESUME_FORK_WATCH_MS: number
-      new(options: { pty: IPty; cwd: string; resumeThreadId: string }): CodexHeadless
+      new(options: {
+        pty: IPty
+        cwd: string
+        resumeThreadId: string
+        resumeRolloutPreparation: CodexResumeRolloutPreparation
+      }): CodexHeadless
     }
     const previousWindow = ctor.RESUME_FORK_WATCH_MS
     ctor.RESUME_FORK_WATCH_MS = 25
@@ -596,10 +635,16 @@ describe('process-wide fresh rollout watcher', () => {
       [symbol]?: { roots: Map<string, unknown> }
     })[symbol]
     const keysBefore = new Set(registryBefore?.roots.keys() ?? [])
+    const preparation = await prepareRecordedResume({
+      codexHome,
+      cwd: '/recorded/worktree',
+      resumeThreadId: threadId,
+    })
     const headless = new ctor({
       pty: makePty(),
       cwd: '/recorded/worktree',
       resumeThreadId: threadId,
+      resumeRolloutPreparation: preparation,
     })
     const seenPaths: string[] = []
     headless.on('rollout-entry', (_line, filePath) => seenPaths.push(filePath))
@@ -660,10 +705,16 @@ describe('process-wide fresh rollout watcher', () => {
       onData: () => ({ dispose: () => undefined }),
       onExit: () => ({ dispose: () => undefined }),
     }) as unknown as IPty
+    const resumedPreparation = await prepareRecordedResume({
+      codexHome,
+      cwd: '/recorded/worktree',
+      resumeThreadId: threadId,
+    })
     const resumed = new CodexHeadless({
       pty: makePty(),
       cwd: '/recorded/worktree',
       resumeThreadId: threadId,
+      resumeRolloutPreparation: resumedPreparation,
     })
     const forkFiles: string[] = []
     resumed.on('rollout-entry', (_line, filePath) => {
@@ -687,10 +738,16 @@ describe('process-wide fresh rollout watcher', () => {
       // WHY A remains live on Y while B opens X: a lease belongs to a physical
       // tail, not forever to every path a logical resumed session once used.
       // Reopening X must wait for X's close, but not for A's eventual stop.
+      const reopenedPreparation = await prepareRecordedResume({
+        codexHome,
+        cwd: '/recorded/worktree',
+        resumeThreadId: threadId,
+      })
       reopened = new CodexHeadless({
         pty: makePty(),
         cwd: '/recorded/worktree',
         resumeThreadId: threadId,
+        resumeRolloutPreparation: reopenedPreparation,
       })
       reopened.on('rollout-entry', (_line, filePath) => {
         reopenedPaths.push(filePath)
