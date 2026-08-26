@@ -293,12 +293,13 @@ async function projectGlobalRegistryBridge(): Promise<Record<string, unknown>> {
   mkdirSync(day, { recursive: true })
   const participantId = sessionMetaId(exactFixture)
   const rolloutPath = join(day, `rollout-recorded-${participantId}.jsonl`)
-  const acquisition = await acquireFreshRolloutCoordinator!({
+  const coordinatorOptions = {
     sessionsRoot,
     normalizeCwd: value => value,
     normalizePath: value => value,
     onError: error => { throw error },
-  })
+  }
+  const acquisition = await acquireFreshRolloutCoordinator!(coordinatorOptions)
   const participant = acquisition.coordinator.registerParticipant({
     participantId,
     cwd: '/recorded/worktree',
@@ -317,6 +318,17 @@ async function projectGlobalRegistryBridge(): Promise<Record<string, unknown>> {
       [symbol]?: object
     })[symbol]
     if (!bridge) throw new Error('Built registry bridge was not installed')
+    const begin = Reflect.get(bridge, 'begin') as
+      ((options: typeof coordinatorOptions) => {
+        coordinator: object
+        ready: Promise<void>
+        release(): Promise<void>
+      }) | undefined
+    if (typeof begin !== 'function') {
+      throw new Error('Built registry bridge has no begin operation')
+    }
+    const direct = begin(coordinatorOptions)
+    await direct.ready
     const descriptor = Object.getOwnPropertyDescriptor(globalThis, symbol)
     const globalProjection = projectReflectiveReachability(bridge, {
       coordinator: acquisition.coordinator,
@@ -331,17 +343,30 @@ async function projectGlobalRegistryBridge(): Promise<Record<string, unknown>> {
         participantId,
       },
     )
-    return {
-      bridgeFrozen: Object.isFrozen(bridge),
-      descriptor: {
-        enumerable: descriptor?.enumerable ?? null,
-        writable: descriptor && 'writable' in descriptor
-          ? descriptor.writable ?? null
-          : null,
-        configurable: descriptor?.configurable ?? null,
-      },
-      ...globalProjection,
-      coordinatorReachableHmacKey: coordinatorProjection.reachableHmacKey,
+    try {
+      const operationProjection = projectReflectiveReachability(direct, {
+        coordinator: direct.coordinator,
+        rawPath: rolloutPath,
+        participantId,
+      })
+      return {
+        bridgeFrozen: Object.isFrozen(bridge),
+        descriptor: {
+          enumerable: descriptor?.enumerable ?? null,
+          writable: descriptor && 'writable' in descriptor
+            ? descriptor.writable ?? null
+            : null,
+          configurable: descriptor?.configurable ?? null,
+        },
+        ...globalProjection,
+        coordinatorReachableHmacKey: coordinatorProjection.reachableHmacKey,
+        operationResultReachableMap: operationProjection.reachableMap,
+        operationResultReachableSet: operationProjection.reachableSet,
+        operationReturnedBackingCoordinator:
+          direct.coordinator instanceof FreshRolloutOwnershipCoordinator,
+      }
+    } finally {
+      await direct.release()
     }
   } finally {
     participant.unregister()

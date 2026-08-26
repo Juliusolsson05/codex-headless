@@ -305,14 +305,32 @@ function effectiveInputIsRecordedContract(value: unknown): boolean {
   }
 
   if (!Array.isArray(value.layers)) return false
-  const layerTypes = value.layers.map(layer =>
-    isRecord(layer) && isRecord(layer.name) ? layer.name.type : null)
-  if (layerTypes.filter(type => type === 'sessionFlags').length !== 1) {
-    return false
+  const allowedLayerTypes = new Set(['sessionFlags', 'user', 'system', 'project'])
+  const singletonLayerTypes = new Set(['sessionFlags', 'user', 'system'])
+  const seenSingletons = new Set<string>()
+  for (const layer of value.layers) {
+    if (!isRecord(layer) || !isRecord(layer.name) ||
+      typeof layer.name.type !== 'string' ||
+      !allowedLayerTypes.has(layer.name.type)) {
+      // WHY config/read is the authority that says our forced keymap is the
+      // effective provider input contract. Treating malformed or future layer
+      // variants as an ignorable `null` lets a higher-precedence policy exist
+      // outside the proof while we still issue submission authority. A pinned
+      // 0.149.1 adapter must fail closed until a new variant is recorded.
+      return false
+    }
+    if (!singletonLayerTypes.has(layer.name.type)) continue
+    if (seenSingletons.has(layer.name.type)) {
+      // WHY these three protocol sources are singletons. A duplicate is not a
+      // second harmless copy; it means the response no longer has the recorded
+      // merge shape, so we cannot know which same-named source supplied the
+      // effective value. Project layers are intentionally excluded because
+      // Codex may legitimately report one for each nested .codex directory.
+      return false
+    }
+    seenSingletons.add(layer.name.type)
   }
-  return !layerTypes.some(type =>
-    type === 'legacyManagedConfigTomlFromFile' ||
-    type === 'legacyManagedConfigTomlFromMdm')
+  return seenSingletons.has('sessionFlags')
 }
 
 function flattenLeaves(

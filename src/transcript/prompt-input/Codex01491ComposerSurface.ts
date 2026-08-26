@@ -69,7 +69,7 @@ export function classifyCodex01491ComposerSurface(
           return { kind: 'unknown' }
         }
 
-        const draftRows = rows.slice(composerRow, separatorRow)
+        const draftRows = frame.rows.slice(composerRow, separatorRow)
         const draftText = extractDraftText(draftRows, frame.cols)
         if (draftText === null) return { kind: 'unknown' }
 
@@ -104,13 +104,17 @@ function findComposerRow(rows: readonly string[], lastNonBlank: number): number 
   return -1
 }
 
-function extractDraftText(rows: readonly string[], cols: number): string | null {
+function extractDraftText(
+  rows: StableTerminalFrame['rows'],
+  cols: number,
+): string | null {
   if (rows.length === 0) return null
-  const first = rows[0] ?? ''
+  const first = rows[0]?.text.replace(/[ \t]+$/u, '') ?? ''
   if (!/^›(?: |$)/u.test(first)) return null
 
   const logicalRows = [first.replace(/^› ?/u, '')]
-  for (const continuation of rows.slice(1)) {
+  for (const row of rows.slice(1)) {
+    const continuation = row.text.replace(/[ \t]+$/u, '')
     if (!/^  /u.test(continuation)) return null
     logicalRows.push(continuation.slice(2))
   }
@@ -119,8 +123,22 @@ function extractDraftText(rows: readonly string[], cols: number): string | null 
   // bit cannot always distinguish a logical newline from a soft wrap. A nearly
   // full intermediate row is therefore ambiguous. Short recorded multiline
   // rows are exact logical lines; long wrapped drafts fail closed.
-  const wrapThreshold = Math.max(1, cols - 6)
-  if (logicalRows.slice(0, -1).some(row => [...row].length >= wrapThreshold)) {
+  const lastUnambiguousColumn = Math.max(0, cols - 6)
+  if (rows.slice(0, -1).some(row => {
+    // WHY terminal geometry lives in physical cells, not JavaScript strings.
+    // xterm stores a double-width glyph in one cell followed by an empty
+    // continuation cell; counting code points makes a physically full CJK row
+    // appear half empty and converts the next textarea row into a logical LF.
+    // The continuation and an ordinary trailing blank are indistinguishable in
+    // this provider-neutral snapshot, so the boundary is deliberately one cell
+    // conservative. Ambiguity suppresses ownership evidence but never blocks
+    // the terminal or the user's actual submission.
+    for (let column = Math.min(cols, row.cells.length) - 1;
+      column >= 0; column -= 1) {
+      if (row.cells[column] !== '') return column >= lastUnambiguousColumn
+    }
+    return false
+  })) {
     return null
   }
 

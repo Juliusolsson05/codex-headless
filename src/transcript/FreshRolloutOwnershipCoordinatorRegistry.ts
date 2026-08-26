@@ -73,6 +73,82 @@ type Registry = {
   roots: Map<string, RootEntry>
 }
 
+// WHY the process-global bridge must return behavior to duplicate compiled
+// package copies, but it must never return the RootEntry's backing coordinator.
+// TypeScript `private` fields are ordinary reflectable properties in emitted
+// JavaScript, so handing that instance through `bridge.begin()` made every
+// participant, lease, and candidate Map reachable and mutable. These WeakMaps
+// keep one stable method-only facade per backing coordinator and let only this
+// first-loaded registry closure recover the actual identity for test gates.
+const coordinatorFacades = new WeakMap<
+  FreshRolloutOwnershipCoordinator,
+  FreshRolloutOwnershipCoordinator
+>()
+const facadeCoordinators = new WeakMap<
+  FreshRolloutOwnershipCoordinator,
+  FreshRolloutOwnershipCoordinator
+>()
+const failNextCandidateCommitForTesting = new WeakSet<
+  FreshRolloutOwnershipCoordinator
+>()
+
+const COORDINATOR_METHODS = [
+  'registerParticipant',
+  'registerResumeParticipant',
+  'beginCandidateObservation',
+  'rememberStaleCandidateGeneration',
+  'clearStaleCandidateGenerations',
+  'observeCandidate',
+  'commitCandidateObservation',
+  'reservePath',
+  'retireOwnerLeases',
+  'retirePathLease',
+  'compactInactiveState',
+  'requiresCandidateRescan',
+  'compactCandidateTransportPath',
+  'isCandidateTransportTerminal',
+  'expireInactiveParticipants',
+  'millisecondsUntilInactiveExpiry',
+  'inspect',
+  'inspectRetentionForTesting',
+] as const
+
+function publicCoordinatorFacade(
+  coordinator: FreshRolloutOwnershipCoordinator,
+): FreshRolloutOwnershipCoordinator {
+  const existing = coordinatorFacades.get(coordinator)
+  if (existing) return existing
+  const target = Object.create(null) as Record<PropertyKey, unknown>
+  for (const methodName of COORDINATOR_METHODS) {
+    Object.defineProperty(target, methodName, {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      // WHY an explicit allowlist is essential here. A general Proxy `get`
+      // trap would hide own keys from reflection but still return a backing Map
+      // to anyone who guessed `participants` or `pathLeases`. Each closure below
+      // can invoke one public operation and carries no reflectable reference to
+      // the coordinator it closes over.
+      value: (...args: unknown[]) => Reflect.apply(
+        Reflect.get(coordinator, methodName) as (...values: unknown[]) => unknown,
+        coordinator,
+        args,
+      ),
+    })
+  }
+  const facade = Object.freeze(target) as unknown as
+    FreshRolloutOwnershipCoordinator
+  coordinatorFacades.set(coordinator, facade)
+  facadeCoordinators.set(facade, coordinator)
+  return facade
+}
+
+function backingCoordinator(
+  coordinator: FreshRolloutOwnershipCoordinator,
+): FreshRolloutOwnershipCoordinator {
+  return facadeCoordinators.get(coordinator) ?? coordinator
+}
+
 export type FreshRolloutTransportInspection = Readonly<{
   knownPathCount: number
   lastFingerprintCount: number
@@ -290,7 +366,7 @@ function beginWithRegistry(
     }
   })()
   return {
-    coordinator: acquiredEntry.coordinator,
+    coordinator: publicCoordinatorFacade(acquiredEntry.coordinator),
     ready,
     release: async () => {
       if (released) return
@@ -357,12 +433,25 @@ export function emitFreshRolloutChangeAndDrainForTesting(
   )
 }
 
+/** Fail one queued commit without making the public coordinator mutable. */
+export function failNextFreshRolloutCandidateCommitForTesting(
+  coordinator: FreshRolloutOwnershipCoordinator,
+): void {
+  // WHY the original queue-resilience contract monkey-patched a method on the
+  // returned coordinator. That is precisely the mutation path the opaque
+  // facade now forbids. A one-shot WeakSet gate preserves the recorded queue
+  // schedule without exposing the backing object or adding another operation
+  // to the process-global duplicate-copy bridge.
+  failNextCandidateCommitForTesting.add(backingCoordinator(coordinator))
+}
+
 function rootEntryForCoordinator(
   registry: Registry,
   coordinator: FreshRolloutOwnershipCoordinator,
 ): RootEntry {
+  const expected = backingCoordinator(coordinator)
   for (const entry of registry.roots.values()) {
-    if (entry.coordinator === coordinator) return entry
+    if (entry.coordinator === expected) return entry
   }
   // WHY test controls must be rooted in a capability the caller already
   // possesses. Accepting a root path or registry key would both reveal the
@@ -546,6 +635,9 @@ async function ensureWatcher(root: string, entry: RootEntry): Promise<void> {
               prefix,
             )
             if (!candidate) return
+            if (failNextCandidateCommitForTesting.delete(entry.coordinator)) {
+              throw new Error('recorded first queued commit failure')
+            }
             entry.coordinator.commitCandidateObservation(
               reserved.observation,
               candidate,

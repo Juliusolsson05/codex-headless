@@ -49,6 +49,9 @@ type BuiltRuntimeProjection = {
     reachableRawPath: boolean
     reachableParticipantId: boolean
     coordinatorReachableHmacKey: boolean
+    operationResultReachableMap: boolean
+    operationResultReachableSet: boolean
+    operationReturnedBackingCoordinator: boolean
   }
 }
 
@@ -188,6 +191,9 @@ describe('ninth-gate built runtime contracts', () => {
       reachableRawPath: false,
       reachableParticipantId: false,
       coordinatorReachableHmacKey: false,
+      operationResultReachableMap: false,
+      operationResultReachableSet: false,
+      operationReturnedBackingCoordinator: false,
     })
   })
 })

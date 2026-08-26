@@ -21,6 +21,7 @@ import {
 } from './FreshRolloutClaim.js'
 import {
   acquireFreshRolloutCoordinator,
+  failNextFreshRolloutCandidateCommitForTesting,
   holdFreshRolloutReadQueueForTesting,
   inspectFreshRolloutTransportForTesting,
 } from './FreshRolloutOwnershipCoordinatorRegistry.js'
@@ -859,20 +860,7 @@ describe('process-wide fresh rollout watcher', () => {
       onLease: lease => secondLeases.push(lease.filePath),
     })
     handle.registerPrompt(second.ownership.localPromptToken)
-    const originalCommit = acquisition.coordinator.commitCandidateObservation
-      .bind(acquisition.coordinator)
-    let failFirstCommit = true
-    acquisition.coordinator.commitCandidateObservation = (
-      observation,
-      candidate,
-      options,
-    ) => {
-      if (failFirstCommit) {
-        failFirstCommit = false
-        throw new Error('recorded first queued commit failure')
-      }
-      return originalCommit(observation, candidate, options)
-    }
+    failNextFreshRolloutCandidateCommitForTesting(acquisition.coordinator)
     const firstPath = join(
       day,
       'rollout-errors-00000000-0000-4000-8000-000000000072.jsonl',
@@ -899,7 +887,6 @@ describe('process-wide fresh rollout watcher', () => {
       expect(errorCalls).toBe(1)
     } finally {
       readGate.release()
-      acquisition.coordinator.commitCandidateObservation = originalCommit
       handle.unregister()
       acquisition.coordinator.retireOwnerLeases(participantId, true)
       await acquisition.release()

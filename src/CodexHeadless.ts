@@ -301,6 +301,17 @@ class CodexResumeRolloutPreparationState {
     }
   }
 
+  async disposeBeforeConsumption(clean = true): Promise<void> {
+    // WHY the public capability is rollback authority for the parent, not a
+    // permanent second stop handle. `consume()` transfers exact-path custody to
+    // the active tail synchronously after that tail opens. A retained parent
+    // handle may still be cleaned by a late finally block, but after transfer
+    // that cleanup must be harmless; only the tail controller knows whether the
+    // physical close was clean enough to retire or tombstone the lease.
+    if (this.#consumed) return
+    await this.dispose(clean)
+  }
+
   #assertUsable(): void {
     if (this.#disposed) {
       throw new Error('Codex resume rollout preparation was disposed')
@@ -326,7 +337,7 @@ Object.defineProperty(RESUME_ROLLOUT_PREPARATION_HANDLE_PROTOTYPE, 'dispose', {
           'prepareCodexResumeRollout()',
       ))
     }
-    return internal.dispose(clean)
+    return internal.disposeBeforeConsumption(clean)
   },
 })
 Object.freeze(RESUME_ROLLOUT_PREPARATION_HANDLE_PROTOTYPE)
