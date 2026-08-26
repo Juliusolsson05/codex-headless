@@ -19,6 +19,10 @@ type BuiltRuntimeProjection = {
     beforeDispose: GetterProjection
     afterDispose: GetterProjection
   }
+  tenthGateResumeDeepModule: {
+    exportNames: string[]
+    exposesControllerUnwrapper: boolean
+  }
   ch07StructuralPromptProfile: {
     caseId: string
     profileSource: string
@@ -89,6 +93,19 @@ describe('ninth-gate built runtime contracts', () => {
     expect.soft(
       current.ch06ResumePrototype.afterDispose.sensitiveGetterNames,
     ).toEqual([])
+  })
+
+  it('keeps the resume controller unwrapper out of every shipped deep module', () => {
+    // WHY the public handle's empty prototype is not the complete package
+    // boundary. The tenth exact-head gate deep-imported the emitted preparation
+    // module and recovered the WeakMap controller, including raw roots and lease
+    // retirement authority. The public factory/type may remain importable for
+    // compatibility, but no shipped export may cross that private closure.
+    expect.soft(
+      current.tenthGateResumeDeepModule.exposesControllerUnwrapper,
+    ).toBe(false)
+    expect.soft(current.tenthGateResumeDeepModule.exportNames)
+      .not.toContain('unwrapCodexResumeRolloutPreparation')
   })
 
   it('CH-07 refuses an unissued recorded-profile lookalike in the shipped facade', () => {

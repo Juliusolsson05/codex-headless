@@ -32,10 +32,12 @@ const builtEntries = {
 
 const [
   built,
+  resumeRuntime,
   promptRuntime,
   coordinatorRuntime,
 ] = await Promise.all([
   import(builtEntries.root.href) as Promise<Record<string, unknown>>,
+  import(builtEntries.resume.href) as Promise<Record<string, unknown>>,
   import(builtEntries.prompt.href) as Promise<Record<string, unknown>>,
   import(builtEntries.coordinator.href) as Promise<Record<string, unknown>>,
 ])
@@ -110,6 +112,11 @@ try {
       ),
     },
     ch06ResumePrototype: resumeProjection,
+    tenthGateResumeDeepModule: {
+      exportNames: Object.keys(resumeRuntime).sort(),
+      exposesControllerUnwrapper:
+        typeof resumeRuntime.unwrapCodexResumeRolloutPreparation === 'function',
+    },
     ch07StructuralPromptProfile: promptProjection,
     ch08RetentionInspection: retentionProjection,
   }, null, 2)}\n`)

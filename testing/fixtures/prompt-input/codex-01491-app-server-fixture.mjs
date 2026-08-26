@@ -31,6 +31,9 @@ lines.on('line', line => {
     const version = mode === 'wrong-version' ? '0.150.0' : recorded.provider.cliVersion
     respond({
       id: request.id,
+      ...(mode === 'initialize-result-and-error'
+        ? { error: { code: -1, message: 'recorded initialize failure' } }
+        : {}),
       result: {
         userAgent: `${recorded.protocol.clientName}/${version} (recorded fixture)`,
       },
@@ -53,6 +56,9 @@ lines.on('line', line => {
   }
   respond({
     id: request.id,
+    ...(mode === 'result-and-error'
+      ? { error: { code: -1, message: 'recorded config/read failure' } }
+      : {}),
     result: {
       config: {
         tui: {
