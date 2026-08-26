@@ -25,5 +25,39 @@
     ],
     "legacyManagedLayerPresent": false
   },
+  "layerShapeEvidence": {
+    "recordedAt": "2026-08-26",
+    "rawLayersSha256": "7d2f5b9bea4734da5d4d418d7faa975dc177ccb5074d830fab74c007733cec1b",
+    "layers": [
+      {
+        "type": "sessionFlags",
+        "layerFields": ["config", "name", "version"],
+        "sourceFields": ["type"],
+        "sourceFieldTypes": { "type": "string" },
+        "versionType": "string",
+        "configType": "object"
+      },
+      {
+        "type": "user",
+        "layerFields": ["config", "name", "version"],
+        "sourceFields": ["file", "profile", "type"],
+        "sourceFieldTypes": {
+          "type": "string",
+          "file": "string",
+          "profile": "null"
+        },
+        "versionType": "string",
+        "configType": "object"
+      },
+      {
+        "type": "system",
+        "layerFields": ["config", "name", "version"],
+        "sourceFields": ["file", "type"],
+        "sourceFieldTypes": { "type": "string", "file": "string" },
+        "versionType": "string",
+        "configType": "object"
+      }
+    ]
+  },
   "sourceEvidenceSha256": "4f1b81c931462f60da81b2e5b5f7656d2bcc57157f309301b8a0980789801a71"
 }

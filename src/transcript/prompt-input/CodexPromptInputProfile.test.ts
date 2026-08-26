@@ -50,12 +50,25 @@ describe('Codex 0.149.1 prompt-input launch profile', () => {
     )
   })
 
+  it('accepts the pinned repeated-project layer shape', async () => {
+    await expect(prepare('multiple-project-layers')).resolves.toMatchObject({
+      ok: true,
+    })
+  })
+
   it.each([
     ['conflicting-binding', 'effective-config-unverified'],
     ['managed-layer', 'effective-config-unverified'],
     ['malformed-layer', 'effective-config-unverified'],
     ['unknown-layer', 'effective-config-unverified'],
     ['duplicate-layer', 'effective-config-unverified'],
+    ['missing-layer-version', 'effective-config-unverified'],
+    ['missing-layer-config', 'effective-config-unverified'],
+    ['missing-user-file', 'effective-config-unverified'],
+    ['missing-user-profile', 'effective-config-unverified'],
+    ['missing-system-file', 'effective-config-unverified'],
+    ['missing-project-folder', 'effective-config-unverified'],
+    ['invalid-disabled-reason', 'effective-config-unverified'],
     ['result-and-error', 'effective-config-unverified'],
     ['initialize-result-and-error', 'effective-config-unverified'],
     ['wrong-version', 'unsupported-cli'],

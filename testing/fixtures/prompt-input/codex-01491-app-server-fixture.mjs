@@ -60,7 +60,13 @@ lines.on('line', line => {
   if (mode === 'duplicate-layer') {
     layerTypes.push('user')
   }
-  const layers = layerTypes.map(type => ({ name: { type }, config: {} }))
+  if (mode === 'multiple-project-layers') {
+    layerTypes.push('project', 'project')
+  }
+  if (mode === 'missing-project-folder') {
+    layerTypes.push('project')
+  }
+  const layers = layerTypes.map((type, index) => recordedLayer(type, index))
   if (mode === 'malformed-layer') {
     // WHY preserve the exact recorded layer count and every neighboring config
     // value. The twelfth-gate counterexample changed only one protocol object
@@ -68,6 +74,18 @@ lines.on('line', line => {
     // inventing a second effective-keymap mutation would no longer isolate the
     // authority minted by malformed layer evidence.
     layers[1] = { name: null, config: {} }
+  }
+  const userLayer = layers.find(layer => layer.name?.type === 'user')
+  const systemLayer = layers.find(layer => layer.name?.type === 'system')
+  const projectLayer = layers.find(layer => layer.name?.type === 'project')
+  if (mode === 'missing-layer-version') delete layers[0].version
+  if (mode === 'missing-layer-config') delete layers[0].config
+  if (mode === 'missing-user-file') delete userLayer.name.file
+  if (mode === 'missing-user-profile') delete userLayer.name.profile
+  if (mode === 'missing-system-file') delete systemLayer.name.file
+  if (mode === 'missing-project-folder') delete projectLayer.name.dotCodexFolder
+  if (mode === 'invalid-disabled-reason') {
+    layers[0].disabledReason = { unexpected: true }
   }
   respond({
     id: request.id,
@@ -88,4 +106,35 @@ lines.on('line', line => {
 
 function respond(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`)
+}
+
+function recordedLayer(type, index) {
+  // WHY placeholder values exist at all: the fresh 0.149.1 recording proves
+  // these exact fields and JSON types, but committing its host paths or config
+  // would turn a protocol fixture into a privacy leak. The structure and raw
+  // response checksum live in codex-01491-config-read-recorded.json; only the
+  // content-safe values below are substituted so the deterministic shell emits
+  // a schema-valid response rather than the malformed `{name:{type}}` shape
+  // that hid the twelfth-gate bug.
+  const names = {
+    sessionFlags: { type: 'sessionFlags' },
+    user: {
+      type: 'user',
+      file: '/sanitized/codex-home/config.toml',
+      profile: null,
+    },
+    system: {
+      type: 'system',
+      file: '/sanitized/system/config.toml',
+    },
+    project: {
+      type: 'project',
+      dotCodexFolder: `/sanitized/project-${index}/.codex`,
+    },
+  }
+  return {
+    name: names[type] ?? { type },
+    version: `recorded-${type}-version`,
+    config: {},
+  }
 }
