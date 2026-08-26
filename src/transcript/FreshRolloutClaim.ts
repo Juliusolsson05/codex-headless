@@ -11,6 +11,8 @@ import {
   isCodexResponseItem,
   isCodexSessionMeta,
 } from './TranscriptTypes.js'
+import { collectRolloutLineageIds } from './ResumeForkCandidate.js'
+import { SubmittedPromptInput } from './SubmittedPromptInput.js'
 
 export type SubmittedPrompt = {
   text: string
@@ -22,8 +24,25 @@ export type FreshRolloutCandidate = {
   filePath: string
   threadId: string | null
   cwd: string | null
+  cliVersion: string | null
+  userMessages: FreshRolloutUserMessage[]
+  lineageIds: string[]
+  /**
+   * WHY this legacy projection remains during the instrumentation stage:
+   * Stage 0 must make the failed decision observable without changing it. The
+   * claimant therefore continues to compare exactly the value it compared
+   * before, while `userMessages` records the complete ordered evidence that
+   * later fixture stages will use to replace this lossy projection.
+   */
   firstUserMessage: string | null
   normalizedFirstUserMessage: string | null
+}
+
+export type FreshRolloutUserMessage = {
+  source: 'event_msg' | 'response_item'
+  lineIndex: number
+  text: string
+  normalized: string
 }
 
 export type FreshRolloutClaimDecision =
@@ -36,7 +55,6 @@ const USER_INPUT_OPEN = /<user_input>\s*/gi
 const USER_INPUT_CLOSE = /\s*<\/user_input>/gi
 const USER_MESSAGE_BEGIN = /USER_MESSAGE_BEGIN[\r\n]*/g
 const USER_MESSAGE_END = /[\r\n]*USER_MESSAGE_END/g
-const BRACKETED_PASTE_RE = /\x1b\[200~([\s\S]*?)\x1b\[201~/g
 
 // Keep this normalization intentionally aligned with renderer-side
 // optimistic reconciliation instead of byte-for-byte JSONL matching.
@@ -50,19 +68,12 @@ export function normalizePromptForOwnership(text: string): string {
 }
 
 export function extractSubmittedPromptFromWrite(data: string): string | null {
-  BRACKETED_PASTE_RE.lastIndex = 0
-  let match: RegExpExecArray | null
-  let last: string | null = null
-  while ((match = BRACKETED_PASTE_RE.exec(data)) !== null) {
-    last = match[1] ?? ''
-  }
-  if (last !== null) return cleanUserText(last)
-
-  if (!data.endsWith('\r')) return null
-  if (data.includes('\x1b')) return null
-  const text = data.slice(0, -1)
-  if (!text.trim()) return null
-  return cleanUserText(text)
+  // WHY the stateless helper remains for callers/tests that already have one
+  // atomic write, but it must share the exact submission semantics of the live
+  // incremental boundary. In particular, a completed paste frame without Enter
+  // is composer state, not ownership evidence.
+  const [last] = new SubmittedPromptInput().consume(data).slice(-1)
+  return last === undefined ? null : cleanUserText(last)
 }
 
 export function parseFreshRolloutCandidate(
@@ -73,8 +84,11 @@ export function parseFreshRolloutCandidate(
   let turnContextCwd: string | null = null
   let eventUserText: string | null = null
   let replayUserText: string | null = null
+  const userMessages: FreshRolloutUserMessage[] = []
+  const lineageIds = new Set<string>()
+  collectRolloutLineageIds(text, lineageIds, 8000)
 
-  for (const rawLine of text.split('\n')) {
+  for (const [lineIndex, rawLine] of text.split('\n').entries()) {
     const trimmed = rawLine.trim()
     if (!trimmed) continue
     let parsed: CodexRolloutLine
@@ -97,13 +111,33 @@ export function parseFreshRolloutCandidate(
       continue
     }
 
-    if (isCodexEventMsg(parsed) && !eventUserText) {
-      eventUserText = extractEventUserMessageText(parsed)
+    if (isCodexEventMsg(parsed)) {
+      const userText = extractEventUserMessageText(parsed)
+      if (userText !== null) {
+        const normalized = normalizePromptForOwnership(userText)
+        userMessages.push({
+          source: 'event_msg',
+          lineIndex,
+          text: userText,
+          normalized,
+        })
+        if (!eventUserText) eventUserText = userText
+      }
       continue
     }
 
-    if (isCodexResponseItem(parsed) && !replayUserText) {
-      replayUserText = extractReplayUserMessageText(parsed.payload)
+    if (isCodexResponseItem(parsed)) {
+      const userText = extractReplayUserMessageText(parsed.payload)
+      if (userText !== null) {
+        const normalized = normalizePromptForOwnership(userText)
+        userMessages.push({
+          source: 'response_item',
+          lineIndex,
+          text: userText,
+          normalized,
+        })
+        if (!replayUserText) replayUserText = userText
+      }
     }
   }
 
@@ -114,6 +148,9 @@ export function parseFreshRolloutCandidate(
     filePath,
     threadId: sessionMeta?.id ?? null,
     cwd: cwd ?? null,
+    cliVersion: sessionMeta?.cli_version ?? null,
+    userMessages,
+    lineageIds: [...lineageIds],
     firstUserMessage: firstUserMessage ?? null,
     normalizedFirstUserMessage: firstUserMessage
       ? normalizePromptForOwnership(firstUserMessage)
@@ -156,9 +193,21 @@ export function decideFreshRolloutClaim(options: {
     prompt: SubmittedPrompt
   }> = []
   for (const candidate of sameCwd) {
-    if (!candidate.normalizedFirstUserMessage) continue
+    // WHY ownership searches every durable user observation instead of trying
+    // to identify and skip bootstrap messages: current Codex serializes
+    // injected AGENTS/environment context as ordinary role-user response items
+    // before the actual prompt, and that bootstrap vocabulary is not a stable
+    // protocol. Exact equality with a prompt written through THIS PTY is the
+    // positive ownership proof. We still collapse to one match per candidate,
+    // so duplicated event_msg/response_item representations of a legacy prompt
+    // cannot manufacture ambiguity within one rollout.
+    const observedUserMessages = new Set(
+      candidate.userMessages
+        .map(message => message.normalized)
+        .filter(normalized => normalized.length > 0),
+    )
     const prompt = prompts.find(
-      item => item.normalized === candidate.normalizedFirstUserMessage,
+      item => observedUserMessages.has(item.normalized),
     )
     if (prompt) matches.push({ candidate, prompt })
   }
@@ -166,7 +215,7 @@ export function decideFreshRolloutClaim(options: {
   if (matches.length === 0) {
     return {
       type: 'hold',
-      reason: 'same-cwd candidates exist but none match a local submitted prompt',
+      reason: 'same-cwd candidates exist but no durable user observation matches a local submitted prompt',
     }
   }
 

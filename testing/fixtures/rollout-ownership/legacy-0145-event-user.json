@@ -1,0 +1,1532 @@
+{
+  "schemaVersion": 3,
+  "id": "legacy-0145-event-user",
+  "provenance": {
+    "sourceLabel": "recorded-source-965be9758c81d546",
+    "sourceSha256": "c18b592ae2f03cf51e40c2d199476d24669812880128fa60bea0f1875fb27aa3",
+    "sessionRecordingId": null,
+    "cliVersion": "0.145.0",
+    "sessionClass": "fresh",
+    "originalLineCount": 95,
+    "userObservationCount": 3,
+    "originalUserObservations": [
+      {
+        "source": "response_item",
+        "originalLineIndex": 5,
+        "token": "",
+        "characterCount": 2630
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 8,
+        "token": "",
+        "characterCount": 1263
+      },
+      {
+        "source": "event_msg",
+        "originalLineIndex": 9,
+        "token": "",
+        "characterCount": 1263
+      }
+    ],
+    "wireShape": [
+      {
+        "source": "response_item",
+        "originalLineIndex": 5,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 2128,
+              "byteSizeClass": "2048-8191",
+              "wrappers": []
+            }
+          },
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 501,
+              "byteSizeClass": "128-511",
+              "wrappers": []
+            }
+          }
+        ]
+      },
+      {
+        "source": "response_item",
+        "originalLineIndex": 8,
+        "equalityClass": "",
+        "content": [
+          {
+            "type": "input_text",
+            "keys": [
+              "text",
+              "type"
+            ],
+            "text": {
+              "characterCount": 1263,
+              "byteSizeClass": "512-2047",
+              "wrappers": []
+            }
+          }
+        ]
+      },
+      {
+        "source": "event_msg",
+        "originalLineIndex": 9,
+        "equalityClass": "",
+        "text": {
+          "characterCount": 1263,
+          "byteSizeClass": "512-2047",
+          "wrappers": []
+        }
+      }
+    ],
+    "lineageWireShape": [
+      {
+        "originalLineIndex": 1,
+        "type": "event_msg",
+        "payloadType": "task_started",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 7,
+        "type": "turn_context",
+        "payloadType": null,
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-0"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 10,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-1"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 12,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-2"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 13,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-3"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-4"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 14,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-4"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 16,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-5"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 17,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-6"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-7"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 18,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-7"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 20,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-8"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 22,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-9"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 23,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-10"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-11"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 24,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-11"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 26,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-12"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 27,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-13"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-14"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 28,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-14"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 30,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-15"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 31,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-16"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-17"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 32,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-17"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 34,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-18"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 35,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-19"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-20"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 36,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-20"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 38,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-21"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 40,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-22"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 41,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-23"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-24"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 42,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-24"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 44,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-25"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 45,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-26"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 46,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-27"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-28"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 47,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-28"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 49,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-29"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 50,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-30"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-31"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 51,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-31"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 53,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-32"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 54,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-33"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 55,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-34"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-35"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 56,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-35"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 58,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-36"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 59,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-37"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 60,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-38"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-39"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 61,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-39"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 63,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-40"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 64,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-41"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-42"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 65,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-42"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 67,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-43"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 68,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-44"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 69,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-45"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-46"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 70,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-46"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 72,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-47"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 74,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-48"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 75,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-49"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-50"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 76,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-50"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 78,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-51"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 79,
+        "type": "response_item",
+        "payloadType": "function_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-52"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-53"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 80,
+        "type": "response_item",
+        "payloadType": "function_call_output",
+        "fields": [
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-53"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 82,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-54"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 83,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-55"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-56"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 84,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-56"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 86,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-57"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 87,
+        "type": "response_item",
+        "payloadType": "custom_tool_call",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-58"
+          },
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-59"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 88,
+        "type": "response_item",
+        "payloadType": "custom_tool_call_output",
+        "fields": [
+          {
+            "key": "call_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-59"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 90,
+        "type": "response_item",
+        "payloadType": "reasoning",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-60"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 92,
+        "type": "response_item",
+        "payloadType": "message",
+        "fields": [
+          {
+            "key": "id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-61"
+          }
+        ]
+      },
+      {
+        "originalLineIndex": 94,
+        "type": "event_msg",
+        "payloadType": "task_complete",
+        "fields": [
+          {
+            "key": "turn_id",
+            "equalityClass": "recorded-lineage-legacy-0145-event-user-0"
+          }
+        ]
+      }
+    ],
+    "transformation": "ownership-projection-v3"
+  },
+  "ownership": {
+    "localPromptToken": "",
+    "expectedLegacyDecision": "accept",
+    "expectedTargetDecision": "accept",
+    "note": "Legacy Codex emits the submitted prompt as both response_item and event_msg.user_message; the event message made the old projection work."
+  },
+  "lines": [
+    {
+      "timestamp": "2026-07-23T16:39:26.712Z",
+      "type": "session_meta",
+      "payload": {
+        "id": "7b1ef804-b419-4021-80a0-58dd72f8bde3",
+        "timestamp": "2026-07-23T16:39:26.712Z",
+        "cwd": "/recorded/worktree",
+        "originator": "codex-tui",
+        "cli_version": "0.145.0",
+        "source": "cli"
+      },
+      "_recordedLineIndex": 0
+    },
+    {
+      "timestamp": "2026-07-23T16:39:26.712Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "task_started",
+        "turn_id": "recorded-lineage-legacy-0145-event-user-0"
+      },
+      "_recordedLineIndex": 1
+    },
+    {
+      "timestamp": "2026-07-23T16:39:26.718Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               "
+          },
+          {
+            "type": "input_text",
+            "text": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     "
+          }
+        ]
+      },
+      "_recordedLineIndex": 5
+    },
+    {
+      "timestamp": "2026-07-23T16:39:26.718Z",
+      "type": "turn_context",
+      "payload": {
+        "cwd": "/recorded/worktree",
+        "turn_id": "recorded-lineage-legacy-0145-event-user-0"
+      },
+      "_recordedLineIndex": 7
+    },
+    {
+      "timestamp": "2026-07-23T16:39:26.724Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              "
+          }
+        ]
+      },
+      "_recordedLineIndex": 8
+    },
+    {
+      "timestamp": "2026-07-23T16:39:26.724Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "user_message",
+        "message": "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              "
+      },
+      "_recordedLineIndex": 9
+    },
+    {
+      "timestamp": "2026-07-23T16:39:27.828Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-1"
+      },
+      "_recordedLineIndex": 10
+    },
+    {
+      "timestamp": "2026-07-23T16:39:28.456Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "assistant",
+        "id": "recorded-lineage-legacy-0145-event-user-2"
+      },
+      "_recordedLineIndex": 12
+    },
+    {
+      "timestamp": "2026-07-23T16:39:29.735Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-legacy-0145-event-user-3",
+        "call_id": "recorded-lineage-legacy-0145-event-user-4"
+      },
+      "_recordedLineIndex": 13
+    },
+    {
+      "timestamp": "2026-07-23T16:39:29.975Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "call_id": "recorded-lineage-legacy-0145-event-user-4"
+      },
+      "_recordedLineIndex": 14
+    },
+    {
+      "timestamp": "2026-07-23T16:39:32.577Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-5"
+      },
+      "_recordedLineIndex": 16
+    },
+    {
+      "timestamp": "2026-07-23T16:39:34.834Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-legacy-0145-event-user-6",
+        "call_id": "recorded-lineage-legacy-0145-event-user-7"
+      },
+      "_recordedLineIndex": 17
+    },
+    {
+      "timestamp": "2026-07-23T16:39:34.929Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "call_id": "recorded-lineage-legacy-0145-event-user-7"
+      },
+      "_recordedLineIndex": 18
+    },
+    {
+      "timestamp": "2026-07-23T16:39:37.913Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-8"
+      },
+      "_recordedLineIndex": 20
+    },
+    {
+      "timestamp": "2026-07-23T16:39:38.919Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "assistant",
+        "id": "recorded-lineage-legacy-0145-event-user-9"
+      },
+      "_recordedLineIndex": 22
+    },
+    {
+      "timestamp": "2026-07-23T16:39:41.224Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-legacy-0145-event-user-10",
+        "call_id": "recorded-lineage-legacy-0145-event-user-11"
+      },
+      "_recordedLineIndex": 23
+    },
+    {
+      "timestamp": "2026-07-23T16:39:41.607Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "call_id": "recorded-lineage-legacy-0145-event-user-11"
+      },
+      "_recordedLineIndex": 24
+    },
+    {
+      "timestamp": "2026-07-23T16:39:54.067Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-12"
+      },
+      "_recordedLineIndex": 26
+    },
+    {
+      "timestamp": "2026-07-23T16:39:56.890Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-legacy-0145-event-user-13",
+        "call_id": "recorded-lineage-legacy-0145-event-user-14"
+      },
+      "_recordedLineIndex": 27
+    },
+    {
+      "timestamp": "2026-07-23T16:39:57.064Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "call_id": "recorded-lineage-legacy-0145-event-user-14"
+      },
+      "_recordedLineIndex": 28
+    },
+    {
+      "timestamp": "2026-07-23T16:40:04.432Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-15"
+      },
+      "_recordedLineIndex": 30
+    },
+    {
+      "timestamp": "2026-07-23T16:40:06.335Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-legacy-0145-event-user-16",
+        "call_id": "recorded-lineage-legacy-0145-event-user-17"
+      },
+      "_recordedLineIndex": 31
+    },
+    {
+      "timestamp": "2026-07-23T16:40:06.499Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "call_id": "recorded-lineage-legacy-0145-event-user-17"
+      },
+      "_recordedLineIndex": 32
+    },
+    {
+      "timestamp": "2026-07-23T16:40:15.850Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-18"
+      },
+      "_recordedLineIndex": 34
+    },
+    {
+      "timestamp": "2026-07-23T16:40:16.624Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-legacy-0145-event-user-19",
+        "call_id": "recorded-lineage-legacy-0145-event-user-20"
+      },
+      "_recordedLineIndex": 35
+    },
+    {
+      "timestamp": "2026-07-23T16:40:21.022Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "call_id": "recorded-lineage-legacy-0145-event-user-20"
+      },
+      "_recordedLineIndex": 36
+    },
+    {
+      "timestamp": "2026-07-23T16:40:25.746Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-21"
+      },
+      "_recordedLineIndex": 38
+    },
+    {
+      "timestamp": "2026-07-23T16:40:26.534Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "assistant",
+        "id": "recorded-lineage-legacy-0145-event-user-22"
+      },
+      "_recordedLineIndex": 40
+    },
+    {
+      "timestamp": "2026-07-23T16:40:27.413Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-legacy-0145-event-user-23",
+        "call_id": "recorded-lineage-legacy-0145-event-user-24"
+      },
+      "_recordedLineIndex": 41
+    },
+    {
+      "timestamp": "2026-07-23T16:40:28.986Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "call_id": "recorded-lineage-legacy-0145-event-user-24"
+      },
+      "_recordedLineIndex": 42
+    },
+    {
+      "timestamp": "2026-07-23T16:40:37.557Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-25"
+      },
+      "_recordedLineIndex": 44
+    },
+    {
+      "timestamp": "2026-07-23T16:40:37.755Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-26"
+      },
+      "_recordedLineIndex": 45
+    },
+    {
+      "timestamp": "2026-07-23T16:40:39.254Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-legacy-0145-event-user-27",
+        "call_id": "recorded-lineage-legacy-0145-event-user-28"
+      },
+      "_recordedLineIndex": 46
+    },
+    {
+      "timestamp": "2026-07-23T16:40:39.392Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "call_id": "recorded-lineage-legacy-0145-event-user-28"
+      },
+      "_recordedLineIndex": 47
+    },
+    {
+      "timestamp": "2026-07-23T16:40:41.252Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-29"
+      },
+      "_recordedLineIndex": 49
+    },
+    {
+      "timestamp": "2026-07-23T16:40:44.231Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-legacy-0145-event-user-30",
+        "call_id": "recorded-lineage-legacy-0145-event-user-31"
+      },
+      "_recordedLineIndex": 50
+    },
+    {
+      "timestamp": "2026-07-23T16:40:44.343Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "call_id": "recorded-lineage-legacy-0145-event-user-31"
+      },
+      "_recordedLineIndex": 51
+    },
+    {
+      "timestamp": "2026-07-23T16:40:52.663Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-32"
+      },
+      "_recordedLineIndex": 53
+    },
+    {
+      "timestamp": "2026-07-23T16:40:52.919Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-33"
+      },
+      "_recordedLineIndex": 54
+    },
+    {
+      "timestamp": "2026-07-23T16:40:53.543Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-legacy-0145-event-user-34",
+        "call_id": "recorded-lineage-legacy-0145-event-user-35"
+      },
+      "_recordedLineIndex": 55
+    },
+    {
+      "timestamp": "2026-07-23T16:40:56.605Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "call_id": "recorded-lineage-legacy-0145-event-user-35"
+      },
+      "_recordedLineIndex": 56
+    },
+    {
+      "timestamp": "2026-07-23T16:41:10.468Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-36"
+      },
+      "_recordedLineIndex": 58
+    },
+    {
+      "timestamp": "2026-07-23T16:41:16.006Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-37"
+      },
+      "_recordedLineIndex": 59
+    },
+    {
+      "timestamp": "2026-07-23T16:41:16.839Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-legacy-0145-event-user-38",
+        "call_id": "recorded-lineage-legacy-0145-event-user-39"
+      },
+      "_recordedLineIndex": 60
+    },
+    {
+      "timestamp": "2026-07-23T16:41:17.019Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "call_id": "recorded-lineage-legacy-0145-event-user-39"
+      },
+      "_recordedLineIndex": 61
+    },
+    {
+      "timestamp": "2026-07-23T16:41:19.064Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-40"
+      },
+      "_recordedLineIndex": 63
+    },
+    {
+      "timestamp": "2026-07-23T16:41:20.602Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-legacy-0145-event-user-41",
+        "call_id": "recorded-lineage-legacy-0145-event-user-42"
+      },
+      "_recordedLineIndex": 64
+    },
+    {
+      "timestamp": "2026-07-23T16:41:20.703Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "call_id": "recorded-lineage-legacy-0145-event-user-42"
+      },
+      "_recordedLineIndex": 65
+    },
+    {
+      "timestamp": "2026-07-23T16:41:31.471Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-43"
+      },
+      "_recordedLineIndex": 67
+    },
+    {
+      "timestamp": "2026-07-23T16:41:38.059Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-44"
+      },
+      "_recordedLineIndex": 68
+    },
+    {
+      "timestamp": "2026-07-23T16:41:39.500Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-legacy-0145-event-user-45",
+        "call_id": "recorded-lineage-legacy-0145-event-user-46"
+      },
+      "_recordedLineIndex": 69
+    },
+    {
+      "timestamp": "2026-07-23T16:41:39.738Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "call_id": "recorded-lineage-legacy-0145-event-user-46"
+      },
+      "_recordedLineIndex": 70
+    },
+    {
+      "timestamp": "2026-07-23T16:41:45.759Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-47"
+      },
+      "_recordedLineIndex": 72
+    },
+    {
+      "timestamp": "2026-07-23T16:41:47.304Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "assistant",
+        "id": "recorded-lineage-legacy-0145-event-user-48"
+      },
+      "_recordedLineIndex": 74
+    },
+    {
+      "timestamp": "2026-07-23T16:41:47.795Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-legacy-0145-event-user-49",
+        "call_id": "recorded-lineage-legacy-0145-event-user-50"
+      },
+      "_recordedLineIndex": 75
+    },
+    {
+      "timestamp": "2026-07-23T16:41:59.466Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "call_id": "recorded-lineage-legacy-0145-event-user-50"
+      },
+      "_recordedLineIndex": 76
+    },
+    {
+      "timestamp": "2026-07-23T16:42:08.766Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-51"
+      },
+      "_recordedLineIndex": 78
+    },
+    {
+      "timestamp": "2026-07-23T16:42:09.141Z",
+      "type": "response_item",
+      "payload": {
+        "type": "function_call",
+        "id": "recorded-lineage-legacy-0145-event-user-52",
+        "call_id": "recorded-lineage-legacy-0145-event-user-53"
+      },
+      "_recordedLineIndex": 79
+    },
+    {
+      "timestamp": "2026-07-23T16:42:17.993Z",
+      "type": "response_item",
+      "payload": {
+        "type": "function_call_output",
+        "call_id": "recorded-lineage-legacy-0145-event-user-53"
+      },
+      "_recordedLineIndex": 80
+    },
+    {
+      "timestamp": "2026-07-23T16:42:20.252Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-54"
+      },
+      "_recordedLineIndex": 82
+    },
+    {
+      "timestamp": "2026-07-23T16:42:20.810Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-legacy-0145-event-user-55",
+        "call_id": "recorded-lineage-legacy-0145-event-user-56"
+      },
+      "_recordedLineIndex": 83
+    },
+    {
+      "timestamp": "2026-07-23T16:42:25.764Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "call_id": "recorded-lineage-legacy-0145-event-user-56"
+      },
+      "_recordedLineIndex": 84
+    },
+    {
+      "timestamp": "2026-07-23T16:42:29.503Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-57"
+      },
+      "_recordedLineIndex": 86
+    },
+    {
+      "timestamp": "2026-07-23T16:42:32.030Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call",
+        "id": "recorded-lineage-legacy-0145-event-user-58",
+        "call_id": "recorded-lineage-legacy-0145-event-user-59"
+      },
+      "_recordedLineIndex": 87
+    },
+    {
+      "timestamp": "2026-07-23T16:42:32.556Z",
+      "type": "response_item",
+      "payload": {
+        "type": "custom_tool_call_output",
+        "call_id": "recorded-lineage-legacy-0145-event-user-59"
+      },
+      "_recordedLineIndex": 88
+    },
+    {
+      "timestamp": "2026-07-23T16:42:38.095Z",
+      "type": "response_item",
+      "payload": {
+        "type": "reasoning",
+        "id": "recorded-lineage-legacy-0145-event-user-60"
+      },
+      "_recordedLineIndex": 90
+    },
+    {
+      "timestamp": "2026-07-23T16:42:40.405Z",
+      "type": "response_item",
+      "payload": {
+        "type": "message",
+        "role": "assistant",
+        "id": "recorded-lineage-legacy-0145-event-user-61"
+      },
+      "_recordedLineIndex": 92
+    },
+    {
+      "timestamp": "2026-07-23T16:42:41.365Z",
+      "type": "event_msg",
+      "payload": {
+        "type": "task_complete",
+        "turn_id": "recorded-lineage-legacy-0145-event-user-0"
+      },
+      "_recordedLineIndex": 94
+    }
+  ]
+}

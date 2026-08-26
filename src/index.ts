@@ -17,6 +17,7 @@ export {
   type CodexTrustDialogEvent,
   type CodexConditionsEvent,
   type CodexExitEvent,
+  type CodexRolloutDiagnostic,
 } from './CodexHeadless.js'
 
 export type {
@@ -37,8 +38,17 @@ export {
   type HeadlessTerminalOptions,
   type HeadlessTerminalEvents,
   type ScreenSnapshot,
+  type StableTerminalFrame,
+  type StableTerminalRow,
   terminalToMarkdown,
 } from './terminal/HeadlessTerminal.js'
+
+export {
+  prepareCodex01491PromptInputProfile,
+  type Codex01491PromptInputProfileOptions,
+  type CodexPromptInputProfile,
+  type CodexPromptInputProfilePreparation,
+} from './transcript/prompt-input/CodexPromptInputProfile.js'
 
 // --- Parsers (codex-specific) ---
 export {
@@ -83,6 +93,17 @@ export {
   listCodexSessions,
   type CodexSessionInfo,
 } from './transcript/SessionList.js'
+
+export {
+  findCodexRolloutPathByThreadId,
+} from './transcript/RolloutLocator.js'
+
+export {
+  prepareCodexResumeRollout,
+} from './CodexHeadless.js'
+export type {
+  CodexResumeRolloutPreparation,
+} from './transcript/CodexResumeRolloutPreparation.js'
 
 // --- Transcript (codex-specific) ---
 export {

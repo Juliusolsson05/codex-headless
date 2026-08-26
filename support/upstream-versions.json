@@ -5,8 +5,8 @@
       "label": "Codex",
       "pkg": "@openai/codex",
       "changelog": "https://github.com/openai/codex/releases",
-      "accepted": "0.130.0",
-      "checkedAt": "2026-05-16"
+      "accepted": "0.149.1",
+      "checkedAt": "2026-08-24"
     }
   }
 }

@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, renameSync, rmSync, truncateSync, writeFileSync } from 'fs'
+import { appendFileSync, mkdtempSync, renameSync, rmSync, statSync, truncateSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -95,6 +95,40 @@ describe('FileTailer polling ownership', () => {
     writeFileSync(replacement, JSON.stringify({ seq: 2 }) + '\n')
     renameSync(replacement, file)
     expect(await waitFor(() => seen.includes(2), 1000)).toBe(true)
+  })
+
+  it('never follows a pathname replacement after a generation-bound open', async () => {
+    const file = makeFile()
+    const initial = statSync(file)
+    const expectedGenerationId = `${initial.dev}:${initial.ino}`
+    const seen: number[] = []
+    const errors: Error[] = []
+    // WHY the cast keeps this red artifact runnable against the pre-fix public
+    // type. The option is intentionally ignored by that implementation, so the
+    // assertion below demonstrates replacement B being emitted under A's
+    // authorization instead of reducing the regression to a compile failure.
+    const options = { expectedGenerationId } as unknown as {
+      bootstrapTailLines?: number
+    }
+    const watcher = new FileTailer<{ seq: number }>(
+      file,
+      entry => seen.push(entry.seq),
+      error => errors.push(error),
+      options,
+    )
+    openTailers.push(watcher as FileTailer<unknown>)
+    expect(await waitFor(() => seen.includes(0), 1000)).toBe(true)
+
+    // Same-inode append is the ordinary rollout path and must stay live.
+    appendFileSync(file, JSON.stringify({ seq: 1 }) + '\n')
+    expect(await waitFor(() => seen.includes(1), 1000)).toBe(true)
+
+    const replacement = `${file}.replacement`
+    writeFileSync(replacement, JSON.stringify({ seq: 2 }) + '\n')
+    renameSync(replacement, file)
+    await new Promise(resolve => setTimeout(resolve, 300))
+    expect(seen).not.toContain(2)
+    expect(errors).toHaveLength(1)
   })
 
   it('does not emit callbacks after close resolves', async () => {

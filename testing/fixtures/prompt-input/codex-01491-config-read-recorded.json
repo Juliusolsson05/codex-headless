@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "provider": {
+    "cliVersion": "0.149.1",
+    "binarySha256": "f0d8762236594359b60cfbe17f4c7e945a3ce8d1c91e74778838c968d250fb6c",
+    "upstreamTag": "rust-v0.149.1",
+    "upstreamCommitSha": "ff29a44391deccde0aba0f8390337d7f3c319ea4"
+  },
+  "protocol": {
+    "transport": "app-server-stdio-jsonl",
+    "request": "config/read",
+    "includeLayers": true,
+    "clientName": "agent_code_prompt_profile_probe"
+  },
+  "effectiveInputProjection": {
+    "composerSubmit": "enter",
+    "composerQueue": "tab",
+    "globalToggleVimMode": [],
+    "vimModeDefault": false,
+    "otherNonNullKeymapBindings": [],
+    "layerTypes": [
+      "sessionFlags",
+      "user",
+      "system"
+    ],
+    "legacyManagedLayerPresent": false
+  },
+  "layerShapeEvidence": {
+    "recordedAt": "2026-08-26",
+    "rawLayersSha256": "7d2f5b9bea4734da5d4d418d7faa975dc177ccb5074d830fab74c007733cec1b",
+    "layers": [
+      {
+        "type": "sessionFlags",
+        "layerFields": ["config", "name", "version"],
+        "sourceFields": ["type"],
+        "sourceFieldTypes": { "type": "string" },
+        "versionType": "string",
+        "configType": "object"
+      },
+      {
+        "type": "user",
+        "layerFields": ["config", "name", "version"],
+        "sourceFields": ["file", "profile", "type"],
+        "sourceFieldTypes": {
+          "type": "string",
+          "file": "string",
+          "profile": "null"
+        },
+        "versionType": "string",
+        "configType": "object"
+      },
+      {
+        "type": "system",
+        "layerFields": ["config", "name", "version"],
+        "sourceFields": ["file", "type"],
+        "sourceFieldTypes": { "type": "string", "file": "string" },
+        "versionType": "string",
+        "configType": "object"
+      }
+    ]
+  },
+  "sourceEvidenceSha256": "4f1b81c931462f60da81b2e5b5f7656d2bcc57157f309301b8a0980789801a71"
+}

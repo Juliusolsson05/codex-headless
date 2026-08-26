@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "runId": "run_9a5f3e22-d23e-4a8d-b639-60809004a954",
+  "resultSha256": "e19f9edcd18f05235456505e751fd4758792b9b5ef4d32ec8a7878234eff4b09",
+  "heads": {
+    "agentCode": "6c4ee5043a436464a66a823a56f5e5dee194a7db",
+    "codexHeadless": "62d9b272a149845244a98d7ba11e977eff0da888",
+    "agentTranscriptParser": "a3fee9dc14e893651af1596cb95ef21eae764dea"
+  },
+  "confirmedFindings": [
+    "global-registry-reflective-state",
+    "post-resize-status-generation",
+    "stale-no-birth-unrescan-retention",
+    "pre-spawn-stop-cancellation"
+  ],
+  "rejectedCandidates": [
+    "unrecorded-runtime-keymap-mutation",
+    "parser-kill-before-dispose-ownership-race"
+  ]
+}

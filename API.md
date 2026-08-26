@@ -85,7 +85,7 @@ and `screen` alone. The proxy surface is purely additive.
 ```ts
 import {
   // Orchestrator + legacy flat events
-  CodexHeadless,
+  CodexHeadless, prepareCodexResumeRollout,
   // Channels
   CodexSemanticChannel, CodexScreenChannel, CodexCommittedChannel,
   // Terminal
@@ -193,9 +193,9 @@ codex.sendPrompt('Say hello in three words')
 2. **subscribe** — attach listeners on the three channels and/or the
    legacy flat events.
 3. **`await start()`** — resolves `~/.codex/sessions/`, attaches the
-   rollout JSONL tailer (watching the date tree for the new
-   `rollout-*.jsonl`, or locating the existing file by thread id on
-   the resume path), **then** calls `terminal.attach()` so PTY bytes
+   rollout JSONL tailer (watching the date tree for a uniquely proved
+   fresh rollout, or consuming the exact path reserved before a resume
+   PTY was spawned), **then** calls `terminal.attach()` so PTY bytes
    start flowing. The tailer-before-terminal ordering guarantees no
    rollout entry is missed.
 4. **drive** — `sendPrompt()`, `write()`, `resize()`, answer dialogs.
@@ -242,7 +242,39 @@ const codex = new CodexHeadless(options: CodexHeadlessOptions)
 | `cols` | `number` | `120` | Terminal columns for the headless xterm mirror. |
 | `rows` | `number` | `40` | Terminal rows for the headless xterm mirror. |
 | `snapshotIntervalMs` | `number` | `16` | Throttle interval (ms) for screen snapshots — ~60 Hz. |
-| `resumeThreadId` | `string` | unset | If set, tail the existing rollout file whose name contains this thread id instead of waiting for a new one. For `codex resume <id>` flows. Bootstraps the tailer from a bounded 200-line tail. |
+| `resumeThreadId` | `string` | unset | Resume thread identity. When set, `resumeRolloutPreparation` is also required. |
+| `resumeRolloutPreparation` | `CodexResumeRolloutPreparation` | unset | Opaque capability returned by `prepareCodexResumeRollout`. It must be created before spawning `codex resume <id>` so exact-path and copied-lineage ownership cannot race the provider process. |
+
+Resume construction has an intentionally different order from fresh
+construction:
+
+```ts
+const resumeThreadId = 'provider-thread-uuid'
+const resumeRolloutPreparation = await prepareCodexResumeRollout({
+  cwd,
+  resumeThreadId,
+})
+
+// Preparation is complete before this irreversible boundary. If spawning
+// fails, dispose the capability so its exact reservation is released.
+let pty
+try {
+  pty = spawn('codex', ['resume', resumeThreadId], {
+    name: 'xterm-256color', cols: 120, rows: 40, cwd,
+  })
+  const codex = new CodexHeadless({
+    pty,
+    cwd,
+    resumeThreadId,
+    resumeRolloutPreparation,
+  })
+  await codex.start()
+} catch (error) {
+  await resumeRolloutPreparation.dispose()
+  pty?.kill()
+  throw error
+}
+```
 
 There is no `proxy` sub-option. Unlike `claude-code-headless`, the
 proxy is wired up externally: you create a `ResponsesProxy`, create a
@@ -275,14 +307,16 @@ Resolves Codex's session directory (`~/.codex/sessions/`, honoring
 `terminal.attach()` to begin mirroring PTY data. **Always await this
 before sending input.**
 
-- **Fresh session** — recursively watches the date tree (depth 4) for
-  the first new `rollout-<date>-<uuid>.jsonl` file, then tails it.
-- **Resume path** (`resumeThreadId` set) — walks the date tree
-  backwards (newest dates first) for a filename containing the thread
-  id and tails it with a 200-line bootstrap tail. If the lookup misses
-  (a date-tree race, or a resume that forks a new rollout file), it
-  emits a non-fatal `rollout-error` and falls back to the new-file
-  watcher.
+- **Fresh session** — recursively watches the date tree (depth 4), then
+  tails only the mutually unique same-cwd rollout whose early durable user
+  message matches a prompt submitted through this instance. Ambiguous sibling
+  candidates fail closed instead of being selected by timing.
+- **Resume path** (`resumeThreadId` plus `resumeRolloutPreparation`) —
+  opens the exact path already located and reserved before provider spawn, with
+  a 200-line bootstrap tail. For a bounded window, a reconstructed rollout can
+  replace that tail only when its copied opaque item lineage proves ownership.
+  A pre-spawn lookup miss emits a non-fatal `rollout-error` and enters the same
+  fail-closed fresh-evidence watcher.
 
 Returns `{ sessionsDir }` — the resolved absolute path of
 `~/.codex/sessions/`.
@@ -361,6 +395,7 @@ existing consumers keep working. New code should prefer the channels
 | `screen` | `[ScreenSnapshot]` | Every throttled screen snapshot (full `ScreenSnapshot`, incl. `recent`/`recentMarkdown`). |
 | `rollout-entry` | `[CodexRolloutLine, string]` | Raw rollout JSONL line + file path. |
 | `rollout-error` | `[Error]` | Rollout read error (also: resume-lookup miss). |
+| `rollout-diagnostic` | `[CodexRolloutDiagnostic]` | Content-safe ownership decision evidence, including held fresh candidates and ignored resume forks. Never authorizes a tail. |
 | `trust-dialog` | `[CodexTrustDialogState]` | Trust dialog state changed (fires on **every** visible↔hidden transition). |
 | `approval` | `[ScreenApproval \| null]` | Command-approval overlay state changed. |
 | `conditions` | `[CodexConditionSnapshot]` | Conditions snapshot changed (deduped on a JSON key). |
@@ -1505,6 +1540,11 @@ here only for completeness:
   flag pair, so overlapping writes never produce duplicate emits.
 - On the resume path the tailer bootstraps from the last 200 lines
   (`bootstrapTailLines: 200`, bounded to 512 KiB of file tail).
+- Ownership-authorized tails receive the verified `dev:ino` as
+  `expectedGenerationId`. The initial open and every later poll use `fstat` on
+  the same descriptor that supplies bytes. Same-inode appends continue
+  normally; an atomic pathname replacement emits one structure-only generation
+  error and is never followed.
 
 ---
 

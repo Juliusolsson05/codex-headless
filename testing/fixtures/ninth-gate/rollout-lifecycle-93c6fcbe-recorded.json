@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "recordedPackageHead": "93c6fcbe8e261eb578f0b7fb8af53e53bebe2ad7",
+  "sources": {
+    "exactFixture": {
+      "id": "subagent-0149-exact-attachment",
+      "sha256": "1e73bb8c9635f4350d766fde9807c104bf5cc09ba91b936a4ebda375691fc810"
+    },
+    "modernFixture": {
+      "id": "modern-0149-agents-first",
+      "sha256": "f3e8f7a406c32f7ac9e3303b99470a09b273d8eb9180bf0a0628c40522996c42"
+    }
+  },
+  "ch01": {
+    "exact": {
+      "fixtureId": "subagent-0149-exact-attachment",
+      "failureOrder": [
+        "reserve-exact-path",
+        "invoke-tail-constructor",
+        "throw-before-stop-closure-exists",
+        "retry-exact-path"
+      ]
+    },
+    "fresh": {
+      "fixtureId": "modern-0149-agents-first",
+      "failureOrder": [
+        "register-recorded-prompt",
+        "observe-recorded-candidate",
+        "publish-fresh-lease",
+        "throw-before-stop-closure-exists",
+        "retry-by-exact-identity"
+      ]
+    },
+    "lineage": {
+      "fixtureId": "subagent-0149-exact-attachment",
+      "forkThreadId": "00000000-0000-4000-8000-000000000091",
+      "failureOrder": [
+        "open-exact-tail-x",
+        "observe-recorded-lineage-y",
+        "publish-lineage-lease-y",
+        "throw-before-y-stop-closure-exists",
+        "retry-y-by-exact-identity"
+      ]
+    }
+  },
+  "ch02": {
+    "fixtureId": "modern-0149-agents-first",
+    "rolloutThreadId": "00000000-0000-4000-8000-000000000092",
+    "inactiveExpiryAdvanceMs": 6000,
+    "rescanDeadlineMs": 2000,
+    "eventOrder": [
+      "observe-bootstrap-only-candidate",
+      "register-live-recorded-prompt",
+      "expire-unrelated-participant",
+      "compact-transport-with-live-sibling",
+      "omit-append-change-event",
+      "append-recorded-prompt-lines",
+      "periodic-rescan-recovers-candidate"
+    ]
+  },
+  "ch03": {
+    "fixtureId": "modern-0149-agents-first",
+    "rolloutThreadId": "00000000-0000-4000-8000-000000000093",
+    "inactiveExpiryAdvanceMs": 6000,
+    "eventOrder": [
+      "lease-recorded-candidate",
+      "expire-unrelated-participant",
+      "compact-terminal-candidate-transport",
+      "deliver-delayed-change-event",
+      "verify-terminal-path-remains-evicted"
+    ]
+  }
+}

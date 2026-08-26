@@ -9,6 +9,10 @@ import {
   type SubmittedPrompt,
 } from './FreshRolloutClaim.js'
 import {
+  inferCodexTabBehavior,
+  SubmittedPromptInput,
+} from './SubmittedPromptInput.js'
+import {
   collectRolloutLineageIds,
   decideResumeForkCandidate,
 } from './ResumeForkCandidate.js'
@@ -33,6 +37,16 @@ function freshCandidate(
     filePath,
     threadId: filePath,
     cwd: candidateCwd,
+    cliVersion: 'test',
+    lineageIds: [],
+    userMessages: message
+      ? [{
+          source: 'event_msg',
+          lineIndex: 1,
+          text: message,
+          normalized: normalizePromptForOwnership(message),
+        }]
+      : [],
     firstUserMessage: message,
     normalizedFirstUserMessage: message
       ? normalizePromptForOwnership(message)
@@ -70,7 +84,87 @@ describe('fresh rollout ownership', () => {
       'hello\nworld',
     )
     expect(extractSubmittedPromptFromWrite('hello\r')).toBe('hello')
+    // WHY a paste closing marker only updates the composer. Agent Code sends
+    // Enter in a later xterm onData chunk; treating the paste itself as a local
+    // submission makes this idle pane contend with another pane that really did
+    // submit the same text.
+    expect(extractSubmittedPromptFromWrite('\x1b[200~draft only\x1b[201~')).toBeNull()
     expect(extractSubmittedPromptFromWrite('\x1b[A')).toBeNull()
+  })
+
+  it('reconstructs real xterm chunks and waits for an explicit submit', () => {
+    const typed = new SubmittedPromptInput()
+    expect(typed.consume('h')).toEqual([])
+    expect(typed.consume('i')).toEqual([])
+    expect(typed.consume('\r')).toEqual(['hi'])
+
+    const pasted = new SubmittedPromptInput()
+    expect(pasted.consume('\x1b[20')).toEqual([])
+    expect(pasted.consume('0~hello\nworld\x1b[20')).toEqual([])
+    expect(pasted.consume('1~')).toEqual([])
+    expect(pasted.consume('\r')).toEqual(['hello\nworld'])
+
+    // WHY these are edits xterm sends as concrete bytes, so reconstructing them
+    // is safer than discarding an otherwise knowable prompt. History completion
+    // is different: Up replaces text without sending replacement bytes. A later
+    // line-scoped Ctrl+U cannot prove what remained on preceding lines, so it
+    // must not restore ownership validity from our stale local cursor.
+    const edited = new SubmittedPromptInput()
+    expect(edited.consume('helo\x1b[D')).toEqual([])
+    expect(edited.consume('l\r')).toEqual(['hello'])
+    expect(edited.consume('\x1b[Aunknown\r')).toEqual([])
+    expect(edited.consume('\x1b[A\x15known\r')).toEqual([])
+    expect(edited.consume('cancelled\x03')).toEqual([])
+    expect(edited.consume('next\r')).toEqual(['next'])
+  })
+
+  it('matches the recorded Codex 0.149.1 editor or fails closed', () => {
+    // WHY these exact outcomes come from the vendored rust-v0.149.1 textarea
+    // tests, not from a terminal-editor guess. False local text is worse than
+    // missing evidence because it can authorize a sibling rollout whose prompt
+    // happens to equal our incorrect reconstruction.
+    const multiline = new SubmittedPromptInput()
+    expect(multiline.consume('\x1b[200~prefix\nold\x1b[201~')).toEqual([])
+    expect(multiline.consume('\x15new\r')).toEqual(['prefix\nnew'])
+
+    const separators = new SubmittedPromptInput()
+    expect(separators.consume('path/to/file\x17new\r')).toEqual(['path/to/new'])
+
+    const modifiedMovement = new SubmittedPromptInput()
+    expect(modifiedMovement.consume('foo bar\x1b[1;5DX\r')).toEqual([])
+  })
+
+  it('distinguishes recorded no-popup Tab submission from completion', () => {
+    expect(inferCodexTabBehavior(
+      '  tab to queue message                                       100% context left  ',
+    )).toBe('submit')
+    expect(inferCodexTabBehavior('  ctrl + q to queue message  '))
+      .toBe('complete-or-unknown')
+    const submitted = new SubmittedPromptInput()
+    const consumeSubmitted = submitted.consume.bind(submitted) as (
+      data: string,
+      context: { tabBehavior: 'submit' | 'complete-or-unknown' },
+    ) => string[]
+    expect(consumeSubmitted('queued prompt', {
+      tabBehavior: 'complete-or-unknown',
+    })).toEqual([])
+    // WHY rust-v0.149.1 maps plain Tab to handle_submission when no popup has
+    // consumed it. The explicit context is the causal screen-state evidence;
+    // treating every Tab as submit would cross-wire slash/file completion.
+    expect(consumeSubmitted('\t', { tabBehavior: 'submit' }))
+      .toEqual(['queued prompt'])
+
+    const completion = new SubmittedPromptInput()
+    const consumeCompletion = completion.consume.bind(completion) as typeof consumeSubmitted
+    expect(consumeCompletion('/sta', {
+      tabBehavior: 'complete-or-unknown',
+    })).toEqual([])
+    expect(consumeCompletion('\t', {
+      tabBehavior: 'complete-or-unknown',
+    })).toEqual([])
+    expect(consumeCompletion('\r', {
+      tabBehavior: 'complete-or-unknown',
+    })).toEqual([])
   })
 
   it('parses the first user message and normalizes transport wrappers', () => {

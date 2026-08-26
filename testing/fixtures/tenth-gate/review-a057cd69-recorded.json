@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "runId": "run_ad0813cf-5f8f-4644-971d-e6a9ade71d62",
+  "resultSha256": "3e9e67215f71461ee0e2394e463a98acd84bf35796b3e3a27e324ca9527c7acb",
+  "heads": {
+    "agentCode": "a057cd690722058755798de7b12feebd29b50471",
+    "codexHeadless": "6c6336bf839eede2b2066b5518835e0e4a5928d7",
+    "agentTranscriptParser": "a3fee9dc14e893651af1596cb95ef21eae764dea"
+  },
+  "confirmedFindings": [
+    "pre-registration-resume-lineage",
+    "later-terminalization-transport-retention",
+    "shipped-resume-controller-unwrapper",
+    "result-and-error-attestation-envelope",
+    "resume-preparation-after-config-attestation"
+  ],
+  "rejectedCandidates": [
+    "unrecorded-atomic-paste",
+    "predictable-request-id-independent-exploit",
+    "independent-parser-defect",
+    "duplicate-parent-ownership-policy"
+  ]
+}

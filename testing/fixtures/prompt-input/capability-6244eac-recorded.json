@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "recordedPackageHead": "6244eac4a24ac1fb2aa6d12227cd85c106590ca7",
+  "builtArtifactSha256": "793ad40e94007b9aefd67524b486a8ad6b28a6cdb80fb6e52a1a2795775adcee",
+  "constructorExportedFromRoot": false,
+  "constructorAvailableByPackageDeepImport": true,
+  "constructionWithoutFactorySucceeded": true,
+  "beforeDispose": {
+    "ownKeys": [
+      "acquisition",
+      "consumed",
+      "cwd",
+      "disposed",
+      "handlers",
+      "initialGenerationId",
+      "initialPath",
+      "ownerId",
+      "pendingDecisions",
+      "pendingLeases",
+      "resumeParticipant",
+      "resumeThreadId",
+      "sessionsDir",
+      "watcherReleasePromise"
+    ],
+    "enumerableKeys": [
+      "acquisition",
+      "consumed",
+      "cwd",
+      "disposed",
+      "handlers",
+      "initialGenerationId",
+      "initialPath",
+      "ownerId",
+      "pendingDecisions",
+      "pendingLeases",
+      "resumeParticipant",
+      "resumeThreadId",
+      "sessionsDir",
+      "watcherReleasePromise"
+    ],
+    "jsonKeys": [
+      "acquisition",
+      "consumed",
+      "cwd",
+      "disposed",
+      "handlers",
+      "initialGenerationId",
+      "initialPath",
+      "ownerId",
+      "pendingDecisions",
+      "pendingLeases",
+      "resumeParticipant",
+      "resumeThreadId",
+      "sessionsDir",
+      "watcherReleasePromise"
+    ],
+    "serializedContains": {
+      "sessionsDir": true,
+      "initialPath": true,
+      "initialGenerationId": true,
+      "resumeThreadId": true,
+      "cwd": true
+    }
+  },
+  "afterDispose": {
+    "ownKeys": [
+      "acquisition",
+      "consumed",
+      "cwd",
+      "disposed",
+      "handlers",
+      "initialGenerationId",
+      "initialPath",
+      "ownerId",
+      "pendingDecisions",
+      "pendingLeases",
+      "resumeParticipant",
+      "resumeThreadId",
+      "sessionsDir",
+      "watcherReleasePromise"
+    ],
+    "enumerableKeys": [
+      "acquisition",
+      "consumed",
+      "cwd",
+      "disposed",
+      "handlers",
+      "initialGenerationId",
+      "initialPath",
+      "ownerId",
+      "pendingDecisions",
+      "pendingLeases",
+      "resumeParticipant",
+      "resumeThreadId",
+      "sessionsDir",
+      "watcherReleasePromise"
+    ],
+    "jsonKeys": [
+      "acquisition",
+      "consumed",
+      "cwd",
+      "disposed",
+      "handlers",
+      "initialGenerationId",
+      "initialPath",
+      "ownerId",
+      "pendingDecisions",
+      "pendingLeases",
+      "resumeParticipant",
+      "resumeThreadId",
+      "sessionsDir",
+      "watcherReleasePromise"
+    ],
+    "serializedContains": {
+      "sessionsDir": true,
+      "initialPath": true,
+      "initialGenerationId": true,
+      "resumeThreadId": true,
+      "cwd": true
+    }
+  }
+}

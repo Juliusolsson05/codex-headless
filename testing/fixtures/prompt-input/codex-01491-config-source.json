@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "upstreamTag": "rust-v0.149.1",
+  "upstreamCommitSha": "ff29a44391deccde0aba0f8390337d7f3c319ea4",
+  "recordedCases": {
+    "validLowerLayer": "lower-layer-keymap-valid-control",
+    "issuedOverridesConflict": "lower-layer-keymap-issued-profile-conflict"
+  },
+  "files": [
+    {
+      "path": "codex-rs/config/src/config_layer_source.rs",
+      "sha256": "6816bf7bd44b1f2799aae30331b77a7e8231ccacdc4cd3d44d6485f9e1118364",
+      "coordinates": [
+        {
+          "startLine": 30,
+          "endLine": 50,
+          "claim": "Session flags have precedence 30; legacy managed file and MDM layers have precedence 40 and 50."
+        }
+      ]
+    },
+    {
+      "path": "codex-rs/config/src/loader/mod.rs",
+      "sha256": "53d66dce1cd81de3d86610ff2a75aed7f9049609cbefcd3694590c0acfc7c404",
+      "coordinates": [
+        {
+          "startLine": 430,
+          "endLine": 435,
+          "claim": "CLI overrides are materialized as the SessionFlags layer."
+        },
+        {
+          "startLine": 442,
+          "endLine": 485,
+          "claim": "Legacy managed file and MDM configuration are loaded above session flags."
+        }
+      ]
+    },
+    {
+      "path": "codex-rs/config/src/overrides.rs",
+      "sha256": "d10b2c943a709d28395cde201f1b084da4d303afe4ff698f91f59f518c1a9e13",
+      "coordinates": [
+        {
+          "startLine": 9,
+          "endLine": 14,
+          "claim": "Every dotted CLI override is written into one session-layer TOML value."
+        }
+      ]
+    },
+    {
+      "path": "codex-rs/config/src/merge.rs",
+      "sha256": "a7628f0da10f7f7e770fce5160ecbf1ca846b7d9db4b8ed92c6c9cce22c7fb11",
+      "coordinates": [
+        {
+          "startLine": 56,
+          "endLine": 58,
+          "claim": "The overlay passed to the TOML merge has precedence over the base."
+        },
+        {
+          "startLine": 94,
+          "endLine": 120,
+          "claim": "Nested tables merge recursively and scalar/array overlays replace lower values."
+        }
+      ]
+    },
+    {
+      "path": "codex-rs/tui/src/keymap.rs",
+      "sha256": "709feecb708a16b66af8685f0028191efc23b6fac8f87db6a8d45df2440ff604",
+      "coordinates": [
+        {
+          "startLine": 551,
+          "endLine": 561,
+          "claim": "Runtime keymap construction promises parse and ambiguity errors."
+        },
+        {
+          "startLine": 1153,
+          "endLine": 1171,
+          "claim": "Conflict validation runs on the fully resolved effective keymap before use."
+        },
+        {
+          "startLine": 1489,
+          "endLine": 1532,
+          "claim": "Composer queue and toggle-shortcuts participate in the same app-scope uniqueness pass."
+        },
+        {
+          "startLine": 2053,
+          "endLine": 2074,
+          "claim": "Duplicate effective bindings return an actionable ambiguous-keymap error."
+        }
+      ]
+    }
+  ]
+}
