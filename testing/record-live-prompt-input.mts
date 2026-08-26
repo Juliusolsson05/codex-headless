@@ -427,8 +427,19 @@ try {
           await waitFor(async () => {
             const values = await readDurableUserTexts(session.codexHome)
             if (values.length <= beforeUsers.length) return false
-            durableUserText = values.at(-1) ?? null
-            return true
+            const appendedValues = values.slice(beforeUsers.length)
+            const expected = inputCase.expectedDurableText
+            durableUserText = expected === undefined
+              ? appendedValues.at(-1) ?? null
+              : appendedValues.find(value => value === expected) ?? null
+            // WHY startup context is also a durable role-user item. The real
+            // adversarial-CWD replay observed that context crossing the baseline
+            // after the composer painted but before the submitted prompt append.
+            // Count growth alone therefore proves only "some user item", not
+            // the provider/request/rollout agreement this recorder exists to
+            // establish. Keep waiting for the case's already-recorded expected
+            // value; timeout remains a hard failure if it never becomes durable.
+            return durableUserText !== null
           }, `${inputCase.id} durable user entry`)
         } catch (error) {
           throw new Error(
