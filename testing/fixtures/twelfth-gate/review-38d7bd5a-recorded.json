@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "runId": "run_38d7bd5a-8aea-46c1-bff3-f08d50e22002",
+  "resultSha256": "4911a8da688e7d97fa8bc5cf7567d230f3e7b5bc258186941716a0e8af50ff91",
+  "heads": {
+    "agentCode": "71c57b6f7eb0a8d90f34788a5c5e3082733bba81",
+    "codexHeadless": "6f6149b417ee68c5404046e505cf879ac6d8ff48",
+    "agentTranscriptParser": "a3fee9dc14e893651af1596cb95ef21eae764dea"
+  },
+  "confirmedFindings": [
+    "inflight-resume-preparation-not-joined",
+    "malformed-config-layers-mint-authority",
+    "wide-character-wrap-misclassified",
+    "consumed-resume-handle-retains-disposal-authority",
+    "global-bridge-returns-reflectable-coordinator"
+  ],
+  "rejectedCandidates": [
+    "fixture-provenance-leak",
+    "independent-parser-defect",
+    "duplicate-parent-ownership-policy",
+    "atomic-paste-no-submit",
+    "predictable-request-ids-independent-exploit",
+    "runtime-keymap-mutation",
+    "parser-kill-before-dispose"
+  ]
+}

@@ -53,6 +53,9 @@ describe('Codex 0.149.1 prompt-input launch profile', () => {
   it.each([
     ['conflicting-binding', 'effective-config-unverified'],
     ['managed-layer', 'effective-config-unverified'],
+    ['malformed-layer', 'effective-config-unverified'],
+    ['unknown-layer', 'effective-config-unverified'],
+    ['duplicate-layer', 'effective-config-unverified'],
     ['result-and-error', 'effective-config-unverified'],
     ['initialize-result-and-error', 'effective-config-unverified'],
     ['wrong-version', 'unsupported-cli'],

@@ -54,6 +54,21 @@ lines.on('line', line => {
   if (mode === 'managed-layer') {
     layerTypes.unshift('legacyManagedConfigTomlFromFile')
   }
+  if (mode === 'unknown-layer') {
+    layerTypes.unshift('futurePolicyLayer')
+  }
+  if (mode === 'duplicate-layer') {
+    layerTypes.push('user')
+  }
+  const layers = layerTypes.map(type => ({ name: { type }, config: {} }))
+  if (mode === 'malformed-layer') {
+    // WHY preserve the exact recorded layer count and every neighboring config
+    // value. The twelfth-gate counterexample changed only one protocol object
+    // into a shape that the current nullable projection silently maps to null;
+    // inventing a second effective-keymap mutation would no longer isolate the
+    // authority minted by malformed layer evidence.
+    layers[1] = { name: null, config: {} }
+  }
   respond({
     id: request.id,
     ...(mode === 'result-and-error'
@@ -66,7 +81,7 @@ lines.on('line', line => {
           vim_mode_default: effective.vimModeDefault,
         },
       },
-      layers: layerTypes.map(type => ({ name: { type }, config: {} })),
+      layers,
     },
   })
 })

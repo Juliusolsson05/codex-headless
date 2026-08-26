@@ -1420,6 +1420,52 @@ describe('process-wide fresh rollout watcher', () => {
         await recorded.preparation.dispose(true)
       }
     })
+
+    it('revokes public rollback authority after the active tail consumes it', async () => {
+      const recorded = await prepareRecordedCapabilityFixture()
+      const headless = new CodexHeadless({
+        pty: inertPty(),
+        cwd: recorded.cwd,
+        resumeThreadId: recorded.threadId,
+        resumeRolloutPreparation: recorded.preparation,
+      })
+      let openedWhileActive: CodexResumeRolloutPreparation | null = null
+      let reopenedAfterStop: CodexResumeRolloutPreparation | null = null
+      let activeOutcome: 'blocked' | 'opened' | null = null
+
+      try {
+        await headless.start()
+        // WHY the parent is allowed to retain this public handle across the
+        // synchronous constructor handoff. Once start consumes it, however,
+        // rollback belongs to the active tail controller. A late parent cleanup
+        // must become harmless instead of retiring X underneath that live tail.
+        await recorded.preparation.dispose(true)
+        try {
+          openedWhileActive = await prepareRecordedResume({
+            codexHome: recorded.codexHome,
+            cwd: recorded.cwd,
+            resumeThreadId: recorded.threadId,
+          })
+          activeOutcome = 'opened'
+        } catch {
+          activeOutcome = 'blocked'
+        }
+        expect(activeOutcome).toBe('blocked')
+
+        await headless.stop()
+        reopenedAfterStop = await prepareRecordedResume({
+          codexHome: recorded.codexHome,
+          cwd: recorded.cwd,
+          resumeThreadId: recorded.threadId,
+        })
+        expect(reopenedAfterStop).toBeDefined()
+      } finally {
+        await openedWhileActive?.dispose(true)
+        await headless.stop()
+        await reopenedAfterStop?.dispose(true)
+        await recorded.preparation.dispose(true)
+      }
+    })
   })
 
   it('routes the recorded subagent through exact identity before tailing', async () => {
