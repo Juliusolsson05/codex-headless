@@ -509,6 +509,59 @@ describe('recorded Codex 0.149.1 prompt-input contract', () => {
     })).toEqual([])
   })
 
+  it('Stage 38 rejects a post-resize status generation that leaves stale composer geometry', () => {
+    const resizeCase = caseById('narrow-soft-wrap-resize-redraw')
+    const statusCase = caseById('unchanged-redraw-after-edit')
+    const beforeTyping = resizeCase.beforeTypingFrame
+    const resize = resizeCase.resizeTrace
+    const status = statusCase.editAcknowledgementTrace
+    if (!beforeTyping || !resize || !status) {
+      throw new Error('missing recorded Stage 38 terminal boundaries')
+    }
+
+    // WHY this composes two real recordings without inventing any composer
+    // content. The resize fixture supplies the exact stale xterm-reflowed rows
+    // whose newline disagrees with both its durable role-user item and request.
+    // The unrelated-redraw fixture supplies the independently observed
+    // scheduler fact: two later provider chunks/generations can repaint status
+    // while draft rows and logical cursor remain byte-identical. Replaying only
+    // that observed generation delta over the recorded stale rows models the
+    // coarse `providerLayoutEpoch` transition under review; no prompt atom is
+    // synthesized or changed.
+    expect(status.unchangedComposerRevision).toBe(true)
+    expect(status.unchangedAfterEdit.rows.map(row => row.text))
+      .toEqual(status.beforeEdit.rows.map(row => row.text))
+    expect(status.unchangedAfterEdit.cursor).toEqual(status.beforeEdit.cursor)
+    const statusGenerationDelta = status.unchangedAfterEdit.generation -
+      status.beforeEdit.generation
+    const statusChunkDelta = status.rawChunkCountAtUnchangedRedraw -
+      status.rawChunkCountBeforeEdit
+    expect(statusGenerationDelta).toBeGreaterThan(0)
+    expect(statusChunkDelta).toBe(statusGenerationDelta)
+
+    const staleAfterStatus: RecordedStableFrame = {
+      ...resize.beforeProviderRedraw,
+      generation: resize.beforeProviderRedraw.generation + statusGenerationDelta,
+    }
+    expect(staleAfterStatus.rows.map(row => row.text))
+      .toEqual(resize.beforeProviderRedraw.rows.map(row => row.text))
+
+    const evidence = issuedEvidence()
+    evidence.consume(resizeCase.inputChunks[0]!, {
+      frame: stableFrame(beforeTyping),
+    })
+    expect(evidence.consume('\r', {
+      // A status-only chunk currently advances providerLayoutEpoch to 1 even
+      // though no Codex composer row was painted for layout epoch 1. Ownership
+      // must remain empty until the genuine recorded repaint used by the next
+      // green control, not accept the stale two-row geometry as a logical LF.
+      frame: stableFrame(staleAfterStatus, {
+        layoutEpoch: 1,
+        providerLayoutEpoch: 1,
+      }),
+    })).toEqual([])
+  })
+
   it('CH-09 accepts the same durable prompt after the recorded provider redraw', () => {
     const recordedCase = caseById('narrow-soft-wrap-resize-redraw')
     const beforeTyping = recordedCase.beforeTypingFrame
