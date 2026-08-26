@@ -14,18 +14,26 @@ import {
 } from './transcript/prompt-input/CodexPromptInputProfile.js'
 import { PromptInputEvidence } from './transcript/prompt-input/PromptInputEvidence.js'
 import type {
+  FreshRolloutLease,
   FreshRolloutParticipantDecision,
   FreshRolloutParticipantHandle,
+  ResumeRolloutParticipantDecision,
+  ResumeRolloutParticipantHandle,
 } from './transcript/FreshRolloutOwnershipCoordinator.js'
 import {
+  acquireFreshRolloutCoordinator,
   beginFreshRolloutCoordinatorAcquisition,
+  type FreshRolloutCoordinatorAcquisition,
 } from './transcript/FreshRolloutOwnershipCoordinatorRegistry.js'
-import {
-  unwrapCodexResumeRolloutPreparation,
-  type CodexResumeRolloutPreparation,
-  type CodexResumeRolloutPreparationInternal,
+import type {
+  CodexResumeRolloutPreparation,
 } from './transcript/CodexResumeRolloutPreparation.js'
 import { normalizeRolloutOwnershipPath } from './transcript/OwnershipNormalization.js'
+import { collectRolloutLineageIds } from './transcript/ResumeForkCandidate.js'
+import {
+  findCodexRolloutByThreadId,
+  readCodexRolloutGeneration,
+} from './transcript/RolloutLocator.js'
 import {
   detectCodexActivity,
   extractCodexAssistantInProgress,
@@ -101,6 +109,327 @@ import type {
 //   Trust:      "Do you trust the contents" (not "Accessing workspace")
 //
 // The consumer owns the PTY. This class never spawns or kills processes.
+
+const RESUME_LINEAGE_MIN_OVERLAP = 3
+const RESUME_LINEAGE_ID_CAP = 8000
+const issuedResumeRolloutPreparations = new WeakSet<object>()
+const internalResumeRolloutPreparations = new WeakMap<
+  object,
+  CodexResumeRolloutPreparationState
+>()
+
+type ResumePreparationHandlers = {
+  onLease: (lease: FreshRolloutLease) => void
+  onDecision: (decision: ResumeRolloutParticipantDecision) => void
+}
+
+/**
+ * Runtime-private ownership controller shared only by the public preparation
+ * factory and its sole CodexHeadless consumer in this module closure.
+ *
+ * WHY this lives beside CodexHeadless instead of in the public preparation
+ * module: TypeScript visibility and a package root export map do not protect an
+ * emitted deep file. The tenth exact-head gate imported the former unwrapper
+ * directly, recovered raw path/root/owner state, and invoked lease retirement.
+ * Co-locating issuance and consumption leaves no exported bridge from the
+ * dispose-only handle to this controller while preserving pre-spawn rollback.
+ */
+class CodexResumeRolloutPreparationState {
+  #ownerId: string | null = randomUUID()
+  #sessionsDir: string | null
+  #initialPath: string | null
+  #initialGenerationId: string | null
+  #resumeThreadId: string | null
+  #cwd: string | null
+  #acquisition: FreshRolloutCoordinatorAcquisition | null
+  #resumeParticipant: ResumeRolloutParticipantHandle | null = null
+  #handlers: ResumePreparationHandlers | null = null
+  #pendingLeases: FreshRolloutLease[] = []
+  #pendingDecisions: ResumeRolloutParticipantDecision[] = []
+  #watcherReleasePromise: Promise<void> | null = null
+  #consumed = false
+  #disposed = false
+
+  constructor(options: {
+    sessionsDir: string
+    initialPath: string | null
+    initialGenerationId: string | null
+    resumeThreadId: string
+    cwd: string
+    acquisition: FreshRolloutCoordinatorAcquisition | null
+  }) {
+    this.#sessionsDir = options.sessionsDir
+    this.#initialPath = options.initialPath
+    this.#initialGenerationId = options.initialGenerationId
+    this.#resumeThreadId = options.resumeThreadId
+    this.#cwd = options.cwd
+    this.#acquisition = options.acquisition
+    // WHY native fields and a frozen controller are defense in depth even
+    // though no export can return this instance. Future internal diagnostics
+    // must not accidentally make raw ownership state enumerable.
+    Object.freeze(this)
+  }
+
+  get ownerId(): string {
+    this.#assertUsable()
+    return this.#ownerId!
+  }
+
+  get sessionsDir(): string {
+    this.#assertUsable()
+    return this.#sessionsDir!
+  }
+
+  get initialPath(): string | null {
+    this.#assertUsable()
+    return this.#initialPath
+  }
+
+  get initialGenerationId(): string | null {
+    this.#assertUsable()
+    return this.#initialGenerationId
+  }
+
+  registerLineage(lineageIds: ReadonlySet<string>): void {
+    this.#assertUsable()
+    if (!this.#acquisition || !this.#initialPath || !this.#ownerId || !this.#cwd) {
+      return
+    }
+    this.#resumeParticipant = this.#acquisition.coordinator.registerResumeParticipant({
+      participantId: this.#ownerId,
+      cwd: this.#cwd,
+      lineageIds,
+      requiredOverlapLimit: RESUME_LINEAGE_MIN_OVERLAP,
+      // WHY a valid new Y may arrive after provider spawn but before start()
+      // opens exact X. Buffering preserves that callback without allowing the
+      // parent to observe or mutate the lease.
+      onLease: lease => {
+        if (this.#handlers) this.#handlers.onLease(lease)
+        else this.#pendingLeases.push(lease)
+      },
+      onDecision: decision => {
+        if (this.#handlers) this.#handlers.onDecision(decision)
+        else this.#pendingDecisions.push(decision)
+      },
+    })
+  }
+
+  consume(options: {
+    resumeThreadId: string
+    cwd: string
+    handlers: ResumePreparationHandlers
+  }): void {
+    if (this.#consumed) {
+      throw new Error('Codex resume rollout preparation was already consumed')
+    }
+    if (this.#disposed) {
+      throw new Error('Codex resume rollout preparation was disposed')
+    }
+    if (options.resumeThreadId !== this.#resumeThreadId ||
+      normalizeRolloutOwnershipPath(options.cwd) !==
+        normalizeRolloutOwnershipPath(this.#cwd ?? '')) {
+      throw new Error('Codex resume rollout preparation does not match this session')
+    }
+    this.#consumed = true
+    this.#handlers = options.handlers
+    for (const decision of this.#pendingDecisions.splice(0)) {
+      try {
+        options.handlers.onDecision(decision)
+      } catch {
+        // WHY diagnostics are observational. A destroyed renderer listener
+        // cannot be allowed to revoke a valid exact reservation during replay.
+      }
+    }
+    for (const lease of this.#pendingLeases.splice(0)) {
+      options.handlers.onLease(lease)
+    }
+  }
+
+  unregisterResumeParticipant(): void {
+    this.#resumeParticipant?.unregister()
+    this.#resumeParticipant = null
+  }
+
+  retirePathLease(filePath: string, clean: boolean): void {
+    if (!this.#ownerId) return
+    this.#acquisition?.coordinator.retirePathLease(
+      this.#ownerId,
+      filePath,
+      clean,
+    )
+  }
+
+  retireOwnerLeases(clean: boolean): void {
+    if (!this.#ownerId) return
+    this.#acquisition?.coordinator.retireOwnerLeases(this.#ownerId, clean)
+  }
+
+  releaseWatcher(): Promise<void> {
+    if (!this.#watcherReleasePromise) {
+      const acquisition = this.#acquisition
+      this.#watcherReleasePromise = acquisition?.release() ?? Promise.resolve()
+    }
+    return this.#watcherReleasePromise
+  }
+
+  async dispose(clean = true): Promise<void> {
+    if (this.#disposed) {
+      await this.#watcherReleasePromise
+      return
+    }
+    this.#disposed = true
+    this.unregisterResumeParticipant()
+    this.retireOwnerLeases(clean)
+    try {
+      await this.releaseWatcher()
+    } finally {
+      // WHY disposal is the privacy boundary as well as rollback. The public
+      // handle can remain reachable, but no raw path, root, owner, generation,
+      // callbacks, or acquisition graph may survive its authority.
+      this.#ownerId = null
+      this.#sessionsDir = null
+      this.#initialPath = null
+      this.#initialGenerationId = null
+      this.#resumeThreadId = null
+      this.#cwd = null
+      this.#handlers = null
+      this.#pendingLeases = []
+      this.#pendingDecisions = []
+      this.#resumeParticipant = null
+      this.#acquisition = null
+      this.#watcherReleasePromise = null
+    }
+  }
+
+  #assertUsable(): void {
+    if (this.#disposed) {
+      throw new Error('Codex resume rollout preparation was disposed')
+    }
+  }
+}
+
+const RESUME_ROLLOUT_PREPARATION_HANDLE_PROTOTYPE = Object.create(null) as {
+  dispose?: (clean?: boolean) => Promise<void>
+}
+Object.defineProperty(RESUME_ROLLOUT_PREPARATION_HANDLE_PROTOTYPE, 'dispose', {
+  configurable: false,
+  enumerable: false,
+  writable: false,
+  value: function disposeResumeRolloutPreparation(
+    this: CodexResumeRolloutPreparation,
+    clean = true,
+  ): Promise<void> {
+    const internal = internalResumeRolloutPreparations.get(this)
+    if (!internal || !issuedResumeRolloutPreparations.has(this)) {
+      return Promise.reject(new TypeError(
+        'Codex resume rollout capability was not created by ' +
+          'prepareCodexResumeRollout()',
+      ))
+    }
+    return internal.dispose(clean)
+  },
+})
+Object.freeze(RESUME_ROLLOUT_PREPARATION_HANDLE_PROTOTYPE)
+
+function issueCodexResumeRolloutPreparation(
+  internal: CodexResumeRolloutPreparationState,
+): CodexResumeRolloutPreparation {
+  const handle = Object.create(
+    RESUME_ROLLOUT_PREPARATION_HANDLE_PROTOTYPE,
+  ) as CodexResumeRolloutPreparation
+  issuedResumeRolloutPreparations.add(handle)
+  internalResumeRolloutPreparations.set(handle, internal)
+  return Object.freeze(handle)
+}
+
+type CodexResumeRolloutPreparationInternal =
+  CodexResumeRolloutPreparationState
+
+function unwrapCodexResumeRolloutPreparation(
+  value: CodexResumeRolloutPreparation,
+): CodexResumeRolloutPreparationInternal {
+  if (typeof value !== 'object' || value === null ||
+    !issuedResumeRolloutPreparations.has(value)) {
+    throw new TypeError(
+      'Codex resume rollout capability was not created by ' +
+        'prepareCodexResumeRollout()',
+    )
+  }
+  const internal = internalResumeRolloutPreparations.get(value)
+  if (!internal) {
+    throw new TypeError('Codex resume rollout capability has no internal state')
+  }
+  return internal
+}
+
+/**
+ * Prepare exact and lineage ownership before the consumer spawns Codex.
+ *
+ * WHY the public factory is exported from this module: its returned handle is
+ * intentionally dispose-only, while CodexHeadless needs the hidden controller
+ * later. A single module closure is the runtime equivalent of a friend
+ * boundary; placing an exported unwrapper in another deep file defeated it.
+ */
+export async function prepareCodexResumeRollout(options: {
+  cwd: string
+  resumeThreadId: string
+  sessionsDir?: string
+  onError?: (error: Error) => void
+}): Promise<CodexResumeRolloutPreparation> {
+  const sessionsDir = options.sessionsDir ?? getCodexSessionsDir()
+  const initialLocation = await findCodexRolloutByThreadId(
+    sessionsDir,
+    options.resumeThreadId,
+  )
+  if (!initialLocation) {
+    return issueCodexResumeRolloutPreparation(
+      new CodexResumeRolloutPreparationState({
+        sessionsDir,
+        initialPath: null,
+        initialGenerationId: null,
+        resumeThreadId: options.resumeThreadId,
+        cwd: options.cwd,
+        acquisition: null,
+      }),
+    )
+  }
+
+  const acquisition = await acquireFreshRolloutCoordinator({
+    sessionsRoot: sessionsDir,
+    normalizeCwd: normalizeRolloutOwnershipPath,
+    normalizePath: normalizeRolloutOwnershipPath,
+    onError: options.onError ?? (() => undefined),
+  })
+  const internal = new CodexResumeRolloutPreparationState({
+    sessionsDir,
+    initialPath: initialLocation.filePath,
+    initialGenerationId: initialLocation.generationId,
+    resumeThreadId: options.resumeThreadId,
+    cwd: options.cwd,
+    acquisition,
+  })
+  const reserved = acquisition.coordinator.reservePath({
+    ownerId: internal.ownerId,
+    filePath: initialLocation.filePath,
+    kind: 'exact-id',
+    proofIdentity: options.resumeThreadId,
+  })
+  if (!reserved) {
+    await internal.dispose(true)
+    throw new Error('Codex exact rollout path is already leased by another live session')
+  }
+
+  try {
+    const text = await readCodexRolloutGeneration(initialLocation)
+    const lineageIds = new Set<string>()
+    collectRolloutLineageIds(text, lineageIds, RESUME_LINEAGE_ID_CAP)
+    internal.registerLineage(lineageIds)
+    return issueCodexResumeRolloutPreparation(internal)
+  } catch (error) {
+    await internal.dispose(true)
+    throw error
+  }
+}
 
 type CodexHeadlessBaseOptions = {
   /** Consumer-owned PTY running the `codex` binary. */

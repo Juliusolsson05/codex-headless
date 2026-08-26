@@ -212,6 +212,13 @@ async function readEffectiveInputAttestation(
         if (!isRecord(message)) continue
 
         if (message.id === INITIALIZE_ID) {
+          if (!isSuccessfulResponse(message, INITIALIZE_ID)) {
+            // WHY JSON-RPC success and failure are mutually exclusive. Reading
+            // a plausible result beside an error would mint ownership authority
+            // from an app server that explicitly says attestation failed.
+            refuse()
+            return
+          }
           const userAgent = isRecord(message.result)
             ? message.result.userAgent
             : null
@@ -237,7 +244,8 @@ async function readEffectiveInputAttestation(
         }
 
         if (message.id !== CONFIG_READ_ID) continue
-        if (initializedVersion !== '0.149.1' ||
+        if (!isSuccessfulResponse(message, CONFIG_READ_ID) ||
+          initializedVersion !== '0.149.1' ||
           !effectiveInputIsRecordedContract(message.result)) {
           refuse()
           return
@@ -259,6 +267,15 @@ async function readEffectiveInputAttestation(
       },
     })}\n`)
   })
+}
+
+function isSuccessfulResponse(
+  value: Record<string, unknown>,
+  expectedId: string,
+): boolean {
+  return value.id === expectedId &&
+    Object.prototype.hasOwnProperty.call(value, 'result') &&
+    !Object.prototype.hasOwnProperty.call(value, 'error')
 }
 
 function effectiveInputIsRecordedContract(value: unknown): boolean {

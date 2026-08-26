@@ -400,6 +400,16 @@ async function ensureWatcher(root: string, entry: RootEntry): Promise<void> {
             .then(() => {
               for (const filePath of entry.knownPaths) {
                 if (maintenanceStopped) break
+                if (entry.coordinator.isCandidateTransportTerminal(filePath)) {
+                  // WHY terminalization can occur without another filesystem
+                  // callback: exact reservation and lineage leasing are policy
+                  // transitions, not file writes. Check policy before the
+                  // unchanged-fingerprint shortcut or a live sibling keeps this
+                  // UUID-bearing transport path indefinitely.
+                  entry.knownPaths.delete(filePath)
+                  entry.lastFingerprints.delete(filePath)
+                  continue
+                }
                 const snapshot = snapshotFile(filePath)
                 if (!snapshot ||
                   entry.lastFingerprints.get(filePath) === snapshot.fingerprint) {

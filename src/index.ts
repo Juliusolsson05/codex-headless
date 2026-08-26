@@ -100,7 +100,7 @@ export {
 
 export {
   prepareCodexResumeRollout,
-} from './transcript/CodexResumeRolloutPreparation.js'
+} from './CodexHeadless.js'
 export type {
   CodexResumeRolloutPreparation,
 } from './transcript/CodexResumeRolloutPreparation.js'

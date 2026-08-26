@@ -89,6 +89,7 @@ type ResumeParticipant = {
   fingerprint: string
   cwdFingerprint: string
   registeredAtMs: number
+  registeredSequence: number
   lineageFingerprints: Set<string>
   requiredOverlapLimit: number
   onLease: ((lease: FreshRolloutLease) => void) | null
@@ -111,6 +112,7 @@ type CandidateState = {
   blocked: boolean
   leased: boolean
   generationObservedAtMs: number
+  firstObservedSequence: number
   generationId: string | null
   birthtimeMs: number | null
 }
@@ -234,6 +236,12 @@ export class FreshRolloutOwnershipCoordinator {
         this.options.normalizeCwd(options.cwd),
       ),
       registeredAtMs: Date.now(),
+      // WHY resume preparation completes before its PTY exists. Unlike a fresh
+      // participant, it cannot legitimately own a generation whose immutable
+      // observation was already admitted by this coordinator. Wall-clock grace
+      // is intentionally insufficient here: a just-finished sibling can share
+      // cwd and copied lineage while being born one millisecond earlier.
+      registeredSequence: ++this.sequence,
       // WHY raw Codex item IDs never enter the process-global graph: overlap
       // equality is sufficient to prove copied history. Domain-separated HMACs
       // preserve that equality without retaining provider identifiers.
@@ -398,6 +406,7 @@ export class FreshRolloutOwnershipCoordinator {
         blocked: false,
         leased: false,
         generationObservedAtMs: observation.generationObservedAtMs,
+        firstObservedSequence: observation.sequence,
         generationId: observation.generationId,
         birthtimeMs: observation.birthtimeMs,
       })
@@ -1055,12 +1064,17 @@ export class FreshRolloutOwnershipCoordinator {
   }
 
   private participantGenerationWindowContains(
-    participant: Pick<
-      Participant | ResumeParticipant,
-      'active' | 'registeredAtMs' | 'withdrawnAtMs'
-    >,
+    participant: Participant | ResumeParticipant,
     candidate: CandidateState,
   ): boolean {
+    if ('registeredSequence' in participant &&
+      candidate.firstObservedSequence <= participant.registeredSequence) {
+      // WHY the watcher may finish parsing after registration even though it
+      // reserved this observation before registration. Sequence is assigned at
+      // immutable snapshot admission, so it preserves the actual causal order
+      // that async read completion and unreliable filesystem birth time cannot.
+      return false
+    }
     const generationAtMs = candidate.birthtimeMs ??
       candidate.generationObservedAtMs
     if (generationAtMs <
