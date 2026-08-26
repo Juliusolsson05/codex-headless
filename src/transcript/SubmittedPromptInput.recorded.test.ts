@@ -281,20 +281,31 @@ function caseById(id: typeof recordedCaseIds[number]): RecordedPromptInputCase {
 
 function stableFrame(
   recorded: RecordedStableFrame,
-  layout: { layoutEpoch: number; providerLayoutEpoch: number } = {
+  layout: {
+    layoutEpoch: number
+    providerLayoutEpoch: number
+    layoutStartGeneration?: number
+    rowPaintGeneration?: number
+    cursorPaintGeneration?: number
+  } = {
     layoutEpoch: 0,
     providerLayoutEpoch: 0,
   },
 ): StableTerminalFrame {
+  const {
+    rowPaintGeneration,
+    ...frameLayout
+  } = layout
   return {
     generation: recorded.generation,
-    ...layout,
+    ...frameLayout,
     cols: recorded.cols,
     cursor: recorded.cursor,
     rows: recorded.rows.map(row => ({
       text: row.text,
       cells: [...row.text],
       isWrapped: row.isWrapped,
+      paintGeneration: rowPaintGeneration,
     })),
   }
 }
@@ -558,6 +569,14 @@ describe('recorded Codex 0.149.1 prompt-input contract', () => {
       frame: stableFrame(staleAfterStatus, {
         layoutEpoch: 1,
         providerLayoutEpoch: 1,
+        // WHY the status chunks are real but their recording did not contain
+        // HeadlessTerminal's new provider-neutral paint metadata. Projecting
+        // the observed unchanged draft/cursor revision onto the resize fence
+        // says exactly what was captured: those physical cells remain owned by
+        // the layout-start generation even though the coarse epoch advanced.
+        layoutStartGeneration: resize.beforeProviderRedraw.generation,
+        rowPaintGeneration: resize.beforeProviderRedraw.generation,
+        cursorPaintGeneration: resize.beforeProviderRedraw.generation,
       }),
     })).toEqual([])
   })
@@ -578,6 +597,12 @@ describe('recorded Codex 0.149.1 prompt-input contract', () => {
       frame: stableFrame(resize.afterProviderRedraw, {
         layoutEpoch: 1,
         providerLayoutEpoch: 1,
+        // WHY unlike the Stage 38 boundary, this real frame changed both the
+        // composer geometry and logical cursor after SIGWINCH. The projection
+        // records only those captured facts; it does not invent draft text.
+        layoutStartGeneration: resize.beforeProviderRedraw.generation,
+        rowPaintGeneration: resize.afterProviderRedraw.generation,
+        cursorPaintGeneration: resize.afterProviderRedraw.generation,
       }),
     })).toEqual([recordedCase.durableUserText])
   })

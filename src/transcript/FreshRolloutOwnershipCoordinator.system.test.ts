@@ -19,7 +19,11 @@ import {
   normalizePromptForOwnership,
   parseFreshRolloutCandidate,
 } from './FreshRolloutClaim.js'
-import { acquireFreshRolloutCoordinator } from './FreshRolloutOwnershipCoordinatorRegistry.js'
+import {
+  acquireFreshRolloutCoordinator,
+  holdFreshRolloutReadQueueForTesting,
+  inspectFreshRolloutTransportForTesting,
+} from './FreshRolloutOwnershipCoordinatorRegistry.js'
 import {
   prepareCodexResumeRollout,
   type CodexResumeRolloutPreparation,
@@ -212,14 +216,19 @@ describe('process-wide fresh rollout watcher', () => {
     const symbol = Symbol.for(
       'codex-headless.fresh-rollout-ownership-coordinator-registry',
     )
-    const registry = (globalThis as typeof globalThis & {
-      [symbol]?: { roots: Map<string, unknown> }
+    const bridge = (globalThis as typeof globalThis & {
+      [symbol]?: object
     })[symbol]
-    expect(registry).toBeDefined()
-    const serialized = JSON.stringify([...registry!.roots.entries()])
-    expect(serialized).not.toContain(root)
-    for (const key of registry!.roots.keys()) {
-      expect(key).toMatch(/^[0-9a-f]{64}$/)
+    expect(bridge).toBeDefined()
+    expect(Object.isFrozen(bridge)).toBe(true)
+    expect(JSON.stringify(bridge)).not.toContain(root)
+    // WHY the old assertion accepted a Map so long as its key was an HMAC.
+    // That still let reflection walk Map values into the raw root and every
+    // coordinator secret. A bridge whose own surface is primitives/functions
+    // proves the stronger invariant without asking tests to inspect custody.
+    for (const key of Reflect.ownKeys(bridge!)) {
+      const value = Reflect.get(bridge!, key)
+      expect(['number', 'function']).toContain(typeof value)
     }
   })
 
@@ -675,24 +684,9 @@ describe('process-wide fresh rollout watcher', () => {
       normalizePath: value => value,
       onError: error => errors.push(error),
     })
-    const symbol = Symbol.for(
-      'codex-headless.fresh-rollout-ownership-coordinator-registry',
+    const readGate = holdFreshRolloutReadQueueForTesting(
+      acquisition.coordinator,
     )
-    const registry = (globalThis as typeof globalThis & {
-      [symbol]?: {
-        roots: Map<string, {
-          coordinator: unknown
-          readQueue: Promise<void>
-        }>
-      }
-    })[symbol]
-    const rootEntry = [...(registry?.roots.values() ?? [])].find(
-      entry => entry.coordinator === acquisition.coordinator,
-    )
-    if (!rootEntry) throw new Error('recorded watcher registry entry is missing')
-    let releaseRead!: () => void
-    const readGate = new Promise<void>(resolve => { releaseRead = resolve })
-    rootEntry.readQueue = readGate
     const leases: string[] = []
     const participantId = `open-generation-${root}`
     const handle = acquisition.coordinator.registerParticipant({
@@ -722,28 +716,22 @@ describe('process-wide fresh rollout watcher', () => {
         Buffer.byteLength(rolloutText(fixture)),
       )
       writeFileSync(rolloutPath, firstGeneration)
-      expect(await waitFor(() => rootEntry.readQueue !== readGate)).toBe(true)
-      const watcherEntry = rootEntry as typeof rootEntry & {
-        watcher?: { close(): Promise<void> } | null
-        stopWatcherMaintenance?: (() => void) | null
-      }
+      expect(await waitFor(() => readGate.hasAdmittedRead())).toBe(true)
       // WHY the queued-open invariant must stand without help from a later
       // change event: close admission after A is reserved, exactly as shutdown
       // can do, then replace the pathname. Otherwise an O2 reservation for B
       // can hide an O1-open bug by superseding the test's causal sequence.
-      watcherEntry.stopWatcherMaintenance?.()
-      await watcherEntry.watcher?.close()
-      watcherEntry.watcher = null
+      await readGate.stopEventAdmission()
       // WHY rename is the real pathname race: the reserved stat belongs to A,
       // while the later open resolves the same path to old inode B. A prefix
       // length cap does not establish that both operations addressed one file.
       renameSync(replacementPath, rolloutPath)
-      releaseRead()
+      readGate.release()
       await new Promise(resolve => setTimeout(resolve, 750))
       expect(leases).toEqual([])
       expect(errors).toEqual([])
     } finally {
-      releaseRead()
+      readGate.release()
       handle.unregister()
       acquisition.coordinator.retireOwnerLeases(participantId, true)
       await acquisition.release()
@@ -858,25 +846,9 @@ describe('process-wide fresh rollout watcher', () => {
         if (errorCalls === 1) throw new Error('recorded observer failure')
       },
     })
-    const symbol = Symbol.for(
-      'codex-headless.fresh-rollout-ownership-coordinator-registry',
+    const readGate = holdFreshRolloutReadQueueForTesting(
+      acquisition.coordinator,
     )
-    const registry = (globalThis as typeof globalThis & {
-      [symbol]?: {
-        roots: Map<string, {
-          coordinator: unknown
-          readQueue: Promise<void>
-          knownPaths: Set<string>
-        }>
-      }
-    })[symbol]
-    const rootEntry = [...(registry?.roots.values() ?? [])].find(
-      entry => entry.coordinator === acquisition.coordinator,
-    )
-    if (!rootEntry) throw new Error('recorded watcher registry entry is missing')
-    let releaseRead!: () => void
-    const readGate = new Promise<void>(resolve => { releaseRead = resolve })
-    rootEntry.readQueue = readGate
     const first = loadFixture('concurrent-01491-alpha')
     const second = loadFixture('concurrent-01491-beta')
     const secondLeases: string[] = []
@@ -916,13 +888,17 @@ describe('process-wide fresh rollout watcher', () => {
       // WHY both real watcher events are admitted behind one gate before the
       // injected commit failure: this removes unhandled-rejection timing from
       // the test and proves the second recorded observation was already queued.
-      expect(await waitFor(() => rootEntry.knownPaths.size === 2)).toBe(true)
-      releaseRead()
+      expect(await waitFor(() =>
+        inspectFreshRolloutTransportForTesting(
+          acquisition.coordinator,
+        ).knownPathCount === 2,
+      )).toBe(true)
+      readGate.release()
       expect(await waitFor(() => secondLeases.length === 1)).toBe(true)
       expect(secondLeases).toEqual([secondPath])
       expect(errorCalls).toBe(1)
     } finally {
-      releaseRead()
+      readGate.release()
       acquisition.coordinator.commitCandidateObservation = originalCommit
       handle.unregister()
       acquisition.coordinator.retireOwnerLeases(participantId, true)
@@ -981,30 +957,18 @@ describe('process-wide fresh rollout watcher', () => {
           candidates: Array<{ hasRawPath: boolean }>
         }).candidates.every(candidate => !candidate.hasRawPath),
       ).toBe(true)
-      const symbol = Symbol.for(
-        'codex-headless.fresh-rollout-ownership-coordinator-registry',
+      const transport = inspectFreshRolloutTransportForTesting(
+        siblingAcquisition.coordinator,
       )
-      const registry = (globalThis as typeof globalThis & {
-        [symbol]?: {
-          roots: Map<string, {
-            coordinator: unknown
-            referenceCount: number
-            watcher: unknown
-            knownPaths: Set<string>
-            lastFingerprints: Map<string, string>
-          }>
-        }
-      })[symbol]
-      const rootEntry = [...(registry?.roots.values() ?? [])].find(
-        entry => entry.coordinator === siblingAcquisition.coordinator,
-      )
-      expect(rootEntry).toMatchObject({ referenceCount: 1 })
-      expect(rootEntry?.watcher).not.toBeNull()
+      expect(transport).toMatchObject({
+        referenceCount: 1,
+        activeWatcherCount: 1,
+      })
       // WHY coordinator inspection was insufficient evidence for the fifth
       // gate's privacy invariant: the watcher closure kept a second raw copy of
       // every UUID-bearing path after the graph reported hasRawPath:false.
-      expect(rootEntry?.knownPaths.size).toBe(0)
-      expect(rootEntry?.lastFingerprints.size).toBe(0)
+      expect(transport.knownPathCount).toBe(0)
+      expect(transport.lastFingerprintCount).toBe(0)
     } finally {
       vi.useRealTimers()
       await siblingAcquisition.release()
@@ -1690,13 +1654,18 @@ describe('process-wide fresh rollout watcher', () => {
     }
     const previousWindow = ctor.RESUME_FORK_WATCH_MS
     ctor.RESUME_FORK_WATCH_MS = 25
-    const symbol = Symbol.for(
-      'codex-headless.fresh-rollout-ownership-coordinator-registry',
-    )
-    const registryBefore = (globalThis as typeof globalThis & {
-      [symbol]?: { roots: Map<string, unknown> }
-    })[symbol]
-    const keysBefore = new Set(registryBefore?.roots.keys() ?? [])
+    // WHY inspection is scoped by a coordinator capability, never by registry
+    // enumeration. Briefly acquiring and releasing the same normalized root
+    // gives the test that authority without keeping the watcher alive during
+    // the bounded resume-window assertion.
+    const transportMonitor = await acquireFreshRolloutCoordinator({
+      sessionsRoot: join(codexHome, 'sessions'),
+      normalizeCwd: normalizeRolloutOwnershipPath,
+      normalizePath: normalizeRolloutOwnershipPath,
+      onError: () => undefined,
+    })
+    const transportCoordinator = transportMonitor.coordinator
+    await transportMonitor.release()
     const preparation = await prepareRecordedResume({
       codexHome,
       cwd: '/recorded/worktree',
@@ -1715,20 +1684,13 @@ describe('process-wide fresh rollout watcher', () => {
       await headless.start()
       expect(await waitFor(() => seenPaths.includes(rolloutPath))).toBe(true)
       await new Promise(resolve => setTimeout(resolve, 75))
-      const registry = (globalThis as typeof globalThis & {
-        [symbol]?: {
-          roots: Map<string, { referenceCount: number; watcher: unknown }>
-        }
-      })[symbol]
-      const rootKey = [...(registry?.roots.keys() ?? [])]
-        .find(key => !keysBefore.has(key))
-      if (!rootKey) throw new Error('resume root was not registered')
-      const rootEntry = registry!.roots.get(rootKey)
 
       // WHY the exact JsonlTailer and the candidate watcher have different
       // lifetimes. The former remains the committed channel for X; the latter
       // exists only for the bounded possibility of reconstructed Y.
-      expect(rootEntry).toMatchObject({ referenceCount: 0, watcher: null })
+      expect(inspectFreshRolloutTransportForTesting(
+        transportCoordinator,
+      )).toMatchObject({ referenceCount: 0, activeWatcherCount: 0 })
       const beforeAppend = seenPaths.length
       appendFileSync(rolloutPath, `${JSON.stringify(fixture.lines.at(-1))}\n`)
       expect(await waitFor(() => seenPaths.length > beforeAppend)).toBe(true)

@@ -15,7 +15,7 @@ import {
 // API. A dev process can load two compiled copies during hot reload; accepting
 // a v1 registry here would mix the old raw-evidence coordinator with the new
 // HMAC/tombstone semantics and silently recreate split-brain ownership.
-const REGISTRY_SCHEMA_VERSION = 3
+const REGISTRY_SCHEMA_VERSION = 4
 const REGISTRY_SYMBOL = Symbol.for(
   'codex-headless.fresh-rollout-ownership-coordinator-registry',
 )
@@ -58,12 +58,58 @@ type RootEntry = {
   // path through the public package API.
   knownPaths: Set<string>
   lastFingerprints: Map<string, string>
+  // WHY “no committed candidate” has two causally different meanings: an
+  // immutable prefix may still be queued, or its completed bytes may genuinely
+  // be invalid/incomplete. Coordinator policy cannot see the transport queue,
+  // so maintenance needs this count to protect only the former. A count rather
+  // than a Set handles multiple observations of one path without letting the
+  // first completion erase evidence that a later read is still pending.
+  pendingReadCounts: Map<string, number>
 }
 
 type Registry = {
   schemaVersion: number
   hmacKey: Buffer
   roots: Map<string, RootEntry>
+}
+
+export type FreshRolloutTransportInspection = Readonly<{
+  knownPathCount: number
+  lastFingerprintCount: number
+  referenceCount: number
+  activeWatcherCount: number
+}>
+
+export type FreshRolloutReadQueueTestGate = Readonly<{
+  release(): void
+  hasAdmittedRead(): boolean
+  stopEventAdmission(): Promise<void>
+}>
+
+type RegistryBridge = Readonly<{
+  schemaVersion: number
+  begin(options: FreshRolloutCoordinatorOptions):
+    StartingFreshRolloutCoordinatorAcquisition
+  inspectTransportForTesting(
+    coordinator: FreshRolloutOwnershipCoordinator,
+  ): FreshRolloutTransportInspection
+  holdReadQueueForTesting(
+    coordinator: FreshRolloutOwnershipCoordinator,
+  ): FreshRolloutReadQueueTestGate
+  suppressChangeEventsForTesting(
+    coordinator: FreshRolloutOwnershipCoordinator,
+  ): void
+  emitChangeAndDrainForTesting(
+    coordinator: FreshRolloutOwnershipCoordinator,
+    filePath: string,
+  ): Promise<void>
+}>
+
+type FreshRolloutCoordinatorOptions = {
+  sessionsRoot: string
+  normalizeCwd: (cwd: string) => string
+  normalizePath: (filePath: string) => string
+  onError: (error: Error) => void
 }
 
 export type FreshRolloutCoordinatorAcquisition = {
@@ -76,9 +122,9 @@ export type StartingFreshRolloutCoordinatorAcquisition =
     ready: Promise<void>
   }
 
-function getRegistry(): Registry {
+function getRegistryBridge(): RegistryBridge {
   const globalWithRegistry = globalThis as typeof globalThis & {
-    [REGISTRY_SYMBOL]?: Registry
+    [REGISTRY_SYMBOL]?: RegistryBridge
   }
   const current = globalWithRegistry[REGISTRY_SYMBOL]
   if (current) {
@@ -90,24 +136,77 @@ function getRegistry(): Registry {
           `${current.schemaVersion}; expected ${REGISTRY_SCHEMA_VERSION}`,
       )
     }
+    if (!Object.isFrozen(current) ||
+      typeof current.begin !== 'function' ||
+      typeof current.inspectTransportForTesting !== 'function' ||
+      typeof current.holdReadQueueForTesting !== 'function' ||
+      typeof current.suppressChangeEventsForTesting !== 'function' ||
+      typeof current.emitChangeAndDrainForTesting !== 'function') {
+      throw new Error('Malformed fresh rollout coordinator registry bridge')
+    }
+    installRegistryBridge(globalWithRegistry, current)
     return current
   }
 
-  const created: Registry = {
+  // WHY the symbol is the only identity duplicate compiled package copies can
+  // share. Publishing this Registry object directly made Symbol.for() a
+  // process-wide state exfiltration API: reflection reached maps, coordinator,
+  // raw paths, participant ids, and the root HMAC key. The frozen bridge keeps
+  // only functions and a schema primitive on the global graph. Those functions
+  // execute in the first-loaded module's closure, so later copies still share
+  // one arbiter without receiving a reference to its Registry or RootEntry.
+  const registry: Registry = {
     schemaVersion: REGISTRY_SCHEMA_VERSION,
     hmacKey: randomBytes(32),
     roots: new Map(),
   }
-  globalWithRegistry[REGISTRY_SYMBOL] = created
+  const created = Object.freeze<RegistryBridge>({
+    schemaVersion: REGISTRY_SCHEMA_VERSION,
+    begin: options => beginWithRegistry(registry, options),
+    inspectTransportForTesting: coordinator =>
+      inspectTransportWithRegistry(registry, coordinator),
+    holdReadQueueForTesting: coordinator =>
+      holdReadQueueWithRegistry(registry, coordinator),
+    suppressChangeEventsForTesting: coordinator =>
+      suppressChangeEventsWithRegistry(registry, coordinator),
+    emitChangeAndDrainForTesting: (coordinator, filePath) =>
+      emitChangeAndDrainWithRegistry(registry, coordinator, filePath),
+  })
+  installRegistryBridge(globalWithRegistry, created)
   return created
 }
 
-export async function acquireFreshRolloutCoordinator(options: {
-  sessionsRoot: string
-  normalizeCwd: (cwd: string) => string
-  normalizePath: (filePath: string) => string
-  onError: (error: Error) => void
-}): Promise<FreshRolloutCoordinatorAcquisition> {
+function installRegistryBridge(
+  target: typeof globalThis & { [REGISTRY_SYMBOL]?: RegistryBridge },
+  bridge: RegistryBridge,
+): void {
+  // WHY freezing the bridge protects its own fields but not the symbol slot.
+  // A writable/configurable global lets any later same-process module replace
+  // the bridge and silently create a second ownership graph. Defining the slot
+  // as a hidden immutable authority makes duplicate package copies converge on
+  // the first bridge and makes attempted reassignment fail instead of splitting
+  // watcher/coordinator state. Re-defining the same value also upgrades a
+  // configurable v4 slot installed by an earlier hot-reloaded build.
+  try {
+    Object.defineProperty(target, REGISTRY_SYMBOL, {
+      value: bridge,
+      writable: false,
+      configurable: false,
+      enumerable: false,
+    })
+  } catch {
+    throw new Error('Fresh rollout coordinator registry bridge is not immutable')
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(target, REGISTRY_SYMBOL)
+  if (descriptor?.value !== bridge || descriptor.writable ||
+    descriptor.configurable || descriptor.enumerable) {
+    throw new Error('Fresh rollout coordinator registry bridge is not immutable')
+  }
+}
+
+export async function acquireFreshRolloutCoordinator(
+  options: FreshRolloutCoordinatorOptions,
+): Promise<FreshRolloutCoordinatorAcquisition> {
   const starting = beginFreshRolloutCoordinatorAcquisition(options)
   await starting.ready
   return starting
@@ -124,14 +223,17 @@ export async function acquireFreshRolloutCoordinator(options: {
  * an older durable candidate appear causal. Consumers that do not need this
  * boundary should continue using `acquireFreshRolloutCoordinator()`.
  */
-export function beginFreshRolloutCoordinatorAcquisition(options: {
-  sessionsRoot: string
-  normalizeCwd: (cwd: string) => string
-  normalizePath: (filePath: string) => string
-  onError: (error: Error) => void
-}): StartingFreshRolloutCoordinatorAcquisition {
+export function beginFreshRolloutCoordinatorAcquisition(
+  options: FreshRolloutCoordinatorOptions,
+): StartingFreshRolloutCoordinatorAcquisition {
+  return getRegistryBridge().begin(options)
+}
+
+function beginWithRegistry(
+  registry: Registry,
+  options: FreshRolloutCoordinatorOptions,
+): StartingFreshRolloutCoordinatorAcquisition {
   const root = options.normalizePath(options.sessionsRoot)
-  const registry = getRegistry()
   // WHY the raw sessions root is needed only by the live watcher. Keeping it
   // as a global Map key leaked every private CODEX_HOME for the process
   // lifetime even after all candidate evidence was scrubbed.
@@ -157,6 +259,7 @@ export function beginFreshRolloutCoordinatorAcquisition(options: {
       errorListeners: new Set(),
       knownPaths: new Set(),
       lastFingerprints: new Map(),
+      pendingReadCounts: new Map(),
     }
     registry.roots.set(rootFingerprint, entry)
   }
@@ -215,6 +318,123 @@ export function beginFreshRolloutCoordinatorAcquisition(options: {
       await stopRootWatcher(acquiredEntry)
     },
   }
+}
+
+/**
+ * Return only aggregate transport state for a coordinator already held by the
+ * caller. This is deliberately not a general registry enumeration API.
+ */
+export function inspectFreshRolloutTransportForTesting(
+  coordinator: FreshRolloutOwnershipCoordinator,
+): FreshRolloutTransportInspection {
+  return getRegistryBridge().inspectTransportForTesting(coordinator)
+}
+
+/**
+ * Install a deterministic queue barrier without exposing the queue or root.
+ */
+export function holdFreshRolloutReadQueueForTesting(
+  coordinator: FreshRolloutOwnershipCoordinator,
+): FreshRolloutReadQueueTestGate {
+  return getRegistryBridge().holdReadQueueForTesting(coordinator)
+}
+
+/** Remove only change-event admission for the caller's held coordinator. */
+export function suppressFreshRolloutChangeEventsForTesting(
+  coordinator: FreshRolloutOwnershipCoordinator,
+): void {
+  getRegistryBridge().suppressChangeEventsForTesting(coordinator)
+}
+
+/** Deliver one synthetic watcher event and join every read it admitted. */
+export function emitFreshRolloutChangeAndDrainForTesting(
+  coordinator: FreshRolloutOwnershipCoordinator,
+  filePath: string,
+): Promise<void> {
+  return getRegistryBridge().emitChangeAndDrainForTesting(
+    coordinator,
+    filePath,
+  )
+}
+
+function rootEntryForCoordinator(
+  registry: Registry,
+  coordinator: FreshRolloutOwnershipCoordinator,
+): RootEntry {
+  for (const entry of registry.roots.values()) {
+    if (entry.coordinator === coordinator) return entry
+  }
+  // WHY test controls must be rooted in a capability the caller already
+  // possesses. Accepting a root path or registry key would both reveal the
+  // process inventory and recreate the raw identity channel Stage 39 removes.
+  throw new Error('Fresh rollout transport is not held by this coordinator')
+}
+
+function inspectTransportWithRegistry(
+  registry: Registry,
+  coordinator: FreshRolloutOwnershipCoordinator,
+): FreshRolloutTransportInspection {
+  const entry = rootEntryForCoordinator(registry, coordinator)
+  // WHY the object is a value snapshot, not a live view. Returning collections,
+  // iterators, callbacks over entries, or even a mutable wrapper would let test
+  // code walk back into the RootEntry. Counts and one lifecycle boolean are the
+  // complete evidence required by the recorded retention contracts.
+  return Object.freeze({
+    knownPathCount: entry.knownPaths.size,
+    lastFingerprintCount: entry.lastFingerprints.size,
+    referenceCount: entry.referenceCount,
+    activeWatcherCount: entry.watcher === null ? 0 : 1,
+  })
+}
+
+function holdReadQueueWithRegistry(
+  registry: Registry,
+  coordinator: FreshRolloutOwnershipCoordinator,
+): FreshRolloutReadQueueTestGate {
+  const entry = rootEntryForCoordinator(registry, coordinator)
+  let releaseGate!: () => void
+  let released = false
+  const gate = new Promise<void>(resolve => { releaseGate = resolve })
+  const installedQueue = entry.readQueue.then(() => gate)
+  entry.readQueue = installedQueue
+
+  // WHY the capability exposes behavior, never the Promise or watcher. The
+  // generation-race recordings need to place real callbacks behind a causal
+  // barrier and close further admission, but neither operation requires
+  // reflecting a RootEntry or mutating its fields from the test process.
+  return Object.freeze({
+    release: () => {
+      if (released) return
+      released = true
+      releaseGate()
+    },
+    hasAdmittedRead: () => entry.readQueue !== installedQueue,
+    stopEventAdmission: async () => {
+      entry.stopWatcherMaintenance?.()
+      entry.stopWatcherMaintenance = null
+      const watcher = entry.watcher
+      entry.watcher = null
+      await watcher?.close()
+    },
+  })
+}
+
+function suppressChangeEventsWithRegistry(
+  registry: Registry,
+  coordinator: FreshRolloutOwnershipCoordinator,
+): void {
+  rootEntryForCoordinator(registry, coordinator)
+    .watcher?.removeAllListeners('change')
+}
+
+async function emitChangeAndDrainWithRegistry(
+  registry: Registry,
+  coordinator: FreshRolloutOwnershipCoordinator,
+  filePath: string,
+): Promise<void> {
+  const entry = rootEntryForCoordinator(registry, coordinator)
+  entry.watcher?.emit('change', filePath)
+  await entry.readQueue
 }
 
 async function stopRootWatcher(entry: RootEntry): Promise<void> {
@@ -312,6 +532,10 @@ async function ensureWatcher(root: string, entry: RootEntry): Promise<void> {
         reserved.filePath,
         reserved.snapshot.fingerprint,
       )
+      entry.pendingReadCounts.set(
+        reserved.filePath,
+        (entry.pendingReadCounts.get(reserved.filePath) ?? 0) + 1,
+      )
       entry.readQueue = entry.readQueue
         .then(async () => {
           try {
@@ -331,6 +555,13 @@ async function ensureWatcher(root: string, entry: RootEntry): Promise<void> {
               },
             )
           } finally {
+            const pendingReads =
+              (entry.pendingReadCounts.get(reserved.filePath) ?? 1) - 1
+            if (pendingReads <= 0) {
+              entry.pendingReadCounts.delete(reserved.filePath)
+            } else {
+              entry.pendingReadCounts.set(reserved.filePath, pendingReads)
+            }
             // WHY an event can be admitted before compaction but run after it.
             // `enqueue` necessarily restores its path so the immutable read can
             // complete, but a terminal candidate (blocked, quarantined, leased,
@@ -400,12 +631,24 @@ async function ensureWatcher(root: string, entry: RootEntry): Promise<void> {
             .then(() => {
               for (const filePath of entry.knownPaths) {
                 if (maintenanceStopped) break
-                if (entry.coordinator.isCandidateTransportTerminal(filePath)) {
-                  // WHY terminalization can occur without another filesystem
-                  // callback: exact reservation and lineage leasing are policy
-                  // transitions, not file writes. Check policy before the
-                  // unchanged-fingerprint shortcut or a live sibling keeps this
-                  // UUID-bearing transport path indefinitely.
+                if ((entry.pendingReadCounts.get(filePath) ?? 0) > 0) {
+                  // WHY coordinator absence is not yet policy evidence while
+                  // an immutable prefix read is queued. Skipping here—not
+                  // returning true forever from coordinator policy—preserves
+                  // the pre-registration callback without retaining a path
+                  // after an invalid completed read and inactive claimants.
+                  continue
+                }
+                if (!entry.coordinator.requiresCandidateRescan(filePath)) {
+                  // WHY policy can turn false without another filesystem
+                  // callback: exact reservation, generation exclusion, and
+                  // lineage leasing are coordinator transitions, not writes.
+                  // Check the graph before the unchanged-fingerprint shortcut
+                  // or a live sibling retains this UUID-bearing path forever.
+                  // The pending-read guard above preserves pre-registration
+                  // callback order; after completion, only actual live claimant
+                  // policy may retain an incomplete file for another rescan.
+                  entry.coordinator.compactCandidateTransportPath(filePath)
                   entry.knownPaths.delete(filePath)
                   entry.lastFingerprints.delete(filePath)
                   continue

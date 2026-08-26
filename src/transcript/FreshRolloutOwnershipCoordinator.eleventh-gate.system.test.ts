@@ -15,7 +15,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FreshRolloutOwnershipCoordinator } from './FreshRolloutOwnershipCoordinator.js'
 import {
   acquireFreshRolloutCoordinator,
-  type FreshRolloutCoordinatorAcquisition,
+  emitFreshRolloutChangeAndDrainForTesting,
+  inspectFreshRolloutTransportForTesting,
+  suppressFreshRolloutChangeEventsForTesting,
 } from './FreshRolloutOwnershipCoordinatorRegistry.js'
 
 const NO_BIRTH_TIME_TARGET = Symbol.for(
@@ -59,18 +61,6 @@ type RecordedOwnershipFixture = {
 type EleventhGateReview = {
   heads: { codexHeadless: string }
   confirmedFindings: string[]
-}
-
-type RawRootEntry = {
-  coordinator: FreshRolloutOwnershipCoordinator
-  knownPaths: Set<string>
-  lastFingerprints: Map<string, string>
-}
-
-type OpaqueRegistryBridge = {
-  inspectTransportForTesting?: (
-    coordinator: FreshRolloutOwnershipCoordinator,
-  ) => { knownPathCount: number; lastFingerprintCount: number }
 }
 
 const exactFixturePath = fileURLToPath(new URL(
@@ -121,33 +111,17 @@ function registryGlobal(): object | null {
   })[REGISTRY_SYMBOL] ?? null
 }
 
-function rawEntryFor(
-  coordinator: FreshRolloutOwnershipCoordinator,
-): RawRootEntry | null {
-  const globalValue = registryGlobal() as {
-    roots?: Map<string, RawRootEntry>
-  } | null
-  return [...(globalValue?.roots?.values() ?? [])].find(
-    entry => entry.coordinator === coordinator,
-  ) ?? null
-}
-
 function transportCounts(
   coordinator: FreshRolloutOwnershipCoordinator,
 ): { knownPathCount: number; lastFingerprintCount: number } {
-  const globalValue = registryGlobal() as OpaqueRegistryBridge | null
-  if (typeof globalValue?.inspectTransportForTesting === 'function') {
-    // WHY Stage 39 may expose only this count projection, scoped through the
-    // coordinator the caller already holds. The fallback below exists solely
-    // to make the Stage 38 failure executable against the old raw registry;
-    // the unchanged contract naturally stops traversing roots after repair.
-    return globalValue.inspectTransportForTesting(coordinator)
-  }
-  const entry = rawEntryFor(coordinator)
-  if (!entry) throw new Error('eleventh-gate transport entry is missing')
+  const inspection = inspectFreshRolloutTransportForTesting(coordinator)
+  // WHY this contract projects only the two retention counts under review.
+  // The bridge snapshot also carries count-only lifecycle evidence for older
+  // watcher tests; destructuring prevents an exact equality assertion from
+  // accidentally coupling CH-13 to those adjacent counters.
   return {
-    knownPathCount: entry.knownPaths.size,
-    lastFingerprintCount: entry.lastFingerprints.size,
+    knownPathCount: inspection.knownPathCount,
+    lastFingerprintCount: inspection.lastFingerprintCount,
   }
 }
 
@@ -265,6 +239,24 @@ describe('eleventh-gate recorded registry and transport boundaries', () => {
       })
       const globalValue = registryGlobal()
       if (!globalValue) throw new Error('eleventh-gate global bridge is missing')
+      const globalDescriptor = Object.getOwnPropertyDescriptor(
+        globalThis,
+        REGISTRY_SYMBOL,
+      )
+      expect(globalDescriptor).toMatchObject({
+        value: globalValue,
+        writable: false,
+        configurable: false,
+        enumerable: false,
+      })
+      // WHY Object.freeze() alone leaves the global symbol slot replaceable.
+      // These side-effect-free Reflect operations prove a same-process module
+      // cannot assign a counterfeit bridge or delete the shared authority and
+      // force the next package copy to create a split-brain coordinator.
+      expect(Reflect.set(globalThis, REGISTRY_SYMBOL, Object.freeze({})))
+        .toBe(false)
+      expect(Reflect.deleteProperty(globalThis, REGISTRY_SYMBOL)).toBe(false)
+      expect(registryGlobal()).toBe(globalValue)
       const projection = projectReflectiveReachability({
         globalValue,
         coordinator: acquisition.coordinator,
@@ -281,6 +273,18 @@ describe('eleventh-gate recorded registry and transport boundaries', () => {
         reachableRawPath: false,
         reachableParticipantId: false,
       })
+      // WHY removing the coordinator from the global bridge is necessary but
+      // not sufficient: acquisitions intentionally return that coordinator to
+      // their caller. Its HMAC custody must therefore survive reflection of the
+      // reachable instance too. Other private arbitration maps are not the
+      // global finding under review; this assertion isolates the cryptographic
+      // key that TypeScript `private` previously stored as an own Buffer.
+      expect(projectReflectiveReachability({
+        globalValue: acquisition.coordinator,
+        coordinator: acquisition.coordinator,
+        rawPath: rolloutPath,
+        participantId,
+      }).reachableHmacKey).toBe(false)
     } finally {
       participant.unregister()
       await acquisition.release()
@@ -348,6 +352,103 @@ describe('eleventh-gate recorded registry and transport boundaries', () => {
       participant.unregister()
       await staleAcquisition.release()
       await liveSibling.release()
+    }
+  }, 10_000)
+
+  it('compacts a completed invalid path with no claimant while a watcher reference remains live', async () => {
+    const root = temporaryRoot('codex-eleventh-invalid-orphan-')
+    const day = join(root, '2026', '08', '26')
+    mkdirSync(day, { recursive: true })
+    const invalidPath = join(
+      day,
+      'rollout-invalid-00000000-0000-4000-8000-000000000139.jsonl',
+    )
+    const options = {
+      sessionsRoot: root,
+      normalizeCwd: (value: string) => value,
+      normalizePath: (value: string) => value,
+      onError: () => undefined,
+    }
+    const acquisition = await acquireFreshRolloutCoordinator(options)
+    const liveSibling = await acquireFreshRolloutCoordinator(options)
+
+    try {
+      writeFileSync(invalidPath, '{"type":"not-a-rollout-candidate"}\n')
+      await emitFreshRolloutChangeAndDrainForTesting(
+        acquisition.coordinator,
+        invalidPath,
+      )
+      expect(acquisition.coordinator.inspect().observedCandidateCount).toBe(0)
+      // WHY joining the opaque read queue proves “missing candidate” now means
+      // a completed invalid parse, not a callback that has not run yet. It must
+      // be retained until maintenance applies policy, then disappear even
+      // though two acquisition references keep chokidar itself alive.
+      expect(inspectFreshRolloutTransportForTesting(
+        acquisition.coordinator,
+      )).toMatchObject({ knownPathCount: 1, activeWatcherCount: 1 })
+      expect(await waitFor(() =>
+        inspectFreshRolloutTransportForTesting(
+          acquisition.coordinator,
+        ).knownPathCount === 0,
+      )).toBe(true)
+      expect(inspectFreshRolloutTransportForTesting(
+        acquisition.coordinator,
+      )).toMatchObject({
+        knownPathCount: 0,
+        lastFingerprintCount: 0,
+        activeWatcherCount: 1,
+      })
+    } finally {
+      await acquisition.release()
+      await liveSibling.release()
+    }
+  }, 10_000)
+
+  it('keeps a completed incomplete path for an active claimant rescan', async () => {
+    const root = temporaryRoot('codex-eleventh-incomplete-live-')
+    const day = join(root, '2026', '08', '26')
+    mkdirSync(day, { recursive: true })
+    const incompletePath = join(
+      day,
+      'rollout-incomplete-00000000-0000-4000-8000-000000000140.jsonl',
+    )
+    const options = {
+      sessionsRoot: root,
+      normalizeCwd: (value: string) => value,
+      normalizePath: (value: string) => value,
+      onError: () => undefined,
+    }
+    const acquisition = await acquireFreshRolloutCoordinator(options)
+    const participant = acquisition.coordinator.registerParticipant({
+      participantId: 'recorded-live-incomplete-claimant',
+      cwd: '/recorded/worktree',
+      onLease: () => undefined,
+    })
+
+    try {
+      writeFileSync(incompletePath, '')
+      await emitFreshRolloutChangeAndDrainForTesting(
+        acquisition.coordinator,
+        incompletePath,
+      )
+      expect(acquisition.coordinator.inspect().observedCandidateCount).toBe(0)
+      suppressFreshRolloutChangeEventsForTesting(acquisition.coordinator)
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 1200))
+      expect(inspectFreshRolloutTransportForTesting(
+        acquisition.coordinator,
+      ).knownPathCount).toBe(1)
+
+      // WHY change-event admission is removed before these recorded bytes are
+      // appended. Observing the candidate proves the retained raw path powered
+      // the independent 500ms rescan; a false policy for every missing
+      // candidate would compact it and make this recovery impossible.
+      writeFileSync(incompletePath, rolloutText())
+      expect(await waitFor(() =>
+        acquisition.coordinator.inspect().observedCandidateCount === 1,
+      )).toBe(true)
+    } finally {
+      participant.unregister()
+      await acquisition.release()
     }
   }, 10_000)
 })

@@ -144,8 +144,8 @@ export class PromptInputEvidence {
       frame?.generation ?? this.latestFrameGeneration,
     )
     this.refreshAfterComposerRevision = frame &&
-      frameLayoutIsProviderRendered(frame) &&
-      surface.kind === 'primary-composer'
+      surface.kind === 'primary-composer' &&
+      composerLayoutIsProviderRendered(frame, surface)
       ? this.composerRevision(frame, surface)
       : null
   }
@@ -154,7 +154,8 @@ export class PromptInputEvidence {
     frame: StableTerminalFrame | null,
     surface: Codex01491ComposerSurface,
   ): frame is StableTerminalFrame {
-    if (!frame || !frameLayoutIsProviderRendered(frame) ||
+    if (!frame || surface.kind !== 'primary-composer' ||
+      !composerLayoutIsProviderRendered(frame, surface) ||
       frame.generation <= this.refreshAfterGeneration) {
       return false
     }
@@ -164,9 +165,6 @@ export class PromptInputEvidence {
       // the conservative fallback. Whenever a genuine pre-write composer was
       // available, the stronger revision fence below is mandatory.
       return true
-    }
-    if (surface.kind !== 'primary-composer') {
-      return false
     }
     return this.composerRevision(frame, surface) !==
       this.refreshAfterComposerRevision
@@ -199,8 +197,43 @@ export class PromptInputEvidence {
   }
 }
 
-function frameLayoutIsProviderRendered(frame: StableTerminalFrame): boolean {
-  return frame.layoutEpoch === frame.providerLayoutEpoch
+function composerLayoutIsProviderRendered(
+  frame: StableTerminalFrame,
+  surface: Codex01491ComposerSurface,
+): boolean {
+  if (frame.layoutEpoch !== frame.providerLayoutEpoch) return false
+
+  // WHY the paint fence exists only to distinguish xterm's synchronous reflow
+  // from a provider repaint after resize. Epoch zero has no preceding geometry
+  // whose cells can be misread, and compatibility frames recorded before the
+  // fence was introduced intentionally omit row/cursor paint generations.
+  if (frame.layoutEpoch === 0) return true
+  if (surface.kind !== 'primary-composer') return false
+
+  const layoutStart = frame.layoutStartGeneration
+  if (layoutStart === undefined ||
+    frame.cursorPaintGeneration === undefined ||
+    frame.cursorPaintGeneration <= layoutStart) {
+    return false
+  }
+
+  const composerRow = findComposerRow(frame)
+  if (composerRow < 0) return false
+  const separatorRow = frame.rows.findIndex((row, index) =>
+    index > composerRow && row.text.trim() === '',
+  )
+  if (separatorRow <= composerRow) return false
+
+  // WHY providerLayoutEpoch is deliberately only a coarse transport fact: a
+  // status-only PTY chunk also advances it. Ownership needs the narrower fact
+  // that every physical row currently interpreted as draft text changed after
+  // the resize fence. Requiring every row fails closed for partial or
+  // indistinguishable redraws instead of accepting a mixture of stale reflowed
+  // geometry and fresh status chrome.
+  return frame.rows
+    .slice(composerRow, separatorRow)
+    .every(row => row.paintGeneration !== undefined &&
+      row.paintGeneration > layoutStart)
 }
 
 function findComposerRow(frame: StableTerminalFrame): number {

@@ -130,9 +130,19 @@ type PathLease = {
 // later identical-prompt sibling inside this window must remain ambiguous.
 const PARTICIPANT_FILE_GRACE_MS = 5000
 
+// WHY a TypeScript `private` field is still an ordinary JavaScript own
+// property. The coordinator is intentionally returned to package consumers,
+// so keeping its HMAC key on `this` let routine reflection recover the secret
+// that protects every retained prompt, path, cwd, and lineage fingerprint.
+// WeakMap custody preserves one key per coordinator without placing either the
+// key or a getter for it anywhere on the reachable instance/prototype graph.
+const coordinatorHmacKeys = new WeakMap<
+  FreshRolloutOwnershipCoordinator,
+  Buffer
+>()
+
 export class FreshRolloutOwnershipCoordinator {
   private sequence = 0
-  private readonly hmacKey = randomBytes(32)
   private readonly participants = new Map<string, Participant>()
   private readonly resumeParticipants = new Map<string, ResumeParticipant>()
   private readonly candidates = new Map<string, CandidateState>()
@@ -152,7 +162,9 @@ export class FreshRolloutOwnershipCoordinator {
   constructor(private readonly options: {
     normalizeCwd: (cwd: string) => string
     normalizePath: (filePath: string) => string
-  }) {}
+  }) {
+    coordinatorHmacKeys.set(this, randomBytes(32))
+  }
 
   registerParticipant(options: {
     participantId: string
@@ -571,6 +583,12 @@ export class FreshRolloutOwnershipCoordinator {
     if (this.pathLeases.has(fingerprint)) return false
     const candidate = this.candidates.get(fingerprint)
     if (!candidate) {
+      // WHY pending immutable reads are registry transport state, not ownership
+      // state, and maintenance explicitly protects them before asking here.
+      // Once no read is pending, an invalid/incomplete path is useful only when
+      // a live unleased claimant could consume evidence from a later append.
+      // Returning true without that claimant would retain arbitrary raw paths
+      // forever merely because an unrelated acquisition keeps the watcher live.
       return [...this.participants.values()].some(participant =>
         participant.active && !participant.leasedCandidateFingerprint,
       ) || [...this.resumeParticipants.values()].some(participant =>
@@ -581,6 +599,36 @@ export class FreshRolloutOwnershipCoordinator {
     }
     return !this.candidateIsTerminal(candidate) &&
       this.activeParticipantCanStillUse(candidate)
+  }
+
+  /**
+   * Erase the raw path corresponding to a transport entry policy rejected.
+   *
+   * WHY the registry cannot safely approximate this by running whole-graph
+   * compaction: maintenance examines one unchanged fingerprint at a time, and
+   * unrelated candidates may still need rescan. The path HMAC lookup keeps the
+   * raw pathname at the watcher boundary while this method removes precisely
+   * its duplicate from coordinator state.
+   */
+  compactCandidateTransportPath(filePath: string): void {
+    // WHY this method is callable across the registry/coordinator module
+    // boundary, so it must carry its own policy guard. Relying on the caller's
+    // preceding check would make a direct or stale call capable of erasing the
+    // only path for a genuinely unresolved live rescan.
+    if (this.requiresCandidateRescan(filePath)) return
+    const fingerprint = this.fingerprint(
+      'path',
+      this.options.normalizePath(filePath),
+    )
+    const candidate = this.candidates.get(fingerprint)
+    if (!candidate) return
+    candidate.filePath = null
+    if (this.candidateIsTerminal(candidate)) {
+      candidate.cwdFingerprint = null
+      candidate.threadFingerprint = null
+      candidate.messageFirstObservedAt.clear()
+      candidate.lineageFingerprints.clear()
+    }
   }
 
   /**
@@ -1111,7 +1159,15 @@ export class FreshRolloutOwnershipCoordinator {
   }
 
   private fingerprint(domain: string, value: string): string {
-    return createHmac('sha256', this.hmacKey)
+    const hmacKey = coordinatorHmacKeys.get(this)
+    // WHY absence means an object bypassed the real constructor. Silently
+    // minting a replacement key here would split equality identity midway
+    // through ownership arbitration, so malformed/forged receivers fail
+    // closed instead of producing incomparable fingerprints.
+    if (!hmacKey) {
+      throw new Error('Fresh rollout coordinator HMAC custody is unavailable')
+    }
+    return createHmac('sha256', hmacKey)
       .update(domain)
       .update('\0')
       .update(value)

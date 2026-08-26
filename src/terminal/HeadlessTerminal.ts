@@ -106,6 +106,12 @@ export type StableTerminalRow = {
   cells: readonly string[]
   /** Native xterm wrap bit; false for rows painted explicitly by a TUI. */
   isWrapped: boolean
+  /**
+   * Provider-parse generation in which this physical viewport row's cells last
+   * changed. Undefined only on compatibility frames constructed outside the
+   * live terminal mirror.
+   */
+  paintGeneration?: number
 }
 
 export type StableTerminalFrame = {
@@ -118,9 +124,33 @@ export type StableTerminalFrame = {
    * A mismatch means xterm has reinterpreted an older paint at new dimensions.
    */
   providerLayoutEpoch: number
+  /** Parsed generation current when the active terminal geometry began. */
+  layoutStartGeneration?: number
+  /**
+   * Provider-parse generation in which the logical cursor position last
+   * changed. Undefined only on compatibility frames constructed by callers.
+   */
+  cursorPaintGeneration?: number
   cols: number
   rows: readonly StableTerminalRow[]
   cursor: Readonly<{ x: number; y: number }>
+}
+
+type TerminalPaintState = {
+  rows: readonly {
+    cells: readonly string[]
+    isWrapped: boolean
+  }[]
+  cursor: Readonly<{ x: number; y: number }>
+}
+
+function paintRowsEqual(
+  left: TerminalPaintState['rows'][number] | undefined,
+  right: TerminalPaintState['rows'][number] | undefined,
+): boolean {
+  if (!left || !right || left.isWrapped !== right.isWrapped ||
+    left.cells.length !== right.cells.length) return false
+  return left.cells.every((cell, index) => cell === right.cells[index])
 }
 
 export type HeadlessTerminalEvents = {
@@ -249,6 +279,10 @@ export class HeadlessTerminal extends EventEmitter {
   private parsedFrameGeneration = 0
   private layoutEpoch = 0
   private providerLayoutEpoch = 0
+  private layoutStartGeneration = 0
+  private rowPaintGenerations: number[]
+  private cursorPaintGeneration = 0
+  private lastProviderPaintState: TerminalPaintState
   private exited = false
   private attached = false
   private readonly snapshotIntervalMs: number
@@ -279,6 +313,8 @@ export class HeadlessTerminal extends EventEmitter {
       allowProposedApi: true,
       scrollback: 10000,
     })
+    this.rowPaintGenerations = Array.from({ length: rows }, () => 0)
+    this.lastProviderPaintState = this.capturePaintState()
     // NOTE: no PTY subscription here. Consumers must call attach()
     // after they've wired up everything that depends on PTY data
     // (transcript tailers, recorders). See file header.
@@ -312,10 +348,24 @@ export class HeadlessTerminal extends EventEmitter {
       this.term.write(data, () => {
         this.pendingWrites--
         this.parsedFrameGeneration++
-        this.providerLayoutEpoch = Math.max(
-          this.providerLayoutEpoch,
-          admittedLayoutEpoch,
-        )
+        const parsedPaintState = this.capturePaintState()
+        if (admittedLayoutEpoch === this.layoutEpoch) {
+          this.recordProviderPaint(
+            this.parsedFrameGeneration,
+            this.lastProviderPaintState,
+            parsedPaintState,
+          )
+          this.providerLayoutEpoch = Math.max(
+            this.providerLayoutEpoch,
+            admittedLayoutEpoch,
+          )
+        }
+        // WHY even a pre-resize chunk that finishes late changes the buffer
+        // against which the next admitted chunk must be compared. It cannot
+        // receive current-layout paint authority, but omitting it from the
+        // baseline would make a later status byte inherit changes it did not
+        // produce and falsely mark unrelated rows as freshly painted.
+        this.lastProviderPaintState = parsedPaintState
         // Only schedule when there are no more pending parses.
         // Otherwise rapid PTY chunks would each schedule a flush
         // and we'd snapshot mid-parse. The throttle inside
@@ -349,6 +399,18 @@ export class HeadlessTerminal extends EventEmitter {
       // that interval explicit prevents prompt evidence from manufacturing a
       // logical newline out of a formerly soft-wrapped draft.
       this.layoutEpoch++
+      this.layoutStartGeneration = this.parsedFrameGeneration
+      // xterm has already reinterpreted every cell at the new geometry, but no
+      // provider byte caused those physical rows. Resetting each row/cursor to
+      // the layout-start fence makes subsequent evidence local: only cells or
+      // cursor positions that actually change in a later provider parse can
+      // cross it. A byte that updates status chrome advances only that row.
+      this.rowPaintGenerations = Array.from(
+        { length: this.term.rows },
+        () => this.layoutStartGeneration,
+      )
+      this.cursorPaintGeneration = this.layoutStartGeneration
+      this.lastProviderPaintState = this.capturePaintState()
     } catch {
       // node-pty throws on 0/negative dims during transient layouts.
     }
@@ -396,6 +458,8 @@ export class HeadlessTerminal extends EventEmitter {
         text: line?.translateToString(true) ?? '',
         cells: Object.freeze(cells),
         isWrapped: line?.isWrapped ?? false,
+        paintGeneration: this.rowPaintGenerations[viewportRow] ??
+          this.layoutStartGeneration,
       }))
     }
 
@@ -404,6 +468,8 @@ export class HeadlessTerminal extends EventEmitter {
       generation: this.parsedFrameGeneration,
       layoutEpoch: this.layoutEpoch,
       providerLayoutEpoch: this.providerLayoutEpoch,
+      layoutStartGeneration: this.layoutStartGeneration,
+      cursorPaintGeneration: this.cursorPaintGeneration,
       cols: this.term.cols,
       rows: Object.freeze(rows),
       cursor: Object.freeze({
@@ -411,6 +477,48 @@ export class HeadlessTerminal extends EventEmitter {
         y: absoluteCursorY - buffer.viewportY,
       }),
     })
+  }
+
+  /**
+   * Capture only provider-neutral physical facts used to attribute paint.
+   * There is deliberately no Codex composer knowledge here: a terminal can say
+   * which rows/cursor changed, while the provider adapter alone decides which
+   * of those rows constitute an input surface.
+   */
+  private capturePaintState(): TerminalPaintState {
+    const buffer = this.term.buffer.active
+    const rows: Array<{ cells: readonly string[]; isWrapped: boolean }> = []
+    for (let viewportRow = 0; viewportRow < this.term.rows; viewportRow += 1) {
+      const line = buffer.getLine(buffer.viewportY + viewportRow)
+      const cells: string[] = []
+      for (let column = 0; column < this.term.cols; column += 1) {
+        cells.push(line?.getCell(column)?.getChars() ?? '')
+      }
+      rows.push({ cells, isWrapped: line?.isWrapped ?? false })
+    }
+    const absoluteCursorY = buffer.baseY + buffer.cursorY
+    return {
+      rows,
+      cursor: {
+        x: buffer.cursorX,
+        y: absoluteCursorY - buffer.viewportY,
+      },
+    }
+  }
+
+  private recordProviderPaint(
+    generation: number,
+    before: TerminalPaintState,
+    after: TerminalPaintState,
+  ): void {
+    for (let row = 0; row < after.rows.length; row += 1) {
+      if (!paintRowsEqual(before.rows[row], after.rows[row])) {
+        this.rowPaintGenerations[row] = generation
+      }
+    }
+    if (before.cursor.x !== after.cursor.x || before.cursor.y !== after.cursor.y) {
+      this.cursorPaintGeneration = generation
+    }
   }
 
   /** Capture the viewport with bold/italic reconstructed as markdown. */

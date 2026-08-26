@@ -28,6 +28,10 @@ const builtEntries = {
     '../dist/transcript/FreshRolloutOwnershipCoordinator.js',
     import.meta.url,
   ),
+  registry: new URL(
+    '../dist/transcript/FreshRolloutOwnershipCoordinatorRegistry.js',
+    import.meta.url,
+  ),
 }
 
 const [
@@ -35,11 +39,13 @@ const [
   resumeRuntime,
   promptRuntime,
   coordinatorRuntime,
+  registryRuntime,
 ] = await Promise.all([
   import(builtEntries.root.href) as Promise<Record<string, unknown>>,
   import(builtEntries.resume.href) as Promise<Record<string, unknown>>,
   import(builtEntries.prompt.href) as Promise<Record<string, unknown>>,
   import(builtEntries.coordinator.href) as Promise<Record<string, unknown>>,
+  import(builtEntries.registry.href) as Promise<Record<string, unknown>>,
 ])
 
 const prepareCodexResumeRollout = built.prepareCodexResumeRollout as
@@ -65,9 +71,23 @@ const FreshRolloutOwnershipCoordinator =
         inspectRetentionForTesting(): unknown
       })
     | undefined
+const acquireFreshRolloutCoordinator =
+  registryRuntime.acquireFreshRolloutCoordinator as
+    | ((options: {
+        sessionsRoot: string
+        normalizeCwd(value: string): string
+        normalizePath(value: string): string
+        onError(error: Error): void
+      }) => Promise<{
+        coordinator: InstanceType<NonNullable<
+          typeof FreshRolloutOwnershipCoordinator
+        >>
+        release(): Promise<void>
+      }>)
+    | undefined
 
 if (!prepareCodexResumeRollout || !SubmittedPromptInput ||
-  !FreshRolloutOwnershipCoordinator) {
+  !FreshRolloutOwnershipCoordinator || !acquireFreshRolloutCoordinator) {
   throw new Error('The built ninth-gate modules are incomplete; run npm run build first')
 }
 
@@ -81,6 +101,7 @@ try {
   const resumeProjection = await projectResumePrototype()
   const promptProjection = projectStructuralPromptCompatibility()
   const retentionProjection = projectRetentionInspection()
+  const registryProjection = await projectGlobalRegistryBridge()
   const moduleSha256 = Object.fromEntries(await Promise.all(
     Object.entries(builtEntries).map(async ([name, url]) => [
       name,
@@ -119,6 +140,7 @@ try {
     },
     ch07StructuralPromptProfile: promptProjection,
     ch08RetentionInspection: retentionProjection,
+    eleventhGateGlobalRegistry: registryProjection,
   }, null, 2)}\n`)
 } finally {
   rmSync(temporaryRoot, { recursive: true, force: true })
@@ -263,6 +285,129 @@ function projectRetentionInspection(): Record<string, unknown> {
     serializedContainsFreshParticipantId: serialized.includes(freshParticipantId),
     serializedContainsResumeParticipantId: serialized.includes(resumeParticipantId),
   }
+}
+
+async function projectGlobalRegistryBridge(): Promise<Record<string, unknown>> {
+  const sessionsRoot = join(temporaryRoot, 'registry-sessions')
+  const day = join(sessionsRoot, '2026', '08', '26')
+  mkdirSync(day, { recursive: true })
+  const participantId = sessionMetaId(exactFixture)
+  const rolloutPath = join(day, `rollout-recorded-${participantId}.jsonl`)
+  const acquisition = await acquireFreshRolloutCoordinator!({
+    sessionsRoot,
+    normalizeCwd: value => value,
+    normalizePath: value => value,
+    onError: error => { throw error },
+  })
+  const participant = acquisition.coordinator.registerParticipant({
+    participantId,
+    cwd: '/recorded/worktree',
+    onLease: () => undefined,
+  })
+  writeFileSync(rolloutPath, rolloutText(exactFixture))
+
+  try {
+    await waitFor(() =>
+      acquisition.coordinator.inspect().observedCandidateCount === 1,
+    )
+    const symbol = Symbol.for(
+      'codex-headless.fresh-rollout-ownership-coordinator-registry',
+    )
+    const bridge = (globalThis as typeof globalThis & {
+      [symbol]?: object
+    })[symbol]
+    if (!bridge) throw new Error('Built registry bridge was not installed')
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, symbol)
+    const globalProjection = projectReflectiveReachability(bridge, {
+      coordinator: acquisition.coordinator,
+      rawPath: rolloutPath,
+      participantId,
+    })
+    const coordinatorProjection = projectReflectiveReachability(
+      acquisition.coordinator,
+      {
+        coordinator: acquisition.coordinator,
+        rawPath: rolloutPath,
+        participantId,
+      },
+    )
+    return {
+      bridgeFrozen: Object.isFrozen(bridge),
+      descriptor: {
+        enumerable: descriptor?.enumerable ?? null,
+        writable: descriptor && 'writable' in descriptor
+          ? descriptor.writable ?? null
+          : null,
+        configurable: descriptor?.configurable ?? null,
+      },
+      ...globalProjection,
+      coordinatorReachableHmacKey: coordinatorProjection.reachableHmacKey,
+    }
+  } finally {
+    participant.unregister()
+    await acquisition.release()
+  }
+}
+
+function projectReflectiveReachability(
+  root: object,
+  expected: {
+    coordinator: object
+    rawPath: string
+    participantId: string
+  },
+): Record<string, boolean> {
+  const visited = new WeakSet<object>()
+  const projection = {
+    reachableMap: false,
+    reachableSet: false,
+    reachableHmacKey: false,
+    reachableCoordinator: false,
+    reachableRawPath: false,
+    reachableParticipantId: false,
+  }
+  const visit = (value: unknown, propertyName: string | null, depth: number): void => {
+    if (typeof value === 'string') {
+      projection.reachableRawPath ||= value === expected.rawPath
+      projection.reachableParticipantId ||= value === expected.participantId
+      return
+    }
+    if ((typeof value !== 'object' && typeof value !== 'function') ||
+      value === null || depth > 8) return
+    if (value === expected.coordinator) projection.reachableCoordinator = true
+    if (Buffer.isBuffer(value) && propertyName === 'hmacKey') {
+      projection.reachableHmacKey = true
+    }
+    if (visited.has(value)) return
+    visited.add(value)
+    if (value instanceof Map) {
+      projection.reachableMap = true
+      for (const [key, entry] of value) {
+        visit(key, null, depth + 1)
+        visit(entry, null, depth + 1)
+      }
+    } else if (value instanceof Set) {
+      projection.reachableSet = true
+      for (const entry of value) visit(entry, null, depth + 1)
+    }
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, key)
+      if (descriptor && 'value' in descriptor) {
+        visit(descriptor.value, String(key), depth + 1)
+      }
+    }
+  }
+  visit(root, null, 0)
+  return projection
+}
+
+async function waitFor(predicate: () => boolean, ms = 3000): Promise<void> {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (predicate()) return
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+  if (!predicate()) throw new Error('Timed out waiting for built rollout')
 }
 
 function collectPrototypeGetters(value: object): string[] {

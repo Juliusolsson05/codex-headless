@@ -35,6 +35,21 @@ type BuiltRuntimeProjection = {
     serializedContainsFreshParticipantId: boolean
     serializedContainsResumeParticipantId: boolean
   }
+  eleventhGateGlobalRegistry: {
+    bridgeFrozen: boolean
+    descriptor: {
+      enumerable: boolean | null
+      writable: boolean | null
+      configurable: boolean | null
+    }
+    reachableMap: boolean
+    reachableSet: boolean
+    reachableHmacKey: boolean
+    reachableCoordinator: boolean
+    reachableRawPath: boolean
+    reachableParticipantId: boolean
+    coordinatorReachableHmacKey: boolean
+  }
 }
 
 const packageRoot = fileURLToPath(new URL('../', import.meta.url))
@@ -150,5 +165,29 @@ describe('ninth-gate built runtime contracts', () => {
     expect.soft(
       current.ch08RetentionInspection.serializedContainsResumeParticipantId,
     ).toBe(false)
+  })
+
+  it('keeps registry and HMAC custody unreachable in the shipped runtime', () => {
+    // WHY the source test is not enough for this boundary. The historical leak
+    // existed through the emitted process-global object and ordinary compiled
+    // TypeScript fields; a source-only projection can look private while the
+    // JavaScript consumers actually load remains reflectable. This subprocess
+    // traverses the exact built global and returned coordinator after a real
+    // recorded rollout is live.
+    expect(current.eleventhGateGlobalRegistry).toEqual({
+      bridgeFrozen: true,
+      descriptor: {
+        enumerable: false,
+        writable: false,
+        configurable: false,
+      },
+      reachableMap: false,
+      reachableSet: false,
+      reachableHmacKey: false,
+      reachableCoordinator: false,
+      reachableRawPath: false,
+      reachableParticipantId: false,
+      coordinatorReachableHmacKey: false,
+    })
   })
 })

@@ -15,7 +15,7 @@ import { parseFreshRolloutCandidate } from './FreshRolloutClaim.js'
 import { FreshRolloutOwnershipCoordinator } from './FreshRolloutOwnershipCoordinator.js'
 import {
   acquireFreshRolloutCoordinator,
-  type FreshRolloutCoordinatorAcquisition,
+  inspectFreshRolloutTransportForTesting,
 } from './FreshRolloutOwnershipCoordinatorRegistry.js'
 import { collectRolloutLineageIds } from './ResumeForkCandidate.js'
 
@@ -26,12 +26,6 @@ type RecordedOwnershipFixture = {
 type TenthGateReview = {
   heads: { codexHeadless: string }
   confirmedFindings: string[]
-}
-
-type RegistryRootEntry = {
-  coordinator: FreshRolloutCoordinatorAcquisition['coordinator']
-  knownPaths: Set<string>
-  lastFingerprints: Map<string, string>
 }
 
 const exactFixturePath = fileURLToPath(new URL(
@@ -64,22 +58,6 @@ function temporaryRoot(prefix: string): string {
   const root = mkdtempSync(join(tmpdir(), prefix))
   temporaryDirectories.push(root)
   return root
-}
-
-function registryEntryFor(
-  acquisition: FreshRolloutCoordinatorAcquisition,
-): RegistryRootEntry {
-  const symbol = Symbol.for(
-    'codex-headless.fresh-rollout-ownership-coordinator-registry',
-  )
-  const registry = (globalThis as typeof globalThis & {
-    [symbol]?: { roots: Map<string, RegistryRootEntry> }
-  })[symbol]
-  const entry = [...(registry?.roots.values() ?? [])].find(
-    candidate => candidate.coordinator === acquisition.coordinator,
-  )
-  if (!entry) throw new Error('tenth-gate watcher registry entry is missing')
-  return entry
 }
 
 async function waitFor(predicate: () => boolean, ms = 3000): Promise<boolean> {
@@ -158,13 +136,14 @@ describe('tenth-gate recorded ownership schedules', () => {
     }
     const terminalizer = await acquireFreshRolloutCoordinator(options)
     const liveSibling = await acquireFreshRolloutCoordinator(options)
-    const entry = registryEntryFor(liveSibling)
     const ownerId = `recorded-exact-owner-${root}`
 
     try {
       expect(await waitFor(() =>
         terminalizer.coordinator.inspect().observedCandidateCount === 1 &&
-        entry.knownPaths.has(rolloutPath),
+        inspectFreshRolloutTransportForTesting(
+          liveSibling.coordinator,
+        ).knownPathCount === 1,
       )).toBe(true)
       expect(terminalizer.coordinator.reservePath({
         ownerId,
@@ -177,7 +156,12 @@ describe('tenth-gate recorded ownership schedules', () => {
       // The maintenance pass must inspect terminal policy before treating an
       // unchanged fingerprint as a reason to retain its UUID-bearing path.
       expect(await waitFor(() =>
-        entry.knownPaths.size === 0 && entry.lastFingerprints.size === 0,
+        inspectFreshRolloutTransportForTesting(
+          liveSibling.coordinator,
+        ).knownPathCount === 0 &&
+        inspectFreshRolloutTransportForTesting(
+          liveSibling.coordinator,
+        ).lastFingerprintCount === 0,
       )).toBe(true)
     } finally {
       terminalizer.coordinator.retireOwnerLeases(ownerId, true)

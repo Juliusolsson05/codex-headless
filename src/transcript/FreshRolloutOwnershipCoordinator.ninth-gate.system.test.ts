@@ -19,7 +19,9 @@ import type {
 } from './FreshRolloutOwnershipCoordinator.js'
 import {
   acquireFreshRolloutCoordinator,
-  type FreshRolloutCoordinatorAcquisition,
+  emitFreshRolloutChangeAndDrainForTesting,
+  inspectFreshRolloutTransportForTesting,
+  suppressFreshRolloutChangeEventsForTesting,
 } from './FreshRolloutOwnershipCoordinatorRegistry.js'
 import {
   prepareCodexResumeRollout,
@@ -49,17 +51,6 @@ type LifecycleSchedule = {
     rolloutThreadId: string
     inactiveExpiryAdvanceMs: number
   }
-}
-
-type RegistryRootEntry = {
-  coordinator: FreshRolloutCoordinatorAcquisition['coordinator']
-  watcher: {
-    emit(event: string, ...args: unknown[]): boolean
-    removeAllListeners(event?: string): unknown
-  } | null
-  readQueue: Promise<void>
-  knownPaths: Set<string>
-  lastFingerprints: Map<string, string>
 }
 
 const fixtureRoot = fileURLToPath(
@@ -116,22 +107,6 @@ async function waitFor(predicate: () => boolean, ms = 3000): Promise<boolean> {
     await new Promise(resolve => setTimeout(resolve, 25))
   }
   return predicate()
-}
-
-function registryEntryFor(
-  acquisition: FreshRolloutCoordinatorAcquisition,
-): RegistryRootEntry {
-  const symbol = Symbol.for(
-    'codex-headless.fresh-rollout-ownership-coordinator-registry',
-  )
-  const registry = (globalThis as typeof globalThis & {
-    [symbol]?: { roots: Map<string, RegistryRootEntry> }
-  })[symbol]
-  const entry = [...(registry?.roots.values() ?? [])].find(
-    candidate => candidate.coordinator === acquisition.coordinator,
-  )
-  if (!entry) throw new Error('recorded watcher registry entry is missing')
-  return entry
 }
 
 function installRecordedExactRollout(options: {
@@ -359,7 +334,6 @@ describe('ninth-gate rollout lifecycle recordings', () => {
     }
     const expiringAcquisition = await acquireFreshRolloutCoordinator(options)
     const liveAcquisition = await acquireFreshRolloutCoordinator(options)
-    const entry = registryEntryFor(liveAcquisition)
     const expiring = expiringAcquisition.coordinator.registerParticipant({
       participantId: `unrelated-expiring-${root}`,
       cwd: '/recorded/worktree',
@@ -383,7 +357,9 @@ describe('ninth-gate rollout lifecycle recordings', () => {
       // existing 500ms rescan is the independent recovery path under test.
       // Closing the watcher would test shutdown instead and deleting the file
       // would invent provider behavior not present in the recorded rollout.
-      entry.watcher?.removeAllListeners('change')
+      suppressFreshRolloutChangeEventsForTesting(
+        liveAcquisition.coordinator,
+      )
       vi.useFakeTimers()
       expiring.unregister()
       await expiringAcquisition.release()
@@ -432,7 +408,6 @@ describe('ninth-gate rollout lifecycle recordings', () => {
     }
     const expiringAcquisition = await acquireFreshRolloutCoordinator(options)
     const liveAcquisition = await acquireFreshRolloutCoordinator(options)
-    const entry = registryEntryFor(liveAcquisition)
     const expiring = expiringAcquisition.coordinator.registerParticipant({
       participantId: `terminal-unrelated-expiring-${root}`,
       cwd: '/recorded/worktree',
@@ -457,18 +432,22 @@ describe('ninth-gate rollout lifecycle recordings', () => {
       await vi.advanceTimersByTimeAsync(
         lifecycleSchedule.ch03.inactiveExpiryAdvanceMs,
       )
-      expect(entry.knownPaths.size).toBe(0)
-      expect(entry.lastFingerprints.size).toBe(0)
+      expect(inspectFreshRolloutTransportForTesting(
+        liveAcquisition.coordinator,
+      )).toMatchObject({ knownPathCount: 0, lastFingerprintCount: 0 })
 
       // WHY the event was admitted before transport compaction but delivered
       // after it in the Stage 29 schedule. Re-emitting the real candidate path
       // changes only callback/timer order. The candidate is already leased and
       // therefore terminal; a late callback may confirm that fact but must not
       // resurrect its UUID-bearing path in watcher retention indefinitely.
-      entry.watcher?.emit('change', rolloutPath)
-      await entry.readQueue
-      expect(entry.knownPaths.size).toBe(0)
-      expect(entry.lastFingerprints.size).toBe(0)
+      await emitFreshRolloutChangeAndDrainForTesting(
+        liveAcquisition.coordinator,
+        rolloutPath,
+      )
+      expect(inspectFreshRolloutTransportForTesting(
+        liveAcquisition.coordinator,
+      )).toMatchObject({ knownPathCount: 0, lastFingerprintCount: 0 })
     } finally {
       vi.useRealTimers()
       expiring.unregister()
