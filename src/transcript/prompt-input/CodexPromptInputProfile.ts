@@ -305,20 +305,10 @@ function effectiveInputIsRecordedContract(value: unknown): boolean {
   }
 
   if (!Array.isArray(value.layers)) return false
-  const allowedLayerTypes = new Set(['sessionFlags', 'user', 'system', 'project'])
   const singletonLayerTypes = new Set(['sessionFlags', 'user', 'system'])
   const seenSingletons = new Set<string>()
   for (const layer of value.layers) {
-    if (!isRecord(layer) || !isRecord(layer.name) ||
-      typeof layer.name.type !== 'string' ||
-      !allowedLayerTypes.has(layer.name.type)) {
-      // WHY config/read is the authority that says our forced keymap is the
-      // effective provider input contract. Treating malformed or future layer
-      // variants as an ignorable `null` lets a higher-precedence policy exist
-      // outside the proof while we still issue submission authority. A pinned
-      // 0.149.1 adapter must fail closed until a new variant is recorded.
-      return false
-    }
+    if (!isRecordedSafeConfigLayer(layer)) return false
     if (!singletonLayerTypes.has(layer.name.type)) continue
     if (seenSingletons.has(layer.name.type)) {
       // WHY these three protocol sources are singletons. A duplicate is not a
@@ -331,6 +321,65 @@ function effectiveInputIsRecordedContract(value: unknown): boolean {
     seenSingletons.add(layer.name.type)
   }
   return seenSingletons.has('sessionFlags')
+}
+
+type RecordedSafeConfigLayer = {
+  name: { type: 'sessionFlags' | 'user' | 'system' | 'project' }
+}
+
+function isRecordedSafeConfigLayer(
+  layer: unknown,
+): layer is RecordedSafeConfigLayer {
+  // WHY the envelope is validated before the source discriminator: config/read
+  // is the authority that says our forced keymap is the effective provider
+  // input contract. The old matcher accepted the fixture's impossible
+  // `{ name: { type }, config: {} }` layers, so a plausible discriminator alone
+  // could mint prompt authority without the pinned ConfigLayer metadata. We do
+  // not inspect `config` itself—Codex owns resolution and the 0.149.1 schema
+  // intentionally permits any JSON value—but its presence and string version
+  // prove this is a materialized layer rather than a partial metadata object.
+  if (!isRecord(layer) ||
+    !Object.prototype.hasOwnProperty.call(layer, 'config') ||
+    typeof layer.version !== 'string' ||
+    !isRecord(layer.name)) {
+    return false
+  }
+  if (Object.prototype.hasOwnProperty.call(layer, 'disabledReason') &&
+    layer.disabledReason !== null &&
+    typeof layer.disabledReason !== 'string') {
+    // WHY disabledReason is omitted by the recorded healthy response but is a
+    // nullable string when present. Accepting an arbitrary object here would
+    // widen the provider envelope even though the adapter is pinned to one
+    // exact release; omission remains valid because the wire schema allows it.
+    return false
+  }
+
+  const source = layer.name
+  switch (source.type) {
+    case 'sessionFlags':
+      return true
+    case 'user':
+      // WHY profile is required by the generated 0.149.1 TypeScript type and
+      // was present as null in the fresh real response. The JSON schema is less
+      // strict, but widening to omission would again authorize a shape absent
+      // from our evidence. A later recorded release can deliberately relax it.
+      return typeof source.file === 'string' &&
+        Object.prototype.hasOwnProperty.call(source, 'profile') &&
+        (source.profile === null || typeof source.profile === 'string')
+    case 'system':
+      return typeof source.file === 'string'
+    case 'project':
+      // WHY multiple project sources remain legal in the caller: upstream may
+      // emit one per nested .codex directory. This predicate validates each
+      // source independently and leaves cardinality to the recorded singleton
+      // policy instead of accidentally collapsing legitimate project layers.
+      return typeof source.dotCodexFolder === 'string'
+    default:
+      // WHY future and managed variants fail closed. Ignoring an unfamiliar
+      // higher-precedence source would claim that our session overrides won a
+      // merge whose participants this pinned adapter did not actually inspect.
+      return false
+  }
 }
 
 function flattenLeaves(
