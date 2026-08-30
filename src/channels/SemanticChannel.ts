@@ -8,6 +8,7 @@ import type {
   SemanticEvent,
   SemanticFlowIgnoredEvent,
   SemanticFlowSelectedEvent,
+  SemanticProviderRequestEvent,
   SemanticLifecycleViolationEvent,
   SemanticSource,
   SemanticSourceChangedEvent,
@@ -81,6 +82,7 @@ export type SemanticChannelEvents = {
   api_error: [SemanticApiErrorEvent]
   flow_selected: [SemanticFlowSelectedEvent]
   flow_ignored: [SemanticFlowIgnoredEvent]
+  provider_request: [SemanticProviderRequestEvent]
   usage_updated: [SemanticUsageEvent]
 
   // Upstream stream-phase derivation. Parallel to the Claude-side
@@ -142,6 +144,8 @@ export class SemanticChannel extends EventEmitter {
    */
   startTurn(params: {
     turnId: string
+    requestId?: string
+    flowId?: string
     role: 'user' | 'assistant'
     source: SemanticSource
     confidence?: SemanticTurnStartedEvent['confidence']
@@ -169,6 +173,8 @@ export class SemanticChannel extends EventEmitter {
     const ev: SemanticTurnStartedEvent = {
       type: 'turn_started',
       turnId: params.turnId,
+      ...(params.requestId === undefined ? {} : { requestId: params.requestId }),
+      ...(params.flowId === undefined ? {} : { flowId: params.flowId }),
       role: params.role,
       source: params.source,
       confidence: params.confidence ?? (params.source === 'screen' ? 'fallback' : 'high'),
@@ -387,6 +393,7 @@ export class SemanticChannel extends EventEmitter {
   // filtering on the catch-all `event` stream.
 
   publishFlowSelected(params: {
+    requestId?: string
     flowId: string
     turnId: string | null
     reason: string
@@ -395,6 +402,7 @@ export class SemanticChannel extends EventEmitter {
   }): void {
     const ev: SemanticFlowSelectedEvent = {
       type: 'flow_selected',
+      ...(params.requestId === undefined ? {} : { requestId: params.requestId }),
       flowId: params.flowId,
       turnId: params.turnId,
       reason: params.reason,
@@ -407,6 +415,7 @@ export class SemanticChannel extends EventEmitter {
   }
 
   publishFlowIgnored(params: {
+    requestId?: string
     flowId: string
     reason: string
     source: SemanticSource
@@ -414,6 +423,7 @@ export class SemanticChannel extends EventEmitter {
   }): void {
     const ev: SemanticFlowIgnoredEvent = {
       type: 'flow_ignored',
+      ...(params.requestId === undefined ? {} : { requestId: params.requestId }),
       flowId: params.flowId,
       reason: params.reason,
       source: params.source,
@@ -422,6 +432,37 @@ export class SemanticChannel extends EventEmitter {
     }
     this.emit('flow_ignored', ev)
     this.emit('event', ev)
+  }
+
+  /**
+   * Publish a diagnostic copy of the proxy request lifecycle.
+   *
+   * WHY this is a typed semantic-channel event instead of a callback into
+   * Agent Code: the adapter is the only layer that observes request creation,
+   * first-chunk attribution, and transport/semantic termination together.
+   * The event is write-only evidence; the existing flow state machine remains
+   * the sole policy authority and does not read this event back. Deliberately
+   * DO NOT mirror it onto the aggregate `event` feed: Agent Code's renderer
+   * consumes that feed as product state, so a Stage 0 observation there could
+   * accidentally become a queue/idle decision input.
+   */
+  publishProviderRequest(params: Omit<SemanticProviderRequestEvent, 'type' | 'source' | 'confidence' | 'ts'>): void {
+    const ev: SemanticProviderRequestEvent = {
+      type: 'provider_request',
+      ...params,
+      source: 'proxy',
+      confidence: 'high',
+      ts: Date.now(),
+    }
+    try {
+      this.emit('provider_request', ev)
+    } catch {
+      // This event is a removable diagnostic sink, not semantic policy. Node's
+      // EventEmitter propagates listener exceptions synchronously; allowing one
+      // to escape here can abort the adapter before it publishes requesting or
+      // decodes the same response chunk. No observer is permitted to change the
+      // product stream merely by throwing, so diagnostic delivery fails closed.
+    }
   }
 
   // --- Usage accounting ---------------------------------------------------

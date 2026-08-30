@@ -105,6 +105,10 @@ export interface LiveOwnerDecision {
 export type SemanticTurnStartedEvent = {
   type: 'turn_started'
   turnId: string
+  /** Explicit proxy relation; absent for rollout/screen-derived turns. */
+  requestId?: string
+  /** Explicit proxy relation; absent for rollout/screen-derived turns. */
+  flowId?: string
   role: 'user' | 'assistant'
   source: SemanticSource
   confidence: SemanticConfidence
@@ -538,6 +542,8 @@ export type SemanticApiErrorEvent = {
 
 export type SemanticFlowSelectedEvent = {
   type: 'flow_selected'
+  /** Proxy-minted request identity; absent on older recordings/publishers. */
+  requestId?: string
   turnId: string | null
   flowId: string
   /** Freeform diagnostic reason — usually method+path of the picked
@@ -550,12 +556,56 @@ export type SemanticFlowSelectedEvent = {
 
 export type SemanticFlowIgnoredEvent = {
   type: 'flow_ignored'
+  /** Proxy-minted request identity; absent on older recordings/publishers. */
+  requestId?: string
   flowId: string
   /** Why this flow was excluded — e.g. "non-POST", "path does not
    *  match /responses", "concurrent flow already active". Freeform. */
   reason: string
   source: SemanticSource
   confidence: SemanticConfidence
+  ts: number
+}
+
+/**
+ * Content-free request lifecycle evidence from the Responses proxy.
+ *
+ * This deliberately does not include the request URL, headers, body, model,
+ * or the free-form flow-attribution reason. The one header relation Stage 0
+ * needs (`x-codex-window-id`) is parsed into its provider UUID and numeric
+ * generation at the proxy boundary, where raw request data already exists.
+ * Consumers may record these facts, but must never use them to select a flow.
+ */
+export type SemanticProviderRequestEvent = {
+  type: 'provider_request'
+  requestId: string
+  flowId: string
+  phase:
+    | 'created'
+    | 'selected'
+    | 'ignored'
+    | 'completed'
+    | 'failed'
+    | 'incomplete'
+    | 'cancelled'
+  cause:
+    | 'request-created'
+    | 'first-chunk'
+    | 'active-at-request'
+    | 'concurrent-active'
+    | 'semantic-terminal'
+    | 'transport-ended-before-semantic-terminal'
+    | 'response-error'
+    | 'upstream-error'
+    | 'watchdog-timeout'
+    | 'adapter-detached'
+  selected?: boolean
+  /** Presence of x-openai-subagent; absence does not prove a root request. */
+  subagentHeaderPresent: boolean
+  providerSessionFingerprint?: string
+  providerWindowGenerationId?: string
+  source: 'proxy'
+  confidence: 'high'
   ts: number
 }
 

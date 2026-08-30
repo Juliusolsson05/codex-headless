@@ -81,6 +81,42 @@ describe('FileTailer polling ownership', () => {
     expect(seen.filter(seq => seq === 1)).toHaveLength(1)
   })
 
+  it('preserves UTF-8 and absolute offsets when a poll ends inside a code point', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'tailer-test-'))
+    temporaryDirectories.push(directory)
+    const file = join(directory, 'rollout.jsonl')
+    writeFileSync(file, '')
+    const seen: Array<{ text: string; offset: number }> = []
+    const errors: Error[] = []
+    const watcher = new FileTailer<{ text: string }>(
+      file,
+      (entry, metadata) => seen.push({ text: entry.text, offset: metadata.lineStartOffset }),
+      error => errors.push(error),
+    )
+    openTailers.push(watcher as FileTailer<unknown>)
+
+    const prefix = Buffer.from('{"text":"', 'utf8')
+    const multibyte = Buffer.from('€', 'utf8')
+    // WHY split the append at byte two of a three-byte character: StringDecoder
+    // and ordinary human text normally hide this OS-level boundary. The tailer
+    // advances by stat size, however, so the regression only appears when one
+    // poll consumes an incomplete code point and the next poll supplies its
+    // continuation byte.
+    appendFileSync(file, Buffer.concat([prefix, multibyte.subarray(0, 2)]))
+    await new Promise(resolve => setTimeout(resolve, 250))
+    appendFileSync(file, Buffer.concat([
+      multibyte.subarray(2),
+      Buffer.from('"}\n{"text":"next"}\n', 'utf8'),
+    ]))
+
+    expect(await waitFor(() => seen.length === 2, 2000)).toBe(true)
+    expect(errors).toEqual([])
+    expect(seen).toEqual([
+      { text: '€', offset: 0 },
+      { text: 'next', offset: Buffer.byteLength('{"text":"€"}\n', 'utf8') },
+    ])
+  })
+
   it('restarts from byte zero after truncate-in-place and atomic replacement', async () => {
     const file = makeFile()
     const seen: number[] = []
@@ -129,6 +165,46 @@ describe('FileTailer polling ownership', () => {
     await new Promise(resolve => setTimeout(resolve, 300))
     expect(seen).not.toContain(2)
     expect(errors).toHaveLength(1)
+  })
+
+  it('keeps absolute entry offsets stable across overlapping tail bootstraps', async () => {
+    const file = makeFile()
+    for (let seq = 1; seq <= 4; seq += 1) {
+      appendFileSync(file, JSON.stringify({ seq }) + '\n')
+    }
+    const initial = statSync(file)
+    const expectedGenerationId = `${initial.dev}:${initial.ino}`
+    const first: Array<{ seq: number; offset: number }> = []
+    const firstTail = new FileTailer<{ seq: number }>(
+      file,
+      (entry, metadata) => first.push({ seq: entry.seq, offset: metadata.lineStartOffset }),
+      undefined,
+      { bootstrapTailLines: 3, expectedGenerationId },
+    )
+    openTailers.push(firstTail as FileTailer<unknown>)
+    expect(first.map(value => value.seq)).toEqual([2, 3, 4])
+    await firstTail.close()
+
+    appendFileSync(file, JSON.stringify({ seq: 5 }) + '\n')
+    appendFileSync(file, JSON.stringify({ seq: 6 }) + '\n')
+    const second: Array<{ seq: number; offset: number }> = []
+    const secondTail = new FileTailer<{ seq: number }>(
+      file,
+      (entry, metadata) => second.push({ seq: entry.seq, offset: metadata.lineStartOffset }),
+      undefined,
+      { bootstrapTailLines: 5, expectedGenerationId },
+    )
+    openTailers.push(secondTail as FileTailer<unknown>)
+
+    expect(second.map(value => value.seq)).toEqual([2, 3, 4, 5, 6])
+    for (const seq of [2, 3, 4]) {
+      expect(second.find(value => value.seq === seq)?.offset)
+        .toBe(first.find(value => value.seq === seq)?.offset)
+    }
+    expect(new Set(second.map(value => value.offset)).size).toBe(second.length)
+    expect(second.map(value => value.offset)).toEqual(
+      [...second.map(value => value.offset)].sort((a, b) => a - b),
+    )
   })
 
   it('does not emit callbacks after close resolves', async () => {

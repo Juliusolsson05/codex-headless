@@ -61,6 +61,11 @@ export type FileTailerOptions = {
   watchdogMs?: number
 }
 
+export type FileTailerEntryMetadata = {
+  /** Absolute byte position of the JSONL line's first byte in this inode. */
+  lineStartOffset: number
+}
+
 export class RolloutGenerationMismatchError extends Error {
   constructor() {
     // WHY the error is intentionally structure-only. Raw paths and dev:ino
@@ -73,7 +78,14 @@ export class RolloutGenerationMismatchError extends Error {
 
 export class FileTailer<T> {
   private offset = 0
-  private buffer = ''
+  // Keep an unterminated line as raw bytes, not decoded text. A poll can stop
+  // between bytes of one UTF-8 code point; decoding each poll independently
+  // flushes U+FFFD at both sides of that boundary and makes byte offsets drift
+  // from the inode forever. Newline is an ASCII byte and cannot occur inside a
+  // multibyte sequence, so raw buffering lets us decode only complete lines
+  // while advancing identities by the exact bytes actually consumed.
+  private buffer = Buffer.alloc(0)
+  private bufferStartOffset = 0
   private closed = false
   // Poll interval for fs.watchFile in milliseconds. 100ms gives
   // reliable pickup with imperceptible latency and negligible CPU.
@@ -102,7 +114,7 @@ export class FileTailer<T> {
 
   constructor(
     private readonly filePath: string,
-    private readonly onEntry: (entry: T) => void,
+    private readonly onEntry: (entry: T, metadata: FileTailerEntryMetadata) => void,
     private readonly onError?: (err: Error) => void,
     options?: FileTailerOptions,
   ) {
@@ -149,22 +161,35 @@ export class FileTailer<T> {
       closeSync(fd)
       fd = null
 
-      let text = buf.toString('utf8')
+      let retained = buf
+      let retainedStartOffset = start
       if (start > 0) {
-        const firstNewline = text.indexOf('\n')
-        text = firstNewline === -1 ? '' : text.slice(firstNewline + 1)
+        const firstNewline = buf.indexOf(0x0a)
+        retained = firstNewline === -1 ? Buffer.alloc(0) : buf.subarray(firstNewline + 1)
+        retainedStartOffset = firstNewline === -1
+          ? stat.size
+          : start + firstNewline + 1
       }
 
-      const lines = text
-        .split('\n')
-        .map(line => line.trim())
-        .filter(line => line.length > 0)
+      let lineStartOffset = retainedStartOffset
+      let cursor = 0
+      const lines: Array<{ line: string; metadata: FileTailerEntryMetadata }> = []
+      while (cursor < retained.length) {
+        const newline = retained.indexOf(0x0a, cursor)
+        if (newline === -1) break
+        const lineBytes = retained.subarray(cursor, newline)
+        const metadata = { lineStartOffset }
+        lineStartOffset += lineBytes.length + 1
+        cursor = newline + 1
+        const line = lineBytes.toString('utf8').trim()
+        if (line.length > 0) lines.push({ line, metadata })
+      }
 
       const recent = lines.slice(-maxLines)
-      for (const line of recent) {
+      for (const { line, metadata } of recent) {
         try {
           const obj = JSON.parse(line) as T
-          this.emitEntry(obj)
+          this.emitEntry(obj, metadata)
         } catch (err) {
           this.emitError(err as Error)
         }
@@ -173,7 +198,12 @@ export class FileTailer<T> {
       this.offset = stat.size
       this.fileIdentity = identity
       this.fileCtimeMs = stat.ctimeMs
-      this.buffer = ''
+      // Preserve a trailing partial JSONL line—including a UTF-8 code point
+      // split at the bootstrap stat boundary—so the first live poll can finish
+      // it. The old bootstrap attempted JSON.parse and discarded this suffix,
+      // which made the bounded-tail path less reliable than the live path.
+      this.buffer = Buffer.from(retained.subarray(cursor))
+      this.bufferStartOffset = retainedStartOffset + cursor
     } catch (err) {
       if (fd !== null) {
         try { closeSync(fd) } catch { /* best-effort */ }
@@ -243,7 +273,8 @@ export class FileTailer<T> {
       // tooling. Offsets belong to one inode generation; carrying either the byte position or an
       // unterminated fragment into the next generation silently skips or corrupts its first event.
       this.offset = 0
-      this.buffer = ''
+      this.buffer = Buffer.alloc(0)
+      this.bufferStartOffset = 0
     }
     this.fileIdentity = identity
     this.fileCtimeMs = stat.ctimeMs
@@ -265,33 +296,41 @@ export class FileTailer<T> {
       autoClose: true,
       start: this.offset,
       end: stat.size - 1,
-      encoding: 'utf8',
     })
     this.activeStream = stream
     let settleActiveRead!: () => void
     this.activeRead = new Promise<void>((resolve) => { settleActiveRead = resolve })
 
-    let chunk = ''
+    const chunks: Buffer[] = []
     stream.on('data', d => {
-      if (!this.closed) chunk += d
+      if (!this.closed) chunks.push(Buffer.isBuffer(d) ? d : Buffer.from(d))
     })
     stream.on('end', () => {
       if (this.closed) return
+      const readStartOffset = this.offset
       this.offset = stat.size
-      this.buffer += chunk
-      const lines = this.buffer.split('\n')
-      // Last element is either '' (clean newline) or a partial line.
-      this.buffer = lines.pop() ?? ''
-      for (const line of lines) {
-        const trimmed = line.trim()
+      if (this.buffer.length === 0) this.bufferStartOffset = readStartOffset
+      const combined = Buffer.concat([this.buffer, ...chunks])
+      let cursor = 0
+      while (cursor < combined.length) {
+        const newline = combined.indexOf(0x0a, cursor)
+        if (newline === -1) break
+        const lineBytes = combined.subarray(cursor, newline)
+        const metadata = { lineStartOffset: this.bufferStartOffset }
+        this.bufferStartOffset += lineBytes.length + 1
+        cursor = newline + 1
+        const trimmed = lineBytes.toString('utf8').trim()
         if (!trimmed) continue
         try {
           const obj = JSON.parse(trimmed) as T
-          this.emitEntry(obj)
+          this.emitEntry(obj, metadata)
         } catch (err) {
           this.emitError(err as Error)
         }
       }
+      // Buffer only the raw suffix after the final complete newline. Copy it so
+      // a tiny partial line does not retain the full combined read allocation.
+      this.buffer = Buffer.from(combined.subarray(cursor))
     })
     stream.on('error', err => {
       if (!this.closed) this.emitError(err)
@@ -315,9 +354,9 @@ export class FileTailer<T> {
     }
   }
 
-  private emitEntry(entry: T): void {
+  private emitEntry(entry: T, metadata: FileTailerEntryMetadata): void {
     try {
-      this.onEntry(entry)
+      this.onEntry(entry, metadata)
     } catch (error) {
       this.emitError(error as Error)
     }
@@ -418,7 +457,7 @@ export async function tailNewSessionFile(
  */
 export function tailSessionFile<T extends JsonlEntry = JsonlEntry>(
   filePath: string,
-  onEntry: (entry: T) => void,
+  onEntry: (entry: T, metadata: FileTailerEntryMetadata) => void,
   onError?: (err: Error) => void,
   options?: FileTailerOptions,
 ): () => Promise<void> {

@@ -155,6 +155,52 @@ describe('recorded process-wide fresh rollout ownership', () => {
     expect(owner.inspect()).toMatchObject({ leasedPathCount: 2 })
   })
 
+  it('does not publish an unrelated cwd candidate provider identity to another pane', () => {
+    const alpha = loadFixture('concurrent-01491-alpha')
+    const beta = loadFixture('concurrent-01491-beta')
+    const candidate = {
+      ...candidateFromFixture(beta),
+      cwd: '/recorded/beta-worktree',
+    }
+    const owner = coordinator()
+    const alphaDecisions: FreshRolloutParticipantDecision[] = []
+    const betaDecisions: FreshRolloutParticipantDecision[] = []
+    const alphaHandle = owner.registerParticipant({
+      participantId: 'alpha-pane',
+      cwd: '/recorded/alpha-worktree',
+      onLease: () => undefined,
+      onDecision: decision => alphaDecisions.push(decision),
+    })
+    const betaHandle = owner.registerParticipant({
+      participantId: 'beta-pane',
+      cwd: '/recorded/beta-worktree',
+      onLease: () => undefined,
+      onDecision: decision => betaDecisions.push(decision),
+    })
+    alphaHandle.registerPrompt(promptFromFixture(alpha))
+    betaHandle.registerPrompt(promptFromFixture(beta))
+
+    owner.observeCandidate(candidate)
+
+    // WHY the candidate HMAC may remain process-global diagnostic state while
+    // this relation may not: provider-session fingerprints are stable SHA-256
+    // values intended for cross-process joins. Giving beta's relation to alpha
+    // would make an unrelated provider identity part of alpha's shareable pane
+    // evidence even though cwd and prompt ownership prove no alpha edge.
+    expect(alphaDecisions.at(-1)?.candidateCount).toBe(0)
+    expect(alphaDecisions.at(-1)?.candidateFingerprints).toEqual([])
+    expect(alphaDecisions.at(-1)?.matchingCandidateFingerprints).toEqual([])
+    expect(alphaDecisions.at(-1)?.candidateProviderSessionFingerprints).toEqual([])
+    expect(betaDecisions.at(-1)?.candidateCount).toBe(1)
+    expect(betaDecisions.at(-1)?.candidateProviderSessionFingerprints).toEqual([
+      {
+        candidateFingerprint:
+          betaDecisions.at(-1)?.matchingCandidateFingerprints[0],
+        providerSessionMetaFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
+    ])
+  })
+
   it('does not let a late identical prompt claim previously observed evidence', () => {
     const alpha = loadFixture('concurrent-01491-alpha')
     const owner = coordinator()
@@ -234,6 +280,15 @@ describe('recorded process-wide fresh rollout ownership', () => {
     })
     expect(siblingDecisions.at(-1)?.matchingCandidateFingerprints).toEqual([
       expect.stringMatching(/^[0-9a-f]{64}$/),
+    ])
+    const decisionWithProviderSession = siblingDecisions.find(decision =>
+      decision.candidateProviderSessionFingerprints.length > 0)
+    expect(decisionWithProviderSession?.candidateProviderSessionFingerprints).toEqual([
+      {
+        candidateFingerprint:
+          decisionWithProviderSession?.matchingCandidateFingerprints[0],
+        providerSessionMetaFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
     ])
   })
 
