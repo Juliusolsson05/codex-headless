@@ -97,6 +97,12 @@ type StartEvent = {
     input_items_count?: number | null
     tools_count?: number | null
     has_reasoning?: boolean
+    client_metadata?: {
+      thread_id?: string | null
+      session_id?: string | null
+      root_turn_id?: string | null
+    } | null
+    provider_session_id?: string | null
   }
 }
 
@@ -107,7 +113,10 @@ type EndEvent = {
   bytes: number
 }
 
-type CodexResponsesAdapterHeadless = Pick<CodexHeadless, 'semantic'>
+type CodexResponsesAdapterHeadless = Pick<
+  CodexHeadless,
+  'semantic' | 'observeProviderThreadIdentity'
+>
 
 // Per-turn state tracked by the adapter. Keyed by the proxy's
 // requestId (emitted on every request/response/chunk/end/error event
@@ -469,6 +478,19 @@ export class CodexResponsesAdapter {
       const req = isStartEvent(ev) ? ev : null
       if (!req) return
       if (req.method !== 'POST') return
+      const providerSessionId = req.request_shape?.provider_session_id
+      const isSubagent =
+        typeof req.headers?.['x-openai-subagent'] === 'string' ||
+        typeof req.headers?.['x-codex-parent-thread-id'] === 'string'
+      if (typeof providerSessionId === 'string' && !isSubagent) {
+        // WHY the semantic adapter forwards identity but does not arbitrate it:
+        // this is already the single typed consumer of per-session proxy
+        // request events, so adding a second listener would create ordering and
+        // teardown races. CodexHeadless owns rollout I/O and delegates exact
+        // validation/leases to the transcript layer; this call transfers only
+        // a candidate string, never a path or permission to tail.
+        this.headless.observeProviderThreadIdentity(providerSessionId)
+      }
       // Mint a flow in 'candidate' state. Don't publish anything
       // onto the shared semantic channel yet — we need to see the
       // first response chunk to decide whether this flow gets to be

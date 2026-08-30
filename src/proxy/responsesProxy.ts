@@ -6,6 +6,8 @@ import { appendFileSync, readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 
+import { decompressZstdBounded } from './zstd.js'
+
 // Local HTTP proxy for Codex's Responses API.
 //
 // WHY a proxy at all:
@@ -136,6 +138,14 @@ type Options = {
 // request_shape is present").
 const _REQUEST_BODY_CAP = 2 * 1024 * 1024
 
+// Parsing is observational and must never become an unbounded decompression
+// oracle on the proxy's hot path. The complaint-time bodies are ordinary
+// Responses JSON compressed with zstd, but a small compressed payload can in
+// principle expand without bound. Sixteen MiB comfortably covers a full Codex
+// request while keeping a corrupt or hostile frame from allocating against the
+// Electron main process until the OS intervenes.
+const _REQUEST_DECOMPRESSED_CAP = 16 * 1024 * 1024
+const _ZSTD_MAGIC = 0xfd2fb528
 
 // Headers we forward verbatim onto the proxy event. Allowlist
 // rationale matches the Claude addon's: Authorization is structurally
@@ -194,19 +204,33 @@ function filterRequestHeaders(req: IncomingMessage): Record<string, string> {
 //   - has_reasoning      true iff a `reasoning` object is present —
 //                        present on real turns and compact, absent
 //                        on memory summarization
-type CodexRequestShape = {
+export type CodexRequestShape = {
   model: string | null
   instructions_chars: number | null
   input_items_count: number | null
   tools_count: number | null
   has_reasoning: boolean
+  client_metadata: {
+    thread_id: string | null
+    session_id: string | null
+    root_turn_id: string | null
+  } | null
+  /**
+   * Exact-identity candidate, not ownership by itself. This is populated only
+   * when the request's thread/session carriers agree; CodexHeadless still has
+   * to prove filename UUID and session_meta.id through RolloutLocator before a
+   * process-wide path lease can open.
+   */
+  provider_session_id: string | null
 }
 
 
 function extractRequestShape(body: Buffer): CodexRequestShape | null {
+  const decoded = decodeRequestBody(body)
+  if (!decoded) return null
   let parsed: unknown
   try {
-    parsed = JSON.parse(body.toString('utf-8'))
+    parsed = JSON.parse(decoded.toString('utf-8'))
   } catch {
     return null
   }
@@ -219,6 +243,20 @@ function extractRequestShape(body: Buffer): CodexRequestShape | null {
   const input = Array.isArray(obj.input) ? obj.input.length : null
   const tools = Array.isArray(obj.tools) ? obj.tools.length : null
   const hasReasoning = obj.reasoning != null && typeof obj.reasoning === 'object'
+  const metadataObject = obj.client_metadata
+  const metadata = metadataObject && typeof metadataObject === 'object'
+    ? metadataObject as Record<string, unknown>
+    : null
+  const threadId = stringValue(metadata?.thread_id)
+  const sessionId = stringValue(metadata?.session_id)
+  const rootTurnId = stringValue(metadata?.root_turn_id)
+  const clientMetadata = metadata
+    ? {
+        thread_id: threadId,
+        session_id: sessionId,
+        root_turn_id: rootTurnId,
+      }
+    : null
 
   return {
     model,
@@ -226,7 +264,27 @@ function extractRequestShape(body: Buffer): CodexRequestShape | null {
     input_items_count: input,
     tools_count: tools,
     has_reasoning: hasReasoning,
+    client_metadata: clientMetadata,
+    provider_session_id:
+      threadId !== null && threadId === sessionId ? threadId : null,
   }
+}
+
+function decodeRequestBody(body: Buffer): Buffer | null {
+  if (body.length < 4 || body.readUInt32LE(0) !== _ZSTD_MAGIC) return body
+  try {
+    return decompressZstdBounded(body, _REQUEST_DECOMPRESSED_CAP)
+  } catch {
+    // Request forwarding uses the untouched compressed bytes. Losing only the
+    // optional forensic/identity projection is the fail-closed outcome: a
+    // malformed or over-cap body must not break the user's Codex request and
+    // must never yield partial identity.
+    return null
+  }
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null
 }
 
 // Detect which auth path Codex is configured for. Cheap enough to
@@ -572,7 +630,9 @@ export class ResponsesProxy extends EventEmitter {
     //   - request_shape  small parsed metadata (model,
     //                  instructions_chars, input_items_count,
     //                  tools_count, has_reasoning) so future predicate
-    //                  work has structured fields without re-parsing.
+    //                  work has structured fields without re-parsing. Zstd
+    //                  bodies are decoded only for this bounded projection;
+    //                  the original bytes continue upstream unchanged.
     let bodyB64: string | undefined
     let requestShape: CodexRequestShape | null = null
     if (body) {

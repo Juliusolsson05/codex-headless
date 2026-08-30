@@ -602,8 +602,19 @@ export class CodexHeadless extends EventEmitter {
   // assume the first role-user item is real input: Codex 0.147+ writes injected
   // startup context first.
   private freshRolloutParticipant: FreshRolloutParticipantHandle | null = null
+  private freshRolloutAcquisition: FreshRolloutCoordinatorAcquisition | null = null
   private freshRolloutStopTail: (() => Promise<void>) | null = null
   private readonly freshRolloutParticipantId: string
+  // The proxy repeats the same metadata on every request. One active lookup and
+  // one queued distinct candidate are sufficient to tolerate an early malformed
+  // carrier without allowing protocol drift (or a local proxy client) to launch
+  // an unbounded number of concurrent recursive sessions-tree scans. A third
+  // distinct id is ignored while those two drain; a legitimate provider repeats
+  // its identity on later requests and can retry after the bounded queue clears.
+  private pendingProviderThreadIdentity: string | null = null
+  private queuedProviderThreadIdentity: string | null = null
+  private providerThreadIdentityDrain: Promise<void> | null = null
+  private provenProviderThreadIdentity: string | null = null
   private lastActivity: string | null = null
   // See ClaudeCodeHeadless.idleDebounceTimer for the rationale —
   // briefly empty bottom-working-row snapshots between TUI redraws
@@ -1398,6 +1409,77 @@ export class CodexHeadless extends EventEmitter {
     return extractCodexAssistantInProgress(this.terminal.snapshotPlain())
   }
 
+  /**
+   * Submit an identity candidate observed on this session's private Responses
+   * proxy. The method is deliberately fire-and-forget because proxy request
+   * forwarding must not wait on a recursive sessions-tree lookup.
+   *
+   * This is not a second ownership policy. The candidate can open a tail only
+   * after RolloutLocator proves request id == filename UUID == session_meta.id,
+   * then the existing process-wide coordinator installs an `exact-id` lease.
+   */
+  observeProviderThreadIdentity(threadId: string): void {
+    if (
+      this.resumeThreadId || this.stopRequested ||
+      threadId.length === 0 ||
+      threadId === this.pendingProviderThreadIdentity ||
+      threadId === this.queuedProviderThreadIdentity
+    ) return
+    if (this.provenProviderThreadIdentity !== null) {
+      // The first fully proved identity owns this pane. A later conflicting
+      // request may be a subagent/new protocol shape; it cannot switch a live
+      // committed stream after the fact.
+      return
+    }
+
+    if (this.providerThreadIdentityDrain) {
+      // WHY only the first distinct waiter is retained: replacing it with every
+      // new UUID would keep memory bounded but starve a legitimate candidate
+      // behind a noisy stream. Once this pair finishes, repeated real metadata
+      // is admitted normally by a later request.
+      if (this.queuedProviderThreadIdentity === null) {
+        this.queuedProviderThreadIdentity = threadId
+      }
+      return
+    }
+
+    const drain = this.drainProviderThreadIdentities(threadId)
+    this.providerThreadIdentityDrain = drain
+    void drain.finally(() => {
+      if (this.providerThreadIdentityDrain === drain) {
+        this.providerThreadIdentityDrain = null
+      }
+    })
+  }
+
+  private async drainProviderThreadIdentities(initialThreadId: string): Promise<void> {
+    let threadId: string | null = initialThreadId
+    try {
+      while (
+        threadId !== null &&
+        !this.stopRequested &&
+        this.provenProviderThreadIdentity === null
+      ) {
+        this.pendingProviderThreadIdentity = threadId
+        try {
+          await this.claimExactFreshRollout(threadId)
+        } catch (error) {
+          if (!this.stopRequested) {
+            this.emit(
+              'rollout-error',
+              error instanceof Error ? error : new Error(String(error)),
+            )
+          }
+        }
+        threadId = this.queuedProviderThreadIdentity
+        this.queuedProviderThreadIdentity = null
+      }
+    } finally {
+      this.pendingProviderThreadIdentity = null
+      this.queuedProviderThreadIdentity = null
+    }
+  }
+
   /** The session metadata from the first rollout entry, if received. */
   getSessionMeta(): CodexSessionMeta | null {
     return this.sessionMeta
@@ -2080,6 +2162,11 @@ export class CodexHeadless extends EventEmitter {
       normalizePath: normalizeCwd,
       onError: error => this.emit('rollout-error', error),
     })
+    // Publish the method-only coordinator capability before watcher readiness:
+    // the parent attaches the proxy adapter before awaiting headless.start(),
+    // so an immediate provider request can legitimately deliver exact identity
+    // while initial candidate observations are still being committed.
+    this.freshRolloutAcquisition = acquisition
 
     let participant: FreshRolloutParticipantHandle
     try {
@@ -2149,6 +2236,9 @@ export class CodexHeadless extends EventEmitter {
         },
       })
     } catch (error) {
+      if (this.freshRolloutAcquisition === acquisition) {
+        this.freshRolloutAcquisition = null
+      }
       await acquisition.release()
       throw error
     }
@@ -2163,6 +2253,9 @@ export class CodexHeadless extends EventEmitter {
       participant.unregister()
       if (this.freshRolloutParticipant === participant) {
         this.freshRolloutParticipant = null
+      }
+      if (this.freshRolloutAcquisition === acquisition) {
+        this.freshRolloutAcquisition = null
       }
       await acquisition.release()
       throw error
@@ -2186,6 +2279,67 @@ export class CodexHeadless extends EventEmitter {
         cleanTailClose,
       )
       await acquisition.release()
+      if (this.freshRolloutAcquisition === acquisition) {
+        this.freshRolloutAcquisition = null
+      }
+    }
+  }
+
+  private async claimExactFreshRollout(threadId: string): Promise<void> {
+    const acquisition = this.freshRolloutAcquisition
+    if (!acquisition || this.stopRequested || this.resumeThreadId) return
+
+    // RolloutLocator is the proof boundary shared with resume: it accepts only
+    // UUID ids and returns a generation after verifying both the filename UUID
+    // and the first session_meta.id. Cwd/mtime are selection aids nowhere in
+    // this path, which is what keeps same-cwd orchestration siblings isolated.
+    const location = await findCodexRolloutByThreadId(
+      getCodexSessionsDir(),
+      threadId,
+    )
+    if (
+      !location || this.stopRequested ||
+      this.freshRolloutAcquisition !== acquisition ||
+      this.provenProviderThreadIdentity !== null
+    ) return
+
+    if (this.activeRolloutPath !== null) {
+      // A prompt-proved tail can legitimately win before the proxy request is
+      // parsed. Exact agreement confirms that existing path; disagreement
+      // fails closed instead of opening two files or switching committed truth.
+      if (this.activeRolloutPath === location.filePath) {
+        this.provenProviderThreadIdentity = threadId
+      }
+      return
+    }
+
+    const reserved = acquisition.coordinator.reservePath({
+      ownerId: this.freshRolloutParticipantId,
+      filePath: location.filePath,
+      kind: 'exact-id',
+      proofIdentity: threadId,
+    })
+    if (!reserved) return
+
+    try {
+      this.freshRolloutStopTail = this.tailFile(
+        location.filePath,
+        location.generationId,
+      )
+      this.provenProviderThreadIdentity = threadId
+      // Exact identity is strictly stronger than prompt matching. Withdraw the
+      // participant after the generation-bound tail opens so later candidate
+      // observations cannot manufacture a second claim for this pane.
+      this.freshRolloutParticipant?.unregister()
+    } catch (error) {
+      // tailFile publishes no state before its synchronous open+fstat succeeds;
+      // this exact reservation is therefore cleanly retryable on open failure.
+      acquisition.coordinator.retirePathLease(
+        this.freshRolloutParticipantId,
+        location.filePath,
+        true,
+      )
+      throw error
     }
   }
 
