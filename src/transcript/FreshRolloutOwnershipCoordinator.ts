@@ -1048,19 +1048,6 @@ export class FreshRolloutOwnershipCoordinator {
     candidateEdges: Map<string, Set<string>>,
   ): void {
     const allCandidateFingerprints = [...this.candidates.keys()].sort()
-    // This is diagnostic projection only: policy above continues to compare
-    // the coordinator's process-keyed HMACs. The stable provider-session
-    // digest exists solely so a pre-lease session_meta can be joined with the
-    // proxy window observation in incidents where no tail was ever attached.
-    const candidateProviderSessionFingerprints = allCandidateFingerprints
-      .flatMap(candidateFingerprint => {
-        const providerSessionMetaFingerprint = this.candidates.get(
-          candidateFingerprint,
-        )?.providerSessionFingerprint
-        return providerSessionMetaFingerprint
-          ? [{ candidateFingerprint, providerSessionMetaFingerprint }]
-          : []
-      })
     for (const participant of this.participants.values()) {
       if (!participant.active || !participant.onDecision) continue
       const activeCandidateFingerprints = participantEdges.get(participant.id) ??
@@ -1095,6 +1082,23 @@ export class FreshRolloutOwnershipCoordinator {
       const contended = competitors.size > 0 ||
         historicallyContestedCandidateCount > 0 ||
         candidateFingerprints.size > 1
+      // WHY this stable relation is projected only across this participant's
+      // proven candidate edges: unlike the process-keyed candidate HMAC, the
+      // provider-session digest is deliberately stable across processes so it
+      // can join proxy and rollout observations. Broadcasting every candidate
+      // to every pane would therefore leak an unrelated pane's stable identity
+      // into this participant's user-shareable evidence. Current and retained
+      // historical edges are sufficient for the failed-decision diagnosis.
+      const candidateProviderSessionFingerprints = [...candidateFingerprints]
+        .sort()
+        .flatMap(candidateFingerprint => {
+          const providerSessionMetaFingerprint = this.candidates.get(
+            candidateFingerprint,
+          )?.providerSessionFingerprint
+          return providerSessionMetaFingerprint
+            ? [{ candidateFingerprint, providerSessionMetaFingerprint }]
+            : []
+        })
       const decision: FreshRolloutParticipantDecision =
         participant.leasedCandidateFingerprint
           ? {

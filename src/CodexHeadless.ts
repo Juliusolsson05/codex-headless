@@ -1492,9 +1492,21 @@ export class CodexHeadless extends EventEmitter {
         if (isCodexSessionMeta(line) && !this.sessionMeta) {
           this.sessionMeta = line.payload
         }
-        const providerSessionMetaFingerprint = isCodexSessionMeta(line)
-          ? fingerprintProviderSession(line.payload.id)
+        // WHY the native guard checks only the rollout discriminator: provider
+        // JSONL has historically been treated as forward-compatible input, so
+        // a torn or future `session_meta` payload must still reach every native
+        // rollout consumer. The diagnostic sidecar therefore probes `id`
+        // defensively; observation must never turn a malformed payload that the
+        // old path delivered into an exception that suppresses that delivery.
+        const sessionMetaPayload = isCodexSessionMeta(line) &&
+          line.payload !== null &&
+          typeof line.payload === 'object' &&
+          !Array.isArray(line.payload)
+          ? line.payload as Record<string, unknown>
           : null
+        const providerSessionMetaFingerprint = fingerprintProviderSession(
+          sessionMetaPayload?.id,
+        )
         // This metadata is deliberately emitted beside the entry instead of
         // being written into the provider-owned JSONL object. It gives Agent
         // Code an explicit generation/order relation for diagnostics while

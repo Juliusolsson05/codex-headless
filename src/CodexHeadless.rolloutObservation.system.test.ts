@@ -116,4 +116,30 @@ describe('Codex rollout observation sidecar', () => {
     await stopTail()
     await headless.stop()
   })
+
+  it('keeps delivering malformed session_meta rows when observation cannot fingerprint them', async () => {
+    const lines = [
+      { type: 'session_meta' },
+      { type: 'session_meta', payload: null },
+      { type: 'event_msg', payload: { type: 'task_complete' } },
+    ]
+    const { file, generationId } = makeRollout(lines)
+    const headless = new CodexHeadless({ pty: fakePty(), cwd: '/recorded/worktree' })
+    const delivered: Record<string, unknown>[] = []
+    const observations: CodexRolloutEntryObservation[] = []
+    headless.on('rollout-entry', (line, _file, observation) => {
+      delivered.push(line as unknown as Record<string, unknown>)
+      observations.push(observation)
+    })
+    const stopTail = startPrivateTail(headless, file, generationId)
+
+    await waitFor(() => delivered.length === lines.length)
+    expect(delivered).toEqual(lines)
+    expect(observations).toHaveLength(lines.length)
+    expect(observations.every(observation =>
+      observation.providerSessionMetaFingerprint === undefined)).toBe(true)
+
+    await stopTail()
+    await headless.stop()
+  })
 })
