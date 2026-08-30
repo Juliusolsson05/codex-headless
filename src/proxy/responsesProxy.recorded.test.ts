@@ -1,6 +1,7 @@
 import { createServer, type Server } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import * as zlib from 'node:zlib'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -27,6 +28,10 @@ const fixture = JSON.parse(readFileSync(fixturePath, 'utf8')) as
   ProxyIdentityFixture
 const openServers: Server[] = []
 const openProxies: ResponsesProxy[] = []
+const zstd = zlib as typeof zlib & {
+  zstdCompressSync(input: ArrayBufferView): Buffer
+  zstdDecompressSync(input: ArrayBufferView): Buffer
+}
 
 afterEach(async () => {
   await Promise.all(openProxies.splice(0).map(proxy => proxy.stop()))
@@ -84,5 +89,88 @@ describe('recorded Codex proxy request identity', () => {
         root_turn_id: fixture.expected.rootTurnId,
       },
     })
+  })
+
+  it('forwards a truncated recorded zstd request without projecting identity', async () => {
+    const proxy = await ResponsesProxy.create({
+      upstreamBaseUrl: await listenUpstream(),
+      authMode: 'apikey',
+    })
+    openProxies.push(proxy)
+    const events: Array<Record<string, unknown>> = []
+    proxy.on('event', event => events.push(event))
+    const recorded = Buffer.from(fixture.event.body_b64, 'base64')
+
+    const response = await fetch(`${proxy.info.proxyBaseUrl}/responses`, {
+      method: 'POST',
+      headers: fixture.event.headers,
+      body: recorded.subarray(0, recorded.length - 3),
+    })
+
+    expect(response.status).toBe(200)
+    expect(events.find(event => event.kind === 'request'))
+      .not.toHaveProperty('request_shape')
+  })
+
+  it('retains unequal recorded metadata but emits no exact identity candidate', async () => {
+    const proxy = await ResponsesProxy.create({
+      upstreamBaseUrl: await listenUpstream(),
+      authMode: 'apikey',
+    })
+    openProxies.push(proxy)
+    const events: Array<Record<string, unknown>> = []
+    proxy.on('event', event => events.push(event))
+    const recorded = Buffer.from(fixture.event.body_b64, 'base64')
+    const parsed = JSON.parse(
+      zstd.zstdDecompressSync(recorded).toString('utf8'),
+    ) as { client_metadata: { session_id: string } }
+    parsed.client_metadata.session_id = `${fixture.expected.sessionId}-changed`
+
+    await fetch(`${proxy.info.proxyBaseUrl}/responses`, {
+      method: 'POST',
+      headers: fixture.event.headers,
+      body: new Uint8Array(
+        zstd.zstdCompressSync(Buffer.from(JSON.stringify(parsed))),
+      ),
+    })
+
+    const request = events.find(event => event.kind === 'request')
+    expect(request?.request_shape).toMatchObject({
+      provider_session_id: null,
+      client_metadata: {
+        thread_id: fixture.expected.threadId,
+        session_id: `${fixture.expected.sessionId}-changed`,
+      },
+    })
+  })
+
+  it('does not decompress a mechanically expanded request beyond the cap', async () => {
+    const proxy = await ResponsesProxy.create({
+      upstreamBaseUrl: await listenUpstream(),
+      authMode: 'apikey',
+    })
+    openProxies.push(proxy)
+    const events: Array<Record<string, unknown>> = []
+    proxy.on('event', event => events.push(event))
+    const recorded = Buffer.from(fixture.event.body_b64, 'base64')
+    const parsed = JSON.parse(
+      zstd.zstdDecompressSync(recorded).toString('utf8'),
+    ) as Record<string, unknown>
+    // This is a negative mutation of the recorded envelope, not a claimed live
+    // case. It proves the parser cap itself: highly compressible filler must not
+    // turn the private proxy into an unbounded main-process allocator.
+    parsed.padding = 'x'.repeat(16 * 1024 * 1024)
+
+    const response = await fetch(`${proxy.info.proxyBaseUrl}/responses`, {
+      method: 'POST',
+      headers: fixture.event.headers,
+      body: new Uint8Array(
+        zstd.zstdCompressSync(Buffer.from(JSON.stringify(parsed))),
+      ),
+    })
+
+    expect(response.status).toBe(200)
+    expect(events.find(event => event.kind === 'request'))
+      .not.toHaveProperty('request_shape')
   })
 })

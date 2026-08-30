@@ -75,7 +75,11 @@ function proxyEmitter(): ResponsesProxy {
   return new EventEmitter() as ResponsesProxy
 }
 
-function emitRecordedIdentity(proxy: ResponsesProxy, threadId: string): void {
+function emitRecordedIdentity(
+  proxy: ResponsesProxy,
+  threadId: string,
+  headers?: Record<string, string>,
+): void {
   proxy.emit('event', {
     kind: 'request',
     requestId: `request-${threadId}`,
@@ -83,6 +87,7 @@ function emitRecordedIdentity(proxy: ResponsesProxy, threadId: string): void {
     method: 'POST',
     path: '/v1/responses',
     upstream: 'https://fixture.invalid/v1/responses',
+    ...(headers ? { headers } : {}),
     request_shape: {
       provider_session_id: threadId,
       client_metadata: {
@@ -161,6 +166,36 @@ describe('recorded per-session proxy rollout identity', () => {
       adapter.attach()
       await headless.start()
       emitRecordedIdentity(proxy, filenameId)
+      await new Promise(resolve => setTimeout(resolve, 150))
+      expect(activeRolloutPath(headless)).toBeNull()
+    } finally {
+      adapter.detach()
+      await headless.stop()
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = previousCodexHome
+    }
+  })
+
+  it('does not attach a subagent identity observed by the parent proxy', async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'codex-proxy-subagent-'))
+    temporaryDirectories.push(codexHome)
+    const previousCodexHome = process.env.CODEX_HOME
+    process.env.CODEX_HOME = codexHome
+    const threadId = '00000000-0000-4000-8000-000000000156'
+    writeRollout({ codexHome, filenameThreadId: threadId })
+    const headless = new CodexHeadless({
+      pty: inertPty(),
+      cwd: '/fixture/project-1',
+    })
+    const proxy = proxyEmitter()
+    const adapter = new CodexResponsesAdapter(proxy, headless)
+
+    try {
+      adapter.attach()
+      await headless.start()
+      emitRecordedIdentity(proxy, threadId, {
+        'x-openai-subagent': 'fixture-subagent',
+      })
       await new Promise(resolve => setTimeout(resolve, 150))
       expect(activeRolloutPath(headless)).toBeNull()
     } finally {
