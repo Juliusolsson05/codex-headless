@@ -113,6 +113,15 @@ function activeRolloutPath(headless: CodexHeadless): string | null {
     .activeRolloutPath
 }
 
+function providerIdentityQueueSize(headless: CodexHeadless): number {
+  const internal = headless as unknown as {
+    pendingProviderThreadIdentity: string | null
+    queuedProviderThreadIdentity: string | null
+  }
+  return Number(internal.pendingProviderThreadIdentity !== null) +
+    Number(internal.queuedProviderThreadIdentity !== null)
+}
+
 describe('recorded per-session proxy rollout identity', () => {
   it('tails the exact recorded 0.151 rollout without prompt attestation', async () => {
     const codexHome = mkdtempSync(join(tmpdir(), 'codex-proxy-exact-'))
@@ -244,6 +253,47 @@ describe('recorded per-session proxy rollout identity', () => {
       alphaAdapter.detach()
       betaAdapter.detach()
       await Promise.all([alpha.stop(), beta.stop()])
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME
+      else process.env.CODEX_HOME = previousCodexHome
+    }
+  })
+
+  it('bounds distinct identity lookups while allowing a later repeated proof', async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), 'codex-proxy-bounded-'))
+    temporaryDirectories.push(codexHome)
+    const previousCodexHome = process.env.CODEX_HOME
+    process.env.CODEX_HOME = codexHome
+    const headless = new CodexHeadless({
+      pty: inertPty(),
+      cwd: '/fixture/project-1',
+    })
+
+    try {
+      await headless.start()
+      for (let index = 1; index <= 100; index += 1) {
+        headless.observeProviderThreadIdentity(
+          `10000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+        )
+      }
+
+      // WHY inspect only the queue cardinality, not private rollout paths: the
+      // security contract is bounded admitted work. The production loop awaits
+      // each locator before advancing, so at most these two retained ids can
+      // own one active plus one waiting recursive tree scan.
+      expect(providerIdentityQueueSize(headless)).toBeLessThanOrEqual(2)
+      expect(await waitFor(() => providerIdentityQueueSize(headless) === 0))
+        .toBe(true)
+
+      const realId = '20000000-0000-4000-8000-000000000001'
+      const rolloutPath = writeRollout({
+        codexHome,
+        filenameThreadId: realId,
+      })
+      headless.observeProviderThreadIdentity(realId)
+      expect(await waitFor(() => activeRolloutPath(headless) === rolloutPath))
+        .toBe(true)
+    } finally {
+      await headless.stop()
       if (previousCodexHome === undefined) delete process.env.CODEX_HOME
       else process.env.CODEX_HOME = previousCodexHome
     }

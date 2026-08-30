@@ -5,7 +5,8 @@ import { Readable } from 'stream'
 import { appendFileSync, readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
-import * as zlib from 'node:zlib'
+
+import { decompressZstdBounded } from './zstd.js'
 
 // Local HTTP proxy for Codex's Responses API.
 //
@@ -146,19 +147,6 @@ const _REQUEST_BODY_CAP = 2 * 1024 * 1024
 const _REQUEST_DECOMPRESSED_CAP = 16 * 1024 * 1024
 const _ZSTD_MAGIC = 0xfd2fb528
 
-// WHY this narrow runtime capability cast exists: the Electron/Node runtime
-// shipped by Agent Code exposes stable zstd sync helpers, while the repository's
-// deliberately pinned @types/node predates their declarations. Keeping the
-// compatibility cast at this one transport boundary is safer than widening the
-// global Node types or reimplementing a compression format in application code.
-const zstd = zlib as typeof zlib & {
-  zstdDecompressSync(
-    input: ArrayBufferView,
-    options?: { maxOutputLength?: number },
-  ): Buffer
-}
-
-
 // Headers we forward verbatim onto the proxy event. Allowlist
 // rationale matches the Claude addon's: Authorization is structurally
 // excluded so a leaked debug bundle cannot expose bearer tokens, and
@@ -285,9 +273,7 @@ function extractRequestShape(body: Buffer): CodexRequestShape | null {
 function decodeRequestBody(body: Buffer): Buffer | null {
   if (body.length < 4 || body.readUInt32LE(0) !== _ZSTD_MAGIC) return body
   try {
-    return zstd.zstdDecompressSync(body, {
-      maxOutputLength: _REQUEST_DECOMPRESSED_CAP,
-    })
+    return decompressZstdBounded(body, _REQUEST_DECOMPRESSED_CAP)
   } catch {
     // Request forwarding uses the untouched compressed bytes. Losing only the
     // optional forensic/identity projection is the fail-closed outcome: a

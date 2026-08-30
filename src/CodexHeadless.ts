@@ -605,11 +605,15 @@ export class CodexHeadless extends EventEmitter {
   private freshRolloutAcquisition: FreshRolloutCoordinatorAcquisition | null = null
   private freshRolloutStopTail: (() => Promise<void>) | null = null
   private readonly freshRolloutParticipantId: string
-  // The proxy repeats the same metadata on every request. Pending ids keep
-  // those repetitions from launching overlapping recursive filesystem scans;
-  // the proved id is pinned only after locator + lease + generation-bound open
-  // all succeed, so a malformed early request cannot poison later real proof.
-  private readonly pendingProviderThreadIdentities = new Set<string>()
+  // The proxy repeats the same metadata on every request. One active lookup and
+  // one queued distinct candidate are sufficient to tolerate an early malformed
+  // carrier without allowing protocol drift (or a local proxy client) to launch
+  // an unbounded number of concurrent recursive sessions-tree scans. A third
+  // distinct id is ignored while those two drain; a legitimate provider repeats
+  // its identity on later requests and can retry after the bounded queue clears.
+  private pendingProviderThreadIdentity: string | null = null
+  private queuedProviderThreadIdentity: string | null = null
+  private providerThreadIdentityDrain: Promise<void> | null = null
   private provenProviderThreadIdentity: string | null = null
   private lastActivity: string | null = null
   // See ClaudeCodeHeadless.idleDebounceTimer for the rationale —
@@ -1418,7 +1422,8 @@ export class CodexHeadless extends EventEmitter {
     if (
       this.resumeThreadId || this.stopRequested ||
       threadId.length === 0 ||
-      this.pendingProviderThreadIdentities.has(threadId)
+      threadId === this.pendingProviderThreadIdentity ||
+      threadId === this.queuedProviderThreadIdentity
     ) return
     if (this.provenProviderThreadIdentity !== null) {
       // The first fully proved identity owns this pane. A later conflicting
@@ -1427,18 +1432,52 @@ export class CodexHeadless extends EventEmitter {
       return
     }
 
-    this.pendingProviderThreadIdentities.add(threadId)
-    void this.claimExactFreshRollout(threadId)
-      .catch(error => {
-        if (this.stopRequested) return
-        this.emit(
-          'rollout-error',
-          error instanceof Error ? error : new Error(String(error)),
-        )
-      })
-      .finally(() => {
-        this.pendingProviderThreadIdentities.delete(threadId)
-      })
+    if (this.providerThreadIdentityDrain) {
+      // WHY only the first distinct waiter is retained: replacing it with every
+      // new UUID would keep memory bounded but starve a legitimate candidate
+      // behind a noisy stream. Once this pair finishes, repeated real metadata
+      // is admitted normally by a later request.
+      if (this.queuedProviderThreadIdentity === null) {
+        this.queuedProviderThreadIdentity = threadId
+      }
+      return
+    }
+
+    const drain = this.drainProviderThreadIdentities(threadId)
+    this.providerThreadIdentityDrain = drain
+    void drain.finally(() => {
+      if (this.providerThreadIdentityDrain === drain) {
+        this.providerThreadIdentityDrain = null
+      }
+    })
+  }
+
+  private async drainProviderThreadIdentities(initialThreadId: string): Promise<void> {
+    let threadId: string | null = initialThreadId
+    try {
+      while (
+        threadId !== null &&
+        !this.stopRequested &&
+        this.provenProviderThreadIdentity === null
+      ) {
+        this.pendingProviderThreadIdentity = threadId
+        try {
+          await this.claimExactFreshRollout(threadId)
+        } catch (error) {
+          if (!this.stopRequested) {
+            this.emit(
+              'rollout-error',
+              error instanceof Error ? error : new Error(String(error)),
+            )
+          }
+        }
+        threadId = this.queuedProviderThreadIdentity
+        this.queuedProviderThreadIdentity = null
+      }
+    } finally {
+      this.pendingProviderThreadIdentity = null
+      this.queuedProviderThreadIdentity = null
+    }
   }
 
   /** The session metadata from the first rollout entry, if received. */
