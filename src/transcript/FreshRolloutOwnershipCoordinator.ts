@@ -1047,7 +1047,6 @@ export class FreshRolloutOwnershipCoordinator {
     participantEdges: Map<string, Set<string>>,
     candidateEdges: Map<string, Set<string>>,
   ): void {
-    const allCandidateFingerprints = [...this.candidates.keys()].sort()
     for (const participant of this.participants.values()) {
       if (!participant.active || !participant.onDecision) continue
       const activeCandidateFingerprints = participantEdges.get(participant.id) ??
@@ -1082,6 +1081,7 @@ export class FreshRolloutOwnershipCoordinator {
       const contended = competitors.size > 0 ||
         historicallyContestedCandidateCount > 0 ||
         candidateFingerprints.size > 1
+      const participantCandidateFingerprints = [...candidateFingerprints].sort()
       // WHY this stable relation is projected only across this participant's
       // proven candidate edges: unlike the process-keyed candidate HMAC, the
       // provider-session digest is deliberately stable across processes so it
@@ -1089,8 +1089,7 @@ export class FreshRolloutOwnershipCoordinator {
       // to every pane would therefore leak an unrelated pane's stable identity
       // into this participant's user-shareable evidence. Current and retained
       // historical edges are sufficient for the failed-decision diagnosis.
-      const candidateProviderSessionFingerprints = [...candidateFingerprints]
-        .sort()
+      const candidateProviderSessionFingerprints = participantCandidateFingerprints
         .flatMap(candidateFingerprint => {
           const providerSessionMetaFingerprint = this.candidates.get(
             candidateFingerprint,
@@ -1105,13 +1104,13 @@ export class FreshRolloutOwnershipCoordinator {
               decision: 'accept',
               reason: 'path-leased',
               localPromptCount: participant.prompts.size,
-              candidateCount: this.candidates.size,
+              candidateCount: participantCandidateFingerprints.length,
               sameCwdCandidateCount,
-              matchingCandidateCount: candidateFingerprints.size,
+              matchingCandidateCount: participantCandidateFingerprints.length,
               competingParticipantCount: competitors.size,
               historicallyContestedCandidateCount,
-              candidateFingerprints: allCandidateFingerprints,
-              matchingCandidateFingerprints: [...candidateFingerprints].sort(),
+              candidateFingerprints: participantCandidateFingerprints,
+              matchingCandidateFingerprints: participantCandidateFingerprints,
               candidateProviderSessionFingerprints,
               leasedCandidateFingerprint: participant.leasedCandidateFingerprint,
               tailAuthorized: true,
@@ -1124,13 +1123,13 @@ export class FreshRolloutOwnershipCoordinator {
                   ? 'ownership-contended'
                   : 'awaiting-candidate-evidence',
               localPromptCount: participant.prompts.size,
-              candidateCount: this.candidates.size,
+              candidateCount: participantCandidateFingerprints.length,
               sameCwdCandidateCount,
-              matchingCandidateCount: candidateFingerprints.size,
+              matchingCandidateCount: participantCandidateFingerprints.length,
               competingParticipantCount: competitors.size,
               historicallyContestedCandidateCount,
-              candidateFingerprints: allCandidateFingerprints,
-              matchingCandidateFingerprints: [...candidateFingerprints].sort(),
+              candidateFingerprints: participantCandidateFingerprints,
+              matchingCandidateFingerprints: participantCandidateFingerprints,
               candidateProviderSessionFingerprints,
               leasedCandidateFingerprint: null,
               tailAuthorized: false,

@@ -187,8 +187,11 @@ describe('recorded process-wide fresh rollout ownership', () => {
     // values intended for cross-process joins. Giving beta's relation to alpha
     // would make an unrelated provider identity part of alpha's shareable pane
     // evidence even though cwd and prompt ownership prove no alpha edge.
+    expect(alphaDecisions.at(-1)?.candidateCount).toBe(0)
+    expect(alphaDecisions.at(-1)?.candidateFingerprints).toEqual([])
     expect(alphaDecisions.at(-1)?.matchingCandidateFingerprints).toEqual([])
     expect(alphaDecisions.at(-1)?.candidateProviderSessionFingerprints).toEqual([])
+    expect(betaDecisions.at(-1)?.candidateCount).toBe(1)
     expect(betaDecisions.at(-1)?.candidateProviderSessionFingerprints).toEqual([
       {
         candidateFingerprint:
