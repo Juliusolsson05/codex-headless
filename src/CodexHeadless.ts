@@ -79,6 +79,7 @@ import {
   extractCodexMessageText,
 } from './transcript/TranscriptTypes.js'
 import { getCodexSessionsDir } from './transcript/ProjectDir.js'
+import { fingerprintProviderSession } from './transcript/ProviderSessionFingerprint.js'
 
 // Three-channel truth surface. The semantic channel consumes the
 // rollout delta stream (agent_message_delta / turn lifecycle / tool
@@ -490,6 +491,22 @@ export type CodexRolloutEntryEvent = {
   type: 'rollout_entry'; ts: number
   line: CodexRolloutLine; file: string
 }
+export type CodexRolloutEntryObservation = {
+  /** fstat-backed generation authorized by the transcript coordinator. */
+  fileGenerationId: string | null
+  /** Absolute byte position of the line within the authorized inode. */
+  rolloutByteOffset: number
+  /**
+   * Equality-preserving digest of session_meta.payload.id, present only on a
+   * structurally valid session_meta line.
+   *
+   * WHY the provider package computes this: the same package owns the proxy
+   * header transform. Transporting the opaque result beside the entry keeps
+   * Agent Code main from duplicating a load-bearing hash domain or retaining
+   * the upstream UUID in its observation stream.
+   */
+  providerSessionMetaFingerprint?: string
+}
 export type CodexTrustDialogEvent = {
   type: 'trust_dialog'; ts: number; workspace: string | undefined
   accept: () => void; reject: () => void
@@ -535,7 +552,7 @@ export type CodexHeadlessEvents = {
   activity: [string]
   idle: []
   screen: [ScreenSnapshot]
-  'rollout-entry': [CodexRolloutLine, string]
+  'rollout-entry': [CodexRolloutLine, string, CodexRolloutEntryObservation]
   'rollout-error': [Error]
   'rollout-diagnostic': [CodexRolloutDiagnostic]
   'trust-dialog': [CodexTrustDialogState]
@@ -1469,13 +1486,31 @@ export class CodexHeadless extends EventEmitter {
   ): () => Promise<void> {
     const stop = tailSessionFile<CodexRolloutLine>(
       filePath,
-      (entry) => {
+      (entry, tailMetadata) => {
         const line = entry
         // Capture session meta from the first entry that has it.
         if (isCodexSessionMeta(line) && !this.sessionMeta) {
           this.sessionMeta = line.payload
         }
-        this.emit('rollout-entry', line, filePath)
+        const providerSessionMetaFingerprint = isCodexSessionMeta(line)
+          ? fingerprintProviderSession(line.payload.id)
+          : null
+        // This metadata is deliberately emitted beside the entry instead of
+        // being written into the provider-owned JSONL object. It gives Agent
+        // Code an explicit generation/order relation for diagnostics while
+        // preserving Codex's native transcript byte-for-byte.
+        this.emit('rollout-entry', line, filePath, {
+          fileGenerationId: expectedGenerationId ?? null,
+          // A tail-local counter is not a physical coordinate: resume bootstrap
+          // emits a moving last-N window, so reopening the same growing inode
+          // would reuse 0 for a different line. FileTailer derives this absolute
+          // offset from the bytes it actually parsed, making dev:ino:offset
+          // stable across tail instances and sliding bootstrap windows.
+          rolloutByteOffset: tailMetadata.lineStartOffset,
+          ...(providerSessionMetaFingerprint
+            ? { providerSessionMetaFingerprint }
+            : {}),
+        })
         this.emit('event', {
           type: 'rollout_entry', ts: Date.now(), line, file: filePath,
         })

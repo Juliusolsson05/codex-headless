@@ -131,6 +131,46 @@ describe('FileTailer polling ownership', () => {
     expect(errors).toHaveLength(1)
   })
 
+  it('keeps absolute entry offsets stable across overlapping tail bootstraps', async () => {
+    const file = makeFile()
+    for (let seq = 1; seq <= 4; seq += 1) {
+      appendFileSync(file, JSON.stringify({ seq }) + '\n')
+    }
+    const initial = statSync(file)
+    const expectedGenerationId = `${initial.dev}:${initial.ino}`
+    const first: Array<{ seq: number; offset: number }> = []
+    const firstTail = new FileTailer<{ seq: number }>(
+      file,
+      (entry, metadata) => first.push({ seq: entry.seq, offset: metadata.lineStartOffset }),
+      undefined,
+      { bootstrapTailLines: 3, expectedGenerationId },
+    )
+    openTailers.push(firstTail as FileTailer<unknown>)
+    expect(first.map(value => value.seq)).toEqual([2, 3, 4])
+    await firstTail.close()
+
+    appendFileSync(file, JSON.stringify({ seq: 5 }) + '\n')
+    appendFileSync(file, JSON.stringify({ seq: 6 }) + '\n')
+    const second: Array<{ seq: number; offset: number }> = []
+    const secondTail = new FileTailer<{ seq: number }>(
+      file,
+      (entry, metadata) => second.push({ seq: entry.seq, offset: metadata.lineStartOffset }),
+      undefined,
+      { bootstrapTailLines: 5, expectedGenerationId },
+    )
+    openTailers.push(secondTail as FileTailer<unknown>)
+
+    expect(second.map(value => value.seq)).toEqual([2, 3, 4, 5, 6])
+    for (const seq of [2, 3, 4]) {
+      expect(second.find(value => value.seq === seq)?.offset)
+        .toBe(first.find(value => value.seq === seq)?.offset)
+    }
+    expect(new Set(second.map(value => value.offset)).size).toBe(second.length)
+    expect(second.map(value => value.offset)).toEqual(
+      [...second.map(value => value.offset)].sort((a, b) => a - b),
+    )
+  })
+
   it('does not emit callbacks after close resolves', async () => {
     const file = makeFile()
     const seen: number[] = []

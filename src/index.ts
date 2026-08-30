@@ -14,6 +14,7 @@ export {
   type CodexIdleEvent,
   type CodexScreenEvent,
   type CodexRolloutEntryEvent,
+  type CodexRolloutEntryObservation,
   type CodexTrustDialogEvent,
   type CodexConditionsEvent,
   type CodexExitEvent,
@@ -191,14 +192,14 @@ export type {
   CommittedResponseItemEvent as CodexCommittedResponseItemEvent,
   CommittedSessionMetaEvent as CodexCommittedSessionMetaEvent,
   CommittedRolloutLineEvent as CodexCommittedRolloutLineEvent,
-  // Proxy-sourced diagnostic + accounting events. Declared in
-  // channels/types.js so a consumer subscribing to the semantic
-  // channel sees them in the same discriminated union as the rest
-  // of the stream. `flow_*` events only fire when a proxy is wired
-  // in (rollout has no flow attribution); `usage_updated` fires
-  // from either source when the data is available.
+  // Proxy-sourced diagnostic + accounting events. `flow_*` and usage events
+  // are product semantics and remain in the aggregate SemanticEvent union.
+  // Provider-request observations are exported for the dedicated named
+  // channel only: putting them in the aggregate would let Stage 0 diagnostics
+  // enter renderer state reducers and violate sink-never-decider isolation.
   SemanticFlowSelectedEvent as CodexSemanticFlowSelectedEvent,
   SemanticFlowIgnoredEvent as CodexSemanticFlowIgnoredEvent,
+  SemanticProviderRequestEvent as CodexSemanticProviderRequestEvent,
   SemanticUsageEvent as CodexSemanticUsageEvent,
 } from './channels/types.js'
 

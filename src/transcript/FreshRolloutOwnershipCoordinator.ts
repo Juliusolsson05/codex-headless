@@ -4,6 +4,7 @@ import {
   normalizePromptForOwnership,
   type FreshRolloutCandidate,
 } from './FreshRolloutClaim.js'
+import { fingerprintProviderSession } from './ProviderSessionFingerprint.js'
 
 export type FreshRolloutLease = {
   participantId: string
@@ -62,6 +63,10 @@ export type FreshRolloutParticipantDecision = {
   historicallyContestedCandidateCount: number
   candidateFingerprints: string[]
   matchingCandidateFingerprints: string[]
+  candidateProviderSessionFingerprints: Array<{
+    candidateFingerprint: string
+    providerSessionMetaFingerprint: string
+  }>
   leasedCandidateFingerprint: string | null
   tailAuthorized: boolean
 }
@@ -105,6 +110,7 @@ type CandidateState = {
   filePath: string | null
   cwdFingerprint: string | null
   threadFingerprint: string | null
+  providerSessionFingerprint: string | null
   messageFirstObservedAt: Map<string, number>
   lineageFingerprints: Set<string>
   historicalContenders: Set<string>
@@ -390,6 +396,7 @@ export class FreshRolloutOwnershipCoordinator {
     const threadFingerprint = candidate.threadId
       ? this.fingerprint('thread', candidate.threadId)
       : null
+    const providerSessionFingerprint = fingerprintProviderSession(candidate.threadId)
     const messages = new Set(
       candidate.userMessages
         .map(message => message.normalized)
@@ -409,6 +416,7 @@ export class FreshRolloutOwnershipCoordinator {
         filePath: normalizedPath,
         cwdFingerprint,
         threadFingerprint,
+        providerSessionFingerprint,
         messageFirstObservedAt: new Map(
           [...messages].map(message => [message, observation.sequence]),
         ),
@@ -458,6 +466,7 @@ export class FreshRolloutOwnershipCoordinator {
 
     previous.cwdFingerprint ??= cwdFingerprint
     previous.threadFingerprint ??= threadFingerprint
+    previous.providerSessionFingerprint ??= providerSessionFingerprint
     previous.generationId ??= observation.generationId
     previous.birthtimeMs ??= observation.birthtimeMs
     for (const message of messages) {
@@ -561,6 +570,7 @@ export class FreshRolloutOwnershipCoordinator {
       if (terminal) {
         candidate.cwdFingerprint = null
         candidate.threadFingerprint = null
+        candidate.providerSessionFingerprint = null
         candidate.messageFirstObservedAt.clear()
         candidate.lineageFingerprints.clear()
       }
@@ -626,6 +636,7 @@ export class FreshRolloutOwnershipCoordinator {
     if (this.candidateIsTerminal(candidate)) {
       candidate.cwdFingerprint = null
       candidate.threadFingerprint = null
+      candidate.providerSessionFingerprint = null
       candidate.messageFirstObservedAt.clear()
       candidate.lineageFingerprints.clear()
     }
@@ -732,6 +743,7 @@ export class FreshRolloutOwnershipCoordinator {
         hasRawPath: candidate.filePath !== null,
         cwdFingerprint: candidate.cwdFingerprint,
         threadFingerprint: candidate.threadFingerprint,
+        providerSessionFingerprint: candidate.providerSessionFingerprint,
         messageFingerprints: [...candidate.messageFirstObservedAt.keys()],
         lineageFingerprints: [...candidate.lineageFingerprints],
         blocked: candidate.blocked,
@@ -1025,6 +1037,7 @@ export class FreshRolloutOwnershipCoordinator {
       candidate.filePath = null
       candidate.cwdFingerprint = null
       candidate.threadFingerprint = null
+      candidate.providerSessionFingerprint = null
       candidate.messageFirstObservedAt.clear()
       candidate.lineageFingerprints.clear()
     }
@@ -1035,6 +1048,19 @@ export class FreshRolloutOwnershipCoordinator {
     candidateEdges: Map<string, Set<string>>,
   ): void {
     const allCandidateFingerprints = [...this.candidates.keys()].sort()
+    // This is diagnostic projection only: policy above continues to compare
+    // the coordinator's process-keyed HMACs. The stable provider-session
+    // digest exists solely so a pre-lease session_meta can be joined with the
+    // proxy window observation in incidents where no tail was ever attached.
+    const candidateProviderSessionFingerprints = allCandidateFingerprints
+      .flatMap(candidateFingerprint => {
+        const providerSessionMetaFingerprint = this.candidates.get(
+          candidateFingerprint,
+        )?.providerSessionFingerprint
+        return providerSessionMetaFingerprint
+          ? [{ candidateFingerprint, providerSessionMetaFingerprint }]
+          : []
+      })
     for (const participant of this.participants.values()) {
       if (!participant.active || !participant.onDecision) continue
       const activeCandidateFingerprints = participantEdges.get(participant.id) ??
@@ -1082,6 +1108,7 @@ export class FreshRolloutOwnershipCoordinator {
               historicallyContestedCandidateCount,
               candidateFingerprints: allCandidateFingerprints,
               matchingCandidateFingerprints: [...candidateFingerprints].sort(),
+              candidateProviderSessionFingerprints,
               leasedCandidateFingerprint: participant.leasedCandidateFingerprint,
               tailAuthorized: true,
             }
@@ -1100,6 +1127,7 @@ export class FreshRolloutOwnershipCoordinator {
               historicallyContestedCandidateCount,
               candidateFingerprints: allCandidateFingerprints,
               matchingCandidateFingerprints: [...candidateFingerprints].sort(),
+              candidateProviderSessionFingerprints,
               leasedCandidateFingerprint: null,
               tailAuthorized: false,
             }

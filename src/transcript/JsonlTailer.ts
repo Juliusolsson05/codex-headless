@@ -61,6 +61,11 @@ export type FileTailerOptions = {
   watchdogMs?: number
 }
 
+export type FileTailerEntryMetadata = {
+  /** Absolute byte position of the JSONL line's first byte in this inode. */
+  lineStartOffset: number
+}
+
 export class RolloutGenerationMismatchError extends Error {
   constructor() {
     // WHY the error is intentionally structure-only. Raw paths and dev:ino
@@ -74,6 +79,7 @@ export class RolloutGenerationMismatchError extends Error {
 export class FileTailer<T> {
   private offset = 0
   private buffer = ''
+  private bufferStartOffset = 0
   private closed = false
   // Poll interval for fs.watchFile in milliseconds. 100ms gives
   // reliable pickup with imperceptible latency and negligible CPU.
@@ -102,7 +108,7 @@ export class FileTailer<T> {
 
   constructor(
     private readonly filePath: string,
-    private readonly onEntry: (entry: T) => void,
+    private readonly onEntry: (entry: T, metadata: FileTailerEntryMetadata) => void,
     private readonly onError?: (err: Error) => void,
     options?: FileTailerOptions,
   ) {
@@ -149,22 +155,28 @@ export class FileTailer<T> {
       closeSync(fd)
       fd = null
 
-      let text = buf.toString('utf8')
+      let retained = buf
+      let retainedStartOffset = start
       if (start > 0) {
-        const firstNewline = text.indexOf('\n')
-        text = firstNewline === -1 ? '' : text.slice(firstNewline + 1)
+        const firstNewline = buf.indexOf(0x0a)
+        retained = firstNewline === -1 ? Buffer.alloc(0) : buf.subarray(firstNewline + 1)
+        retainedStartOffset = firstNewline === -1
+          ? stat.size
+          : start + firstNewline + 1
       }
 
-      const lines = text
-        .split('\n')
-        .map(line => line.trim())
-        .filter(line => line.length > 0)
+      let lineStartOffset = retainedStartOffset
+      const lines = retained.toString('utf8').split('\n').map(line => {
+        const metadata = { lineStartOffset }
+        lineStartOffset += Buffer.byteLength(line, 'utf8') + 1
+        return { line: line.trim(), metadata }
+      }).filter(value => value.line.length > 0)
 
       const recent = lines.slice(-maxLines)
-      for (const line of recent) {
+      for (const { line, metadata } of recent) {
         try {
           const obj = JSON.parse(line) as T
-          this.emitEntry(obj)
+          this.emitEntry(obj, metadata)
         } catch (err) {
           this.emitError(err as Error)
         }
@@ -174,6 +186,7 @@ export class FileTailer<T> {
       this.fileIdentity = identity
       this.fileCtimeMs = stat.ctimeMs
       this.buffer = ''
+      this.bufferStartOffset = stat.size
     } catch (err) {
       if (fd !== null) {
         try { closeSync(fd) } catch { /* best-effort */ }
@@ -244,6 +257,7 @@ export class FileTailer<T> {
       // unterminated fragment into the next generation silently skips or corrupts its first event.
       this.offset = 0
       this.buffer = ''
+      this.bufferStartOffset = 0
     }
     this.fileIdentity = identity
     this.fileCtimeMs = stat.ctimeMs
@@ -277,17 +291,21 @@ export class FileTailer<T> {
     })
     stream.on('end', () => {
       if (this.closed) return
+      const readStartOffset = this.offset
       this.offset = stat.size
+      if (this.buffer.length === 0) this.bufferStartOffset = readStartOffset
       this.buffer += chunk
       const lines = this.buffer.split('\n')
       // Last element is either '' (clean newline) or a partial line.
       this.buffer = lines.pop() ?? ''
       for (const line of lines) {
+        const metadata = { lineStartOffset: this.bufferStartOffset }
+        this.bufferStartOffset += Buffer.byteLength(line, 'utf8') + 1
         const trimmed = line.trim()
         if (!trimmed) continue
         try {
           const obj = JSON.parse(trimmed) as T
-          this.emitEntry(obj)
+          this.emitEntry(obj, metadata)
         } catch (err) {
           this.emitError(err as Error)
         }
@@ -315,9 +333,9 @@ export class FileTailer<T> {
     }
   }
 
-  private emitEntry(entry: T): void {
+  private emitEntry(entry: T, metadata: FileTailerEntryMetadata): void {
     try {
-      this.onEntry(entry)
+      this.onEntry(entry, metadata)
     } catch (error) {
       this.emitError(error as Error)
     }
@@ -418,7 +436,7 @@ export async function tailNewSessionFile(
  */
 export function tailSessionFile<T extends JsonlEntry = JsonlEntry>(
   filePath: string,
-  onEntry: (entry: T) => void,
+  onEntry: (entry: T, metadata: FileTailerEntryMetadata) => void,
   onError?: (err: Error) => void,
   options?: FileTailerOptions,
 ): () => Promise<void> {

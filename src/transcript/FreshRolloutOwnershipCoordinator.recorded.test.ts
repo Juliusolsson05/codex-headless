@@ -235,6 +235,15 @@ describe('recorded process-wide fresh rollout ownership', () => {
     expect(siblingDecisions.at(-1)?.matchingCandidateFingerprints).toEqual([
       expect.stringMatching(/^[0-9a-f]{64}$/),
     ])
+    const decisionWithProviderSession = siblingDecisions.find(decision =>
+      decision.candidateProviderSessionFingerprints.length > 0)
+    expect(decisionWithProviderSession?.candidateProviderSessionFingerprints).toEqual([
+      {
+        candidateFingerprint:
+          decisionWithProviderSession?.matchingCandidateFingerprints[0],
+        providerSessionMetaFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
+    ])
   })
 
   it('keeps the stopped owner through the production post-drain compaction boundary', () => {

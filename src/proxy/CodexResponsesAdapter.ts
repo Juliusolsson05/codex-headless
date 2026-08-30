@@ -3,6 +3,7 @@ import { StringDecoder } from 'string_decoder'
 import type { CodexHeadless } from '../CodexHeadless.js'
 import type { SemanticBlockKind, StreamPhase } from '../channels/types.js'
 import type { ResponsesProxy } from './responsesProxy.js'
+import { fingerprintProviderSession } from '../transcript/ProviderSessionFingerprint.js'
 
 // CodexResponsesAdapter — consumes the raw SSE chunks that
 // `ResponsesProxy` emits on its 'event' channel, parses OpenAI
@@ -121,6 +122,17 @@ type FlowState = {
   // observability/logging.
   requestId: string
   path: string
+  // Parsed from the proxy's allowlisted x-codex-window-id header. Keep the
+  // upstream thread UUID and numeric window generation separate so Agent Code
+  // can compare the UUID with committed session_meta without persisting a raw
+  // header line or teaching this adapter any transcript-ownership policy.
+  providerSessionFingerprint: string | null
+  providerWindowGenerationId: string | null
+  // Presence only. Upstream values such as `collab_spawn` identify child
+  // traffic but are not needed for continuity and may evolve into free-form
+  // labels. Absence does NOT prove this is a root request, so the field name
+  // deliberately states the one-sided observation instead of a classification.
+  subagentHeaderPresent: boolean
   // `response.id` from the upstream, used as our semantic turnId.
   // Falls back to the flow id until response.created arrives.
   responseId: string | null
@@ -246,6 +258,9 @@ type FlowState = {
   // other's — the user-visible 0/1/0/1 flicker below the prompt.
   // See docs/superpowers/plans/2026-04-17-codex-semantic-flicker-fix.md.
   attribution: 'candidate' | 'active' | 'secondary' | 'completed'
+  // Semantic terminals commonly precede response-end. This bit prevents the
+  // later transport close from falsely recording a second cancelled outcome.
+  requestTerminalObserved: boolean
 }
 
 // Watchdog thresholds for silent / leaked flows.
@@ -310,6 +325,33 @@ function stringRecordField(record: Record<string, unknown> | null | undefined, k
     if (typeof entryValue === 'string') out[entryKey] = entryValue
   }
   return Object.keys(out).length > 0 ? out : undefined
+}
+
+function parseProviderWindowIdentity(
+  headers: Record<string, string> | undefined,
+): { providerSessionFingerprint: string; providerWindowGenerationId: string } | null {
+  if (!headers) return null
+  const raw = Object.entries(headers).find(([key]) =>
+    key.toLowerCase() === 'x-codex-window-id')?.[1]
+  if (!raw) return null
+  // Recorded Codex 0.151 traffic uses `<session UUID>:<generation>`. Reject
+  // rather than trim or partially copy unexpected values: a future header
+  // shape must be reviewed before it enters the shareable observation stream.
+  const match = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):(0|[1-9][0-9]{0,19})$/i.exec(raw)
+  if (!match) return null
+  return {
+    // The same domain-separated transform is applied to session_meta in Agent
+    // Code main. Equality survives for forensic joins, while a shareable
+    // recording never contains the provider's raw thread UUID.
+    providerSessionFingerprint: fingerprintProviderSession(match[1])!,
+    providerWindowGenerationId: match[2]!,
+  }
+}
+
+function hasHeader(headers: Record<string, string> | undefined, name: string): boolean {
+  return headers
+    ? Object.keys(headers).some(key => key.toLowerCase() === name)
+    : false
 }
 
 function isStartEvent(ev: Record<string, unknown>): ev is StartEvent {
@@ -402,13 +444,23 @@ export class CodexResponsesAdapter {
       clearInterval(this.watchdogTimer)
       this.watchdogTimer = null
     }
-    // Drop any in-flight flow bookkeeping. A session restart that
-    // re-attaches a new adapter shouldn't see residual state.
+    // A teardown is an observable cancellation, not disappearance. This is
+    // especially important for requests that never produced a first chunk:
+    // without the row, bundle analysis cannot separate "Codex never sent it"
+    // from "the adapter stopped while it was pending".
+    for (const flow of this.flows.values()) {
+      this.publishRequestTerminal(flow, 'cancelled', 'adapter-detached')
+    }
+    // Drop any in-flight flow bookkeeping. A session restart that re-attaches
+    // a new adapter shouldn't see residual state.
     this.flows.clear()
     this.activeFlowId = null
   }
 
-  private markFlowTerminal(flow: FlowState): void {
+  private markFlowTerminal(
+    flow: FlowState,
+    phase: 'completed' | 'failed' | 'incomplete',
+  ): void {
     // WHY centralize terminal cleanup instead of only deleting flows on
     // transport-level response-end: the Responses API has semantic terminal
     // events (`completed`, `failed`, `incomplete`) that can arrive before the
@@ -421,7 +473,58 @@ export class CodexResponsesAdapter {
     if (this.activeFlowId === flow.flowId) {
       this.activeFlowId = null
     }
+    this.publishRequestTerminal(flow, phase, 'semantic-terminal')
     flow.attribution = 'completed'
+  }
+
+  private publishRequestObservation(
+    flow: FlowState,
+    phase: 'created' | 'selected' | 'ignored',
+    cause: 'request-created' | 'first-chunk' | 'active-at-request' | 'concurrent-active',
+    selected?: boolean,
+  ): void {
+    this.headless.semantic.publishProviderRequest({
+      requestId: flow.requestId,
+      flowId: flow.flowId,
+      phase,
+      cause,
+      subagentHeaderPresent: flow.subagentHeaderPresent,
+      ...(selected === undefined ? {} : { selected }),
+      ...(flow.providerSessionFingerprint
+        ? { providerSessionFingerprint: flow.providerSessionFingerprint }
+        : {}),
+      ...(flow.providerWindowGenerationId
+        ? { providerWindowGenerationId: flow.providerWindowGenerationId }
+        : {}),
+    })
+  }
+
+  private publishRequestTerminal(
+    flow: FlowState,
+    phase: 'completed' | 'failed' | 'incomplete' | 'cancelled',
+    cause:
+      | 'semantic-terminal'
+      | 'transport-ended-before-semantic-terminal'
+      | 'response-error'
+      | 'upstream-error'
+      | 'watchdog-timeout'
+      | 'adapter-detached',
+  ): void {
+    if (flow.requestTerminalObserved) return
+    flow.requestTerminalObserved = true
+    this.headless.semantic.publishProviderRequest({
+      requestId: flow.requestId,
+      flowId: flow.flowId,
+      phase,
+      cause,
+      subagentHeaderPresent: flow.subagentHeaderPresent,
+      ...(flow.providerSessionFingerprint
+        ? { providerSessionFingerprint: flow.providerSessionFingerprint }
+        : {}),
+      ...(flow.providerWindowGenerationId
+        ? { providerWindowGenerationId: flow.providerWindowGenerationId }
+        : {}),
+    })
   }
 
   private hydrateResponseIdFromFrame(flow: FlowState, parsed: Record<string, unknown>): void {
@@ -483,10 +586,15 @@ export class CodexResponsesAdapter {
       // timeout, auth flow), and we don't want a `flow_selected`
       // event for a flow that never produces any bytes.
       const flowId = `proxy-${this.nextFlowSeq++}`
-      this.flows.set(flowId, {
+      const requestHeaders = stringRecordField(ev, 'headers')
+      const providerWindow = parseProviderWindowIdentity(requestHeaders)
+      const flow: FlowState = {
         flowId,
         requestId: req.requestId,
         path: req.path,
+        providerSessionFingerprint: providerWindow?.providerSessionFingerprint ?? null,
+        providerWindowGenerationId: providerWindow?.providerWindowGenerationId ?? null,
+        subagentHeaderPresent: hasHeader(requestHeaders, 'x-openai-subagent'),
         responseId: null,
         activeFlowIdAtRequest: this.activeFlowId,
         buffer: '',
@@ -499,7 +607,10 @@ export class CodexResponsesAdapter {
         lastObfuscation: null,
         lastEventAt: Date.now(),
         attribution: 'candidate',
-      })
+        requestTerminalObserved: false,
+      }
+      this.flows.set(flowId, flow)
+      this.publishRequestObservation(flow, 'created', 'request-created')
       return
     }
 
@@ -533,19 +644,23 @@ export class CodexResponsesAdapter {
         if (flow.activeFlowIdAtRequest !== null) {
           flow.attribution = 'secondary'
           this.headless.semantic.publishFlowIgnored({
+            requestId: flow.requestId,
             flowId: flow.flowId,
             reason: `request started while active flow ${flow.activeFlowIdAtRequest} owned the slot`,
             source: 'proxy',
           })
+          this.publishRequestObservation(flow, 'ignored', 'active-at-request', false)
         } else if (this.activeFlowId === null) {
           flow.attribution = 'active'
           this.activeFlowId = flow.flowId
           this.headless.semantic.publishFlowSelected({
+            requestId: flow.requestId,
             flowId: flow.flowId,
             turnId: null,
             reason: 'first-chunk (no competing active flow)',
             source: 'proxy',
           })
+          this.publishRequestObservation(flow, 'selected', 'first-chunk', true)
           // First-chunk promotion → emit 'requesting'. Like the Claude
           // adapter, we don't have a real turnId yet (arrives on the
           // `response.created` frame); null signals "attached to the
@@ -555,10 +670,12 @@ export class CodexResponsesAdapter {
         } else {
           flow.attribution = 'secondary'
           this.headless.semantic.publishFlowIgnored({
+            requestId: flow.requestId,
             flowId: flow.flowId,
             reason: `concurrent with active flow ${this.activeFlowId}`,
             source: 'proxy',
           })
+          this.publishRequestObservation(flow, 'ignored', 'concurrent-active', false)
         }
       }
 
@@ -620,6 +737,11 @@ export class CodexResponsesAdapter {
       if (this.activeFlowId === flow.flowId) {
         this.activeFlowId = null
       }
+      this.publishRequestTerminal(
+        flow,
+        'cancelled',
+        'transport-ended-before-semantic-terminal',
+      )
       this.flows.delete(flow.flowId)
       return
     }
@@ -644,6 +766,11 @@ export class CodexResponsesAdapter {
       if (this.activeFlowId === flow.flowId) {
         this.activeFlowId = null
       }
+      this.publishRequestTerminal(
+        flow,
+        'failed',
+        kind === 'response-error' ? 'response-error' : 'upstream-error',
+      )
       this.flows.delete(flow.flowId)
     }
   }
@@ -704,6 +831,7 @@ export class CodexResponsesAdapter {
       if (isActive) {
         this.activeFlowId = null
       }
+      this.publishRequestTerminal(flow, 'cancelled', 'watchdog-timeout')
       this.flows.delete(flow.flowId)
     }
   }
@@ -821,6 +949,8 @@ export class CodexResponsesAdapter {
         if (!flow.turnOpened) {
           this.headless.semantic.startTurn({
             turnId: id,
+            requestId: flow.requestId,
+            flowId: flow.flowId,
             role: 'assistant',
             source: 'proxy',
             confidence: 'high',
@@ -1202,7 +1332,7 @@ export class CodexResponsesAdapter {
       case 'response.completed': {
         this.hydrateResponseIdFromFrame(flow, parsed)
         if (!flow.responseId) {
-          this.markFlowTerminal(flow)
+          this.markFlowTerminal(flow, 'completed')
           return
         }
         // Final usage is available on response.usage (mirrors
@@ -1252,14 +1382,14 @@ export class CodexResponsesAdapter {
         // phase changes and no block/text events. Marking this flow
         // completed keeps any stray tail chunks from publishing while
         // allowing the next model turn to claim the active slot.
-        this.markFlowTerminal(flow)
+        this.markFlowTerminal(flow, 'completed')
         return
       }
 
       case 'response.failed': {
         this.hydrateResponseIdFromFrame(flow, parsed)
         if (!flow.responseId) {
-          this.markFlowTerminal(flow)
+          this.markFlowTerminal(flow, 'failed')
           return
         }
         // Classify the upstream error. Port of codex-rs's
@@ -1289,14 +1419,14 @@ export class CodexResponsesAdapter {
         // API failure tears down the turn; pending tools are moot
         // because the failure happened before we could send results.
         this.publishPhase(flow, 'idle')
-        this.markFlowTerminal(flow)
+        this.markFlowTerminal(flow, 'failed')
         return
       }
 
       case 'response.incomplete': {
         this.hydrateResponseIdFromFrame(flow, parsed)
         if (!flow.responseId) {
-          this.markFlowTerminal(flow)
+          this.markFlowTerminal(flow, 'incomplete')
           return
         }
         // `incomplete_details.reason` is the upstream explanation:
@@ -1322,7 +1452,7 @@ export class CodexResponsesAdapter {
         // Incomplete response (max_output_tokens / content_filter /
         // etc.). Turn is done, no tools to wait on.
         this.publishPhase(flow, 'idle')
-        this.markFlowTerminal(flow)
+        this.markFlowTerminal(flow, 'incomplete')
         return
       }
 
