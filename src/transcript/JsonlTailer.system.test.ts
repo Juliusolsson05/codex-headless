@@ -81,6 +81,42 @@ describe('FileTailer polling ownership', () => {
     expect(seen.filter(seq => seq === 1)).toHaveLength(1)
   })
 
+  it('preserves UTF-8 and absolute offsets when a poll ends inside a code point', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'tailer-test-'))
+    temporaryDirectories.push(directory)
+    const file = join(directory, 'rollout.jsonl')
+    writeFileSync(file, '')
+    const seen: Array<{ text: string; offset: number }> = []
+    const errors: Error[] = []
+    const watcher = new FileTailer<{ text: string }>(
+      file,
+      (entry, metadata) => seen.push({ text: entry.text, offset: metadata.lineStartOffset }),
+      error => errors.push(error),
+    )
+    openTailers.push(watcher as FileTailer<unknown>)
+
+    const prefix = Buffer.from('{"text":"', 'utf8')
+    const multibyte = Buffer.from('€', 'utf8')
+    // WHY split the append at byte two of a three-byte character: StringDecoder
+    // and ordinary human text normally hide this OS-level boundary. The tailer
+    // advances by stat size, however, so the regression only appears when one
+    // poll consumes an incomplete code point and the next poll supplies its
+    // continuation byte.
+    appendFileSync(file, Buffer.concat([prefix, multibyte.subarray(0, 2)]))
+    await new Promise(resolve => setTimeout(resolve, 250))
+    appendFileSync(file, Buffer.concat([
+      multibyte.subarray(2),
+      Buffer.from('"}\n{"text":"next"}\n', 'utf8'),
+    ]))
+
+    expect(await waitFor(() => seen.length === 2, 2000)).toBe(true)
+    expect(errors).toEqual([])
+    expect(seen).toEqual([
+      { text: '€', offset: 0 },
+      { text: 'next', offset: Buffer.byteLength('{"text":"€"}\n', 'utf8') },
+    ])
+  })
+
   it('restarts from byte zero after truncate-in-place and atomic replacement', async () => {
     const file = makeFile()
     const seen: number[] = []

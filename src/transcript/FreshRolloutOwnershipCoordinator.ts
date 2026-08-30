@@ -1082,6 +1082,11 @@ export class FreshRolloutOwnershipCoordinator {
         historicallyContestedCandidateCount > 0 ||
         candidateFingerprints.size > 1
       const participantCandidateFingerprints = [...candidateFingerprints].sort()
+      // WHY candidateCount and matchingCandidateCount currently agree: privacy
+      // requires both public fields to describe only this participant's proven
+      // candidate edges. We retain the two schema fields because older evidence
+      // consumers distinguish "observed" from "matched", and a future ownership
+      // relation may make them differ without another evidence-schema migration.
       // WHY this stable relation is projected only across this participant's
       // proven candidate edges: unlike the process-keyed candidate HMAC, the
       // provider-session digest is deliberately stable across processes so it
