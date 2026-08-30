@@ -1,4 +1,4 @@
-import { decompress as decompressWithFzstd } from 'fzstd'
+import { Decompress as FzstdDecompress } from 'fzstd'
 import * as zlib from 'node:zlib'
 
 const ZSTD_MAGIC = 0xfd2fb528
@@ -16,6 +16,7 @@ type ZstdFrame = {
   contentSize: number | null
   headerBytes: number
   checksum: boolean
+  singleSegment: boolean
 }
 
 /**
@@ -65,20 +66,40 @@ export function decompressZstdBounded(
     // buffer without a declared size, so portable runtimes must fail closed.
     throw new Error('zstd frame does not declare its output size')
   }
-  if (frame.contentSize > maxOutputLength) {
+  const declaredSize = frame.contentSize
+  if (!frame.singleSegment) {
+    // fzstd allocates its history window from the frame header. Restricting the
+    // portable path to the observed single-segment provider form makes that
+    // window identical to the already-capped content size; native Node remains
+    // available for legitimate streaming/windowed frames on newer runtimes.
+    throw new Error('portable zstd decoding requires a single-segment frame')
+  }
+  if (declaredSize > maxOutputLength) {
     throw new Error('zstd output exceeds the configured limit')
   }
 
-  // WHY the output buffer is exact rather than merely capped: fzstd's
-  // one-shot bounded API expects the caller to know the complete frame size.
-  // Its parser would otherwise allocate from an attacker-controlled window
-  // descriptor before our post-decode byte count could run.
-  const output = new Uint8Array(frame.contentSize)
-  const decoded = decompressWithFzstd(input, output)
-  if (decoded.byteLength !== frame.contentSize) {
+  // WHY use the streaming API instead of fzstd's tempting fixed-buffer
+  // overload: that overload silently truncates when malformed blocks expand
+  // beyond the destination, so its returned byteLength merely repeats the
+  // caller's allocation. Streaming exposes the actual emitted count. The
+  // single-segment restriction above caps fzstd's internal history window,
+  // while this callback caps output before we concatenate any chunks.
+  const chunks: Uint8Array[] = []
+  let decodedBytes = 0
+  let finished = false
+  const decoder = new FzstdDecompress((chunk, final) => {
+    decodedBytes += chunk.byteLength
+    if (decodedBytes > declaredSize || decodedBytes > maxOutputLength) {
+      throw new Error('zstd output exceeds its declared or configured limit')
+    }
+    if (chunk.byteLength > 0) chunks.push(chunk)
+    if (final) finished = true
+  })
+  decoder.push(input, true)
+  if (!finished || decodedBytes !== declaredSize) {
     throw new Error('zstd output size did not match its frame header')
   }
-  return Buffer.from(decoded.buffer, decoded.byteOffset, decoded.byteLength)
+  return Buffer.concat(chunks, decodedBytes)
 }
 
 function inspectSingleZstdFrame(input: Uint8Array): ZstdFrame {
@@ -107,14 +128,19 @@ function inspectSingleZstdFrame(input: Uint8Array): ZstdFrame {
   const headerBytes = contentSizeOffset + contentSizeBytes
   if (headerBytes > input.byteLength) throw new Error('truncated zstd frame header')
   if (contentSizeBytes === 0) {
-    return { contentSize: null, headerBytes, checksum }
+    return { contentSize: null, headerBytes, checksum, singleSegment }
   }
   let size = readUnsignedLittleEndian(input, contentSizeOffset, contentSizeBytes)
   if (contentSizeFlag === 1) size += 256n
   if (size > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new Error('zstd frame output size is not safely representable')
   }
-  return { contentSize: Number(size), headerBytes, checksum }
+  return {
+    contentSize: Number(size),
+    headerBytes,
+    checksum,
+    singleSegment,
+  }
 }
 
 function assertSingleFrameBoundary(input: Uint8Array, frame: ZstdFrame): void {

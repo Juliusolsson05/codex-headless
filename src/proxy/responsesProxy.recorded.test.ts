@@ -92,6 +92,22 @@ describe('recorded Codex proxy request identity', () => {
       .toThrow()
   })
 
+  it('rejects blocks that expand beyond the frame-declared output size', () => {
+    const recorded = Buffer.from(fixture.event.body_b64, 'base64')
+    const nonFinalRecorded = Buffer.from(recorded)
+    nonFinalRecorded[6] = nonFinalRecorded[6]! & 0xfe
+    const overExpanding = Buffer.concat([
+      nonFinalRecorded,
+      // Final one-byte RLE block: the frame still declares the recorded 178
+      // bytes, but a conforming decoder emits 179. fzstd's fixed-output API
+      // used to truncate this byte and make the malformed identity look valid.
+      Buffer.from([0x0b, 0x00, 0x00, 0x20]),
+    ])
+
+    expect(() => decompressZstdBounded(overExpanding, 16 * 1024 * 1024))
+      .toThrow()
+  })
+
   it('extracts exact provider identity from the recorded zstd body', async () => {
     const proxy = await ResponsesProxy.create({
       upstreamBaseUrl: await listenUpstream(),
