@@ -22,7 +22,7 @@ type RolloutFixture = {
 }
 
 const fixturePath = fileURLToPath(new URL(
-  '../../../../testing/fixtures/worktree-live-attribution/' +
+  '../../testing/fixtures/worktree-live-attribution/' +
     'codex-0151-worktree-window.json',
   import.meta.url,
 ))

@@ -6,6 +6,7 @@ import * as zlib from 'node:zlib'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { ResponsesProxy } from './responsesProxy.js'
+import { decompressZstdBounded } from './zstd.js'
 
 type ProxyIdentityFixture = {
   event: {
@@ -20,7 +21,7 @@ type ProxyIdentityFixture = {
 }
 
 const fixturePath = fileURLToPath(new URL(
-  '../../../../testing/fixtures/worktree-live-attribution/' +
+  '../../testing/fixtures/worktree-live-attribution/' +
     'codex-proxy-exact-identity-zstd.json',
   import.meta.url,
 ))
@@ -62,6 +63,35 @@ async function listenUpstream(): Promise<string> {
 }
 
 describe('recorded Codex proxy request identity', () => {
+  it('rejects bytes after the one recorded frame on every decoder path', () => {
+    const recorded = Buffer.from(fixture.event.body_b64, 'base64')
+
+    // WHY exercise the decoder directly: ResponsesProxy deliberately forwards
+    // malformed optional telemetry, so proxy-level assertions only prove that
+    // identity was omitted. These mutations pin the stricter invariant that
+    // neither native Node nor the portable fallback accepts a valid prefix.
+    expect(() => decompressZstdBounded(
+      Buffer.concat([recorded, recorded]),
+      16 * 1024 * 1024,
+    )).toThrow('trailing or concatenated')
+    expect(() => decompressZstdBounded(
+      Buffer.concat([recorded, Buffer.of(0)]),
+      16 * 1024 * 1024,
+    )).toThrow('trailing or concatenated')
+  })
+
+  it('never trusts a corrupted checksum-bearing form of the recorded frame', () => {
+    const recorded = Buffer.from(fixture.event.body_b64, 'base64')
+    const checksummed = Buffer.concat([recorded, Buffer.alloc(4)])
+    checksummed[4] = checksummed[4]! | 0x04
+
+    // On Node 20/early 22 this proves the pure-JS path refuses checksums it
+    // cannot verify. On native-zstd Node it proves checksum verification is
+    // still delegated to the decoder after our structural boundary check.
+    expect(() => decompressZstdBounded(checksummed, 16 * 1024 * 1024))
+      .toThrow()
+  })
+
   it('extracts exact provider identity from the recorded zstd body', async () => {
     const proxy = await ResponsesProxy.create({
       upstreamBaseUrl: await listenUpstream(),

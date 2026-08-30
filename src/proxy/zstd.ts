@@ -8,13 +8,12 @@ type NativeZstd = typeof zlib & {
     input: ArrayBufferView,
     options?: {
       maxOutputLength?: number
-      rejectGarbageAfterEnd?: boolean
     },
   ) => Buffer
 }
 
 type ZstdFrame = {
-  contentSize: number
+  contentSize: number | null
   headerBytes: number
   checksum: boolean
 }
@@ -36,19 +35,39 @@ export function decompressZstdBounded(
   input: Uint8Array,
   maxOutputLength: number,
 ): Buffer {
+  // WHY frame validation is shared by both decoders: Node's zstd one-shot API
+  // accepts the first frame and silently ignores concatenated/trailing bytes.
+  // That is useful for some streaming callers, but this boundary carries one
+  // JSON request whose identity can claim a transcript. Requiring exactly one
+  // structurally complete frame prevents an accepted prefix from laundering
+  // unexamined bytes regardless of which Node runtime executes this package.
+  const frame = inspectSingleZstdFrame(input)
+  assertSingleFrameBoundary(input, frame)
+
   const native = (zlib as NativeZstd).zstdDecompressSync
   if (typeof native === 'function') {
     return native(input, {
       maxOutputLength,
-      rejectGarbageAfterEnd: true,
     })
   }
 
-  const frame = inspectSingleZstdFrame(input)
+  // fzstd intentionally does not validate the optional frame checksum. A
+  // corrupted identity document can still be valid JSON, so treating its
+  // output as authenticated enough to select a rollout would fail open. Older
+  // Node versions therefore accept only the checksum-free provider shape we
+  // recorded; checksum-bearing frames wait for native Node verification.
+  if (frame.checksum) {
+    throw new Error('checksummed zstd frames require native checksum validation')
+  }
+  if (frame.contentSize === null) {
+    // Unknown-size frames are valid zstd, and native Node can enforce the cap
+    // while decoding them. fzstd cannot receive a caller-owned bounded output
+    // buffer without a declared size, so portable runtimes must fail closed.
+    throw new Error('zstd frame does not declare its output size')
+  }
   if (frame.contentSize > maxOutputLength) {
     throw new Error('zstd output exceeds the configured limit')
   }
-  assertSingleFrameBoundary(input, frame)
 
   // WHY the output buffer is exact rather than merely capped: fzstd's
   // one-shot bounded API expects the caller to know the complete frame size.
@@ -83,17 +102,13 @@ function inspectSingleZstdFrame(input: Uint8Array): ZstdFrame {
   const contentSizeBytes = contentSizeFlag === 0
     ? (singleSegment ? 1 : 0)
     : 1 << contentSizeFlag
-  if (contentSizeBytes === 0) {
-    // Unknown-size streaming frames are valid zstd, but fzstd cannot decode
-    // them into a caller-bounded buffer without first trusting their window.
-    // Native Node still accepts them under maxOutputLength; older runtimes fail
-    // closed until the provider sends the observed size-bearing form.
-    throw new Error('zstd frame does not declare its output size')
-  }
 
   const contentSizeOffset = 5 + (singleSegment ? 0 : 1) + dictionaryBytes
   const headerBytes = contentSizeOffset + contentSizeBytes
   if (headerBytes > input.byteLength) throw new Error('truncated zstd frame header')
+  if (contentSizeBytes === 0) {
+    return { contentSize: null, headerBytes, checksum }
+  }
   let size = readUnsignedLittleEndian(input, contentSizeOffset, contentSizeBytes)
   if (contentSizeFlag === 1) size += 256n
   if (size > BigInt(Number.MAX_SAFE_INTEGER)) {
@@ -121,9 +136,6 @@ function assertSingleFrameBoundary(input: Uint8Array, frame: ZstdFrame): void {
   }
   if (frame.checksum) offset += 4
   if (offset !== input.byteLength) {
-    // WHY concatenated frames are rejected only on the fallback path: fzstd's
-    // bounded one-shot API reuses the supplied buffer per frame and concatenates
-    // afterwards, which would allocate outside the advertised cap.
     throw new Error('zstd body contains trailing or concatenated frame bytes')
   }
 }
