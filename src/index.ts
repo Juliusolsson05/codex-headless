@@ -90,6 +90,16 @@ export {
   getCodexSessionsDir,
 } from './transcript/ProjectDir.js'
 
+// --- On-disk project trust (agent-code#714) ---
+// Pre-trusting the spawn cwd in $CODEX_HOME/config.toml retires the trust
+// dialog for consumer-spawned sessions; the dialog parser/condition above
+// remain as the fallback for anything this write cannot cover.
+export {
+  ensureCodexProjectTrust,
+  getCodexConfigPath,
+  type CodexProjectTrustResult,
+} from './config/ProjectTrust.js'
+
 export {
   listCodexSessions,
   type CodexSessionInfo,
