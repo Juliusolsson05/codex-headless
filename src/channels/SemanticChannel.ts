@@ -709,6 +709,13 @@ export class SemanticChannel extends EventEmitter {
     message: string
     retryAfterMs?: number
     status?: number
+    // Usage-limit detail, populated only by the HTTP-failure path in
+    // CodexResponsesAdapter. Optional rather than a separate publisher: every
+    // consumer already subscribes to api_error, and a second event type would
+    // force each of them to handle exhaustion twice.
+    resetsAt?: number
+    limitId?: string
+    limitName?: string
     source: SemanticSource
     confidence?: SemanticApiErrorEvent['confidence']
   }): void {
@@ -719,6 +726,9 @@ export class SemanticChannel extends EventEmitter {
       message: params.message,
       retryAfterMs: params.retryAfterMs,
       status: params.status,
+      resetsAt: params.resetsAt,
+      limitId: params.limitId,
+      limitName: params.limitName,
       isOverloaded: params.errorType === 'server_overloaded',
       source: params.source,
       confidence: params.confidence ?? 'high',

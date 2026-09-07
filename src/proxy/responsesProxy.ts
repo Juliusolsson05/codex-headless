@@ -312,6 +312,41 @@ function defaultUpstreamFor(authMode: CodexAuthMode): string {
     : 'https://api.openai.com/v1'
 }
 
+// Rate-limit telemetry headers, matched by shape rather than by an exact
+// list. Observed names are vendor-prefixed with the pool the account is billed
+// against — `x-codex-primary-used-percent`,
+// `x-codex-secondary-reset-after-seconds`, `x-codex-limit-name` — so the
+// vendor segment is the part most likely to differ for an account on a
+// different product. Matching `x-<anything>-<window>-<metric>` keeps a new
+// prefix working, while the fixed tail means the pattern can only ever admit
+// headers whose own name says "this is a limit window".
+const RATE_LIMIT_HEADER = /^x-.+-(?:primary|secondary)-(?:used-percent|reset-after-seconds|window-minutes)$|^x-.+-limit-name$/
+
+/** Narrow an upstream response's headers to the rate-limit subset that the
+ *  semantic adapter needs to classify a 429.
+ *
+ *  WHY an allowlist and not the whole header bag: the `response` event is
+ *  consumed by the semantic layer and mirrored into debug bundles, so every
+ *  header forwarded here is a header that can end up in a shareable
+ *  recording. Upstream replies carry set-cookie, request ids and account
+ *  identifiers that no consumer of this event reads. The pool identity
+ *  (`x-codex-active-limit`) and the window telemetry are the only things the
+ *  429 body cannot supply on its own — codex-api/src/api_bridge.rs reads the
+ *  same header to decide which limit was hit. */
+export function pickRateLimitHeaders(headers: Headers): Record<string, string> {
+  const picked: Record<string, string> = {}
+  headers.forEach((value, key) => {
+    // Normalize to lower case so the adapter can index by literal name.
+    // Node's fetch already lower-cases, but a future undici/Headers swap or a
+    // hand-built Headers in a test must not change how the adapter reads it.
+    const lower = key.toLowerCase()
+    if (lower === 'x-codex-active-limit' || lower === 'retry-after' || RATE_LIMIT_HEADER.test(lower)) {
+      picked[lower] = value
+    }
+  })
+  return picked
+}
+
 export class ResponsesProxy extends EventEmitter {
   private server: Server | null = null
   readonly info: CodexResponsesProxyInfo
@@ -791,6 +826,12 @@ export class ResponsesProxy extends EventEmitter {
       requestId,
       path: originalUrl,
       status: upstreamRes.status,
+      // WHY only rate-limit headers travel on the event: the adapter must
+      // classify a 429 body against the active limit pool, and the pool
+      // identity lives in headers, not the body (codex-api/src/api_bridge.rs
+      // reads x-codex-active-limit). Forwarding every header would put auth
+      // and request ids into the semantic stream for no consumer.
+      headers: pickRateLimitHeaders(upstreamRes.headers),
     })
 
     if (!upstreamRes.body) {

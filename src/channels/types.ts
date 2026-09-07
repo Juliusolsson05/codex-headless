@@ -495,7 +495,15 @@ export type SemanticApiErrorEvent = {
   /** One of: `context_window_exceeded`, `quota_exceeded`,
    *  `usage_not_included`, `server_overloaded`, `invalid_request`,
    *  `retryable`, or `stream` for the generic fallback. Matches the
-   *  ApiError variants in codex-api/src/error.rs. */
+   *  ApiError variants in codex-api/src/error.rs.
+   *
+   *  `usage_limit_reached` and `rate_limited` come from the HTTP layer, not
+   *  from an SSE frame, so they have no codex-api counterpart. WHY they are
+   *  two members and not one: an exhausted subscription window
+   *  (`usage_limit_reached`, with `resetsAt`) is not retryable in any useful
+   *  sense — the answer is to wait hours or switch provider — while a plain
+   *  429 clears in seconds. Both used to be classified `retryable`, which
+   *  made the two indistinguishable to any consumer. */
   errorType:
     | 'context_window_exceeded'
     | 'quota_exceeded'
@@ -504,6 +512,8 @@ export type SemanticApiErrorEvent = {
     | 'invalid_request'
     | 'retryable'
     | 'stream'
+    | 'usage_limit_reached'
+    | 'rate_limited'
   message: string
   /** For `retryable`: the server-suggested delay in milliseconds if
    *  present on the upstream error. Parsed from the `Retry-After`-style
@@ -511,6 +521,21 @@ export type SemanticApiErrorEvent = {
   retryAfterMs?: number
   /** HTTP status when available (upstream transport errors). */
   status?: number
+  /** For `usage_limit_reached`: when the exhausted window reopens, in UNIX
+   *  SECONDS as upstream sends it (`error.resets_at`). Deliberately not
+   *  milliseconds and not an ISO string — the value is passed through
+   *  untranslated so a consumer comparing it against another provider's
+   *  payload knows exactly which representation it holds. */
+  resetsAt?: number
+  /** For `usage_limit_reached`: which limit pool was exhausted, from the
+   *  `x-codex-active-limit` header (e.g. `codex`). Present because an account
+   *  can hold several pools and only one of them being empty is the difference
+   *  between "wait" and "switch". */
+  limitId?: string
+  /** For `usage_limit_reached`: the pool's human-facing name, from the
+   *  matching `x-<limitId>-limit-name` header. Display only — never branch on
+   *  it, upstream is free to reword it. */
+  limitName?: string
   /** Convenience flag: `errorType === 'server_overloaded'`. */
   isOverloaded?: boolean
   source: SemanticSource

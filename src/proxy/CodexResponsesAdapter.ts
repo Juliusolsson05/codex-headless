@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { StringDecoder } from 'string_decoder'
 import type { CodexHeadless } from '../CodexHeadless.js'
-import type { SemanticBlockKind, StreamPhase } from '../channels/types.js'
+import type { SemanticApiErrorEvent, SemanticBlockKind, StreamPhase } from '../channels/types.js'
 import type { ResponsesProxy } from './responsesProxy.js'
 import { fingerprintProviderSession } from '../transcript/ProviderSessionFingerprint.js'
 
@@ -112,6 +112,34 @@ type EndEvent = {
   requestId: string
   path: string
   bytes: number
+}
+
+/** The proxy's response-headers event, emitted once per HTTP call the moment
+ *  upstream status and headers are known and before any body byte flows.
+ *
+ *  WHY the adapter cares about it at all now: for a 2xx SSE turn the status
+ *  line carries nothing the frames don't already say, which is why this event
+ *  was ignored for the adapter's whole life. A non-2xx reply is the opposite —
+ *  it is the ONLY place the HTTP status and the rate-limit pool headers
+ *  appear, and its body is a one-shot JSON error document that never produces
+ *  an SSE frame. */
+type ResponseEvent = {
+  kind: 'response'
+  requestId: string
+  path: string
+  status: number
+  /** Rate-limit subset only — allowlisted by responsesProxy.pickRateLimitHeaders.
+   *  Anything else upstream sent is deliberately not here. */
+  headers?: Record<string, string>
+}
+
+/** Buffered non-2xx reply, parked on the flow between `response` and
+ *  `response-end`. Presence of this field is what switches the flow from
+ *  "parse SSE frames" to "collect an error document". */
+type HttpFailure = {
+  status: number
+  headers: Record<string, string>
+  body: string
 }
 
 type CodexResponsesAdapterHeadless = Pick<
@@ -270,6 +298,17 @@ type FlowState = {
   // Semantic terminals commonly precede response-end. This bit prevents the
   // later transport close from falsely recording a second cancelled outcome.
   requestTerminalObserved: boolean
+  // Non-null once the proxy reported a >=400 status for this flow. Set on the
+  // `response` event, filled by the chunk branch, drained and classified at
+  // `response-end`.
+  //
+  // WHY the body is buffered instead of being classified chunk-by-chunk: an
+  // error document is small but still arrives split across arbitrary TCP
+  // chunks, and a JSON body has no frame delimiter to parse incrementally
+  // against. Waiting for response-end is the only point at which the document
+  // is guaranteed complete, and a failed request has no live-streaming
+  // deadline to miss.
+  httpFailure: HttpFailure | null
 }
 
 // Watchdog thresholds for silent / leaked flows.
@@ -380,6 +419,15 @@ function isChunkEvent(ev: Record<string, unknown>): ev is ChunkEvent {
     typeof ev.path === 'string' &&
     typeof ev.size === 'number' &&
     Buffer.isBuffer(ev.chunk)
+  )
+}
+
+function isResponseEvent(ev: Record<string, unknown>): ev is ResponseEvent {
+  return (
+    ev.kind === 'response' &&
+    typeof ev.requestId === 'string' &&
+    typeof ev.path === 'string' &&
+    typeof ev.status === 'number'
   )
 }
 
@@ -630,9 +678,33 @@ export class CodexResponsesAdapter {
         lastEventAt: Date.now(),
         attribution: 'candidate',
         requestTerminalObserved: false,
+        httpFailure: null,
       }
       this.flows.set(flowId, flow)
       this.publishRequestObservation(flow, 'created', 'request-created')
+      return
+    }
+
+    if (kind === 'response') {
+      const responseEv = isResponseEvent(ev) ? ev : null
+      if (!responseEv) return
+      const flow = this.findFlowByRequestId(responseEv.requestId)
+      // status < 400 is the overwhelmingly common case (a normal SSE turn).
+      // Leave those flows completely untouched so nothing about the healthy
+      // path depends on this branch having run.
+      if (!flow || responseEv.status < 400) return
+      // A non-2xx /responses reply is a JSON error document, not an SSE
+      // stream. Buffer it whole and classify at response-end; the SSE frame
+      // drain would otherwise see a body with no `data:` lines and publish
+      // nothing, which is how usage limits used to vanish into a timeout.
+      flow.httpFailure = {
+        status: responseEv.status,
+        // stringRecordField drops non-string values rather than casting the
+        // whole bag, so a malformed proxy event can't smuggle objects into
+        // the header lookups the classifier does below.
+        headers: stringRecordField(ev, 'headers') ?? {},
+        body: '',
+      }
       return
     }
 
@@ -653,6 +725,21 @@ export class CodexResponsesAdapter {
       if (flow.attribution === 'completed') return
 
       flow.lastEventAt = Date.now()
+
+      // Error-document bytes. Collect and stop here — deliberately BEFORE
+      // first-chunk attribution, because a request that already failed at the
+      // HTTP layer must never claim the single active-flow slot. If it did,
+      // the retry that Codex issues immediately afterwards would be demoted
+      // to 'secondary' and its whole turn would go unpublished.
+      if (flow.httpFailure) {
+        // Plain toString is safe where the SSE path needs StringDecoder: the
+        // error document is JSON, and JSON.parse is the only consumer. A split
+        // multi-byte codepoint inside an error *message* would corrupt one
+        // glyph of display text, which is not worth carrying a second decoder
+        // for; the classification itself is ASCII-only fields.
+        flow.httpFailure.body += chunkEv.chunk.toString('utf8')
+        return
+      }
 
       // First-chunk attribution. Any /responses chunk is a reliable
       // "this is live streaming" signal — request headers don't
@@ -731,6 +818,41 @@ export class CodexResponsesAdapter {
       const flow = this.findFlowByRequestId(endEv.requestId)
       if (!flow) return
       flow.lastEventAt = Date.now()
+
+      // The failed-request terminal. Runs instead of the SSE teardown below,
+      // not in addition to it: there is no frame buffer to drain and no
+      // upstream turn id to seal against, so everything past this point would
+      // be a no-op that ends by recording a misleading 'cancelled' outcome for
+      // a request the server explicitly refused.
+      if (flow.httpFailure) {
+        const classified = classifyHttpFailure(flow.httpFailure)
+        this.headless.semantic.publishApiError({
+          // Usually null: an HTTP failure means upstream never sent
+          // response.created, so no `resp_...` id exists to attach to. The
+          // consumer keys this off the session, not the turn.
+          turnId: flow.responseId,
+          errorType: classified.errorType,
+          message: classified.message,
+          retryAfterMs: classified.retryAfterMs,
+          status: flow.httpFailure.status,
+          resetsAt: classified.resetsAt,
+          limitId: classified.limitId,
+          limitName: classified.limitName,
+          source: 'proxy',
+        })
+        // Defensive: a turn can only be open here if a previous 2xx attempt on
+        // the SAME requestId opened one, which the proxy's per-call requestId
+        // makes impossible today. Seal it anyway rather than leave a renderer
+        // spinning if that invariant ever changes.
+        if (flow.turnOpened && flow.responseId) {
+          this.headless.semantic.finishTurn({ turnId: flow.responseId, fullText: flow.fullText || undefined, source: 'proxy', confidence: 'fallback' })
+        }
+        if (this.activeFlowId === flow.flowId) this.activeFlowId = null
+        this.publishRequestTerminal(flow, 'failed', 'response-error')
+        this.flows.delete(flow.flowId)
+        return
+      }
+
       // Flush any bytes the decoder was holding back (i.e. a trailing
       // partial sequence that never got its continuation). In healthy
       // streams this is empty; on truncated streams we'd rather see
@@ -1712,6 +1834,68 @@ function classifyResponseFailed(
   // present — upstream can embed it in the error payload.
   const retryAfter = parseRetryAfterMs(e)
   return { errorType: 'retryable', message, retryAfterMs: retryAfter }
+}
+
+/** Port of codex-api/src/api_bridge.rs (usage_limit_reached) plus the
+ *  generic 429 fallback. Runs on buffered non-2xx bodies only.
+ *
+ *  WHY this is separate from classifyResponseFailed rather than folded into
+ *  it: that function classifies an SSE `response.failed` frame, where the
+ *  transport succeeded and the model turn died. Here the transport itself was
+ *  refused, so the HTTP status and the rate-limit headers are first-class
+ *  evidence that a frame-based classifier has no access to. The two still
+ *  meet at the bottom — anything this function can't distinguish is handed to
+ *  the SSE classifier so a body-only error keeps its existing errorType. */
+function classifyHttpFailure(failure: HttpFailure): {
+  errorType: SemanticApiErrorEvent['errorType']
+  message: string
+  retryAfterMs?: number
+  resetsAt?: number
+  limitId?: string
+  limitName?: string
+} {
+  let parsed: Record<string, unknown> | null = null
+  try { parsed = asRecord(JSON.parse(failure.body)) } catch { parsed = null }
+  const error = parsed ? asRecord(parsed.error) : null
+  const type = error ? stringField(error, 'type') ?? '' : ''
+  // A status-only message is still better than an empty card: some upstream
+  // 5xx replies are HTML from an edge proxy and carry no JSON error at all.
+  const message = (error && stringField(error, 'message')) || `HTTP ${failure.status} from /responses`
+  const retryAfterSeconds = Number(failure.headers['retry-after'])
+  const retryAfterMs = Number.isFinite(retryAfterSeconds) ? retryAfterSeconds * 1000 : undefined
+  if (failure.status === 429 && type === 'usage_limit_reached') {
+    // The header names the pool that was actually exhausted. 'codex' is the
+    // fallback because it is the vendor segment on every limit header observed
+    // on this endpoint, so it is also what the limitName lookup below needs to
+    // find anything at all — defaulting to '' would just lose both fields.
+    const limitId = failure.headers['x-codex-active-limit'] || 'codex'
+    const resets = error ? error.resets_at : undefined
+    return {
+      errorType: 'usage_limit_reached',
+      message,
+      retryAfterMs,
+      // Unix SECONDS, passed through untranslated. Converting to ms or to a
+      // Date here would put a second time representation in the semantic
+      // stream; the field's doc comment on SemanticApiErrorEvent is the one
+      // place that unit is stated.
+      resetsAt: typeof resets === 'number' ? resets : undefined,
+      limitId,
+      // The display name lives under a header derived from the pool id. Try
+      // the dashed spelling first because header names cannot contain '_',
+      // then the raw id in case a future pool id is already dash-shaped.
+      limitName: failure.headers[`x-${limitId.replace(/_/g, '-')}-limit-name`] ?? failure.headers[`x-${limitId}-limit-name`],
+    }
+  }
+  // A 429 whose body does not say usage_limit_reached is a throttle, not an
+  // exhausted subscription window. Keeping them distinct is the entire point
+  // of this classifier: the app retries one and offers a provider switch for
+  // the other.
+  if (failure.status === 429) return { errorType: 'rate_limited', message, retryAfterMs }
+  if (type === 'insufficient_quota') return { errorType: 'quota_exceeded', message }
+  const sse = classifyResponseFailed(parsed ?? undefined)
+  // Header retry-after only fills in when the body had none — the body is the
+  // more specific signal when upstream bothered to send both.
+  return { errorType: sse.errorType, message: sse.message, retryAfterMs: sse.retryAfterMs ?? retryAfterMs }
 }
 
 /** Best-effort retry-after extraction. Upstream sometimes puts it in

@@ -1,35 +1,17 @@
 import { Buffer } from 'node:buffer'
-import { EventEmitter } from 'node:events'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-import { SemanticChannel } from '../channels/SemanticChannel.js'
 import type { SemanticProviderRequestEvent } from '../channels/types.js'
-import { CodexResponsesAdapter } from './CodexResponsesAdapter.js'
-import type { ResponsesProxy } from './responsesProxy.js'
-
-class RecordedProxy extends EventEmitter {}
+import { createRecordedAdapterHarness } from './testing/adapterHarness.js'
 
 describe('Codex Responses request observations from recorded traffic', () => {
-  let adapter: CodexResponsesAdapter | null = null
-
-  afterEach(() => {
-    adapter?.detach()
-    adapter = null
-  })
-
   it('records creation, first-chunk attribution, cancellation, and the provider window identity', () => {
-    const proxy = new RecordedProxy()
-    const semantic = new SemanticChannel()
+    const { proxy, semantic } = createRecordedAdapterHarness()
     const observed: SemanticProviderRequestEvent[] = []
     const productEvents: unknown[] = []
     semantic.on('provider_request', event => observed.push(event))
     semantic.on('event', event => productEvents.push(event))
-    adapter = new CodexResponsesAdapter(
-      proxy as unknown as ResponsesProxy,
-      { semantic } as never,
-    )
-    adapter.attach()
 
     // Sanitized from proxy-events.jsonl line 42 in manual bundle
     // 2026-08-30T17-20-50-241-d00b4e7c. The request id and
@@ -79,15 +61,9 @@ describe('Codex Responses request observations from recorded traffic', () => {
   })
 
   it('records ignored concurrent requests and their transport failure separately', () => {
-    const proxy = new RecordedProxy()
-    const semantic = new SemanticChannel()
+    const { proxy, semantic } = createRecordedAdapterHarness()
     const observed: SemanticProviderRequestEvent[] = []
     semantic.on('provider_request', event => observed.push(event))
-    adapter = new CodexResponsesAdapter(
-      proxy as unknown as ResponsesProxy,
-      { semantic } as never,
-    )
-    adapter.attach()
 
     const request = (requestId: string, subagent = false): void => {
       proxy.emit('event', {
@@ -133,18 +109,12 @@ describe('Codex Responses request observations from recorded traffic', () => {
   })
 
   it('keeps product semantic progression when a diagnostic listener throws', () => {
-    const proxy = new RecordedProxy()
-    const semantic = new SemanticChannel()
+    const { proxy, semantic } = createRecordedAdapterHarness()
     const phases: string[] = []
     semantic.on('provider_request', () => {
       throw new Error('broken diagnostic sink')
     })
     semantic.on('stream_phase', event => phases.push(event.phase))
-    adapter = new CodexResponsesAdapter(
-      proxy as unknown as ResponsesProxy,
-      { semantic } as never,
-    )
-    adapter.attach()
 
     expect(() => {
       proxy.emit('event', {
