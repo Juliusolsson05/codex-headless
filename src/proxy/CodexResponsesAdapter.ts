@@ -140,7 +140,27 @@ type HttpFailure = {
   status: number
   headers: Record<string, string>
   body: string
+  /** Set once the body hit MAX_FAILURE_BODY_CHARS and stopped growing. The
+   *  classifier reads it as "do not trust these bytes". */
+  truncated: boolean
 }
+
+// Hard ceiling on a buffered error document, measured in decoded characters
+// (never more than the byte count under UTF-8, so it is a conservative memory
+// bound; for the ASCII JSON these documents are, the two are identical).
+//
+// WHY a cap at all: the `response` branch decides to buffer purely from the
+// HTTP status, and nothing forces a >=400 reply to be small. A misconfigured
+// upstream, a captive-portal login page, or a proxy streaming an error the
+// size of a real turn would otherwise accumulate unbounded in memory on a
+// flow that, by definition, nobody is watching for output.
+//
+// WHY 256 KB and not something tight like 64 KB: a real error document is a
+// few hundred bytes, so any cap is effectively unreachable in practice; the
+// number only has to be small enough to be harmless and large enough that no
+// plausible JSON error is ever truncated. 256 KB satisfies both without
+// anyone having to justify a tighter guess later.
+const MAX_FAILURE_BODY_CHARS = 256 * 1024
 
 type CodexResponsesAdapterHeadless = Pick<
   CodexHeadless,
@@ -565,7 +585,8 @@ export class CodexResponsesAdapter {
       | 'response-error'
       | 'upstream-error'
       | 'watchdog-timeout'
-      | 'adapter-detached',
+      | 'adapter-detached'
+      | 'http-error',
   ): void {
     if (flow.requestTerminalObserved) return
     flow.requestTerminalObserved = true
@@ -704,6 +725,7 @@ export class CodexResponsesAdapter {
         // the header lookups the classifier does below.
         headers: stringRecordField(ev, 'headers') ?? {},
         body: '',
+        truncated: false,
       }
       return
     }
@@ -724,22 +746,37 @@ export class CodexResponsesAdapter {
       // watchdog reaps it once lastEventAt (frozen here) goes stale.
       if (flow.attribution === 'completed') return
 
-      flow.lastEventAt = Date.now()
-
       // Error-document bytes. Collect and stop here — deliberately BEFORE
       // first-chunk attribution, because a request that already failed at the
       // HTTP layer must never claim the single active-flow slot. If it did,
       // the retry that Codex issues immediately afterwards would be demoted
       // to 'secondary' and its whole turn would go unpublished.
       if (flow.httpFailure) {
-        // Plain toString is safe where the SSE path needs StringDecoder: the
-        // error document is JSON, and JSON.parse is the only consumer. A split
-        // multi-byte codepoint inside an error *message* would corrupt one
-        // glyph of display text, which is not worth carrying a second decoder
-        // for; the classification itself is ASCII-only fields.
-        flow.httpFailure.body += chunkEv.chunk.toString('utf8')
+        const remaining = MAX_FAILURE_BODY_CHARS - flow.httpFailure.body.length
+        if (remaining > 0) {
+          // Plain toString is safe where the SSE path needs StringDecoder: the
+          // error document is JSON, and JSON.parse is the only consumer. A
+          // split multi-byte codepoint inside an error *message* would corrupt
+          // one glyph of display text, which is not worth carrying a second
+          // decoder for; the classification itself is ASCII-only fields.
+          const text = chunkEv.chunk.toString('utf8')
+          // Slice rather than append-then-check, so one enormous chunk can't
+          // land in memory in full before the cap notices.
+          flow.httpFailure.body += text.length > remaining ? text.slice(0, remaining) : text
+          if (flow.httpFailure.body.length >= MAX_FAILURE_BODY_CHARS) {
+            flow.httpFailure.truncated = true
+          }
+          flow.lastEventAt = Date.now()
+        }
+        // Past the cap, deliberately do NOT refresh lastEventAt. An upstream
+        // that streams an unbounded error body would otherwise keep this flow
+        // permanently fresh and permanently un-reapable: response-end may
+        // never come, and the watchdog is the only thing left that can free
+        // the flow. Letting it go stale is the whole point of stopping here.
         return
       }
+
+      flow.lastEventAt = Date.now()
 
       // First-chunk attribution. Any /responses chunk is a reliable
       // "this is live streaming" signal — request headers don't
@@ -848,7 +885,7 @@ export class CodexResponsesAdapter {
           this.headless.semantic.finishTurn({ turnId: flow.responseId, fullText: flow.fullText || undefined, source: 'proxy', confidence: 'fallback' })
         }
         if (this.activeFlowId === flow.flowId) this.activeFlowId = null
-        this.publishRequestTerminal(flow, 'failed', 'response-error')
+        this.publishRequestTerminal(flow, 'failed', 'http-error')
         this.flows.delete(flow.flowId)
         return
       }
@@ -1836,8 +1873,9 @@ function classifyResponseFailed(
   return { errorType: 'retryable', message, retryAfterMs: retryAfter }
 }
 
-/** Port of codex-api/src/api_bridge.rs (usage_limit_reached) plus the
- *  generic 429 fallback. Runs on buffered non-2xx bodies only.
+/** Port of the TransportError::Http arm of
+ *  vendor/codex-src/codex-rs/codex-api/src/api_bridge.rs:133-168. Runs on
+ *  buffered non-2xx bodies only.
  *
  *  WHY this is separate from classifyResponseFailed rather than folded into
  *  it: that function classifies an SSE `response.failed` frame, where the
@@ -1855,20 +1893,46 @@ function classifyHttpFailure(failure: HttpFailure): {
   limitName?: string
 } {
   let parsed: Record<string, unknown> | null = null
-  try { parsed = asRecord(JSON.parse(failure.body)) } catch { parsed = null }
+  // A truncated body is not parsed at all rather than parsed-and-caught: half
+  // a JSON document can still parse (a bare number, a string) into something
+  // that reads as a legitimate error shape, and inventing a classification
+  // from a body we deliberately stopped reading is worse than falling back to
+  // the status. See MAX_FAILURE_BODY_CHARS for why the cap exists.
+  if (!failure.truncated) {
+    try { parsed = asRecord(JSON.parse(failure.body)) } catch { parsed = null }
+  }
   const error = parsed ? asRecord(parsed.error) : null
-  const type = error ? stringField(error, 'type') ?? '' : ''
+  // codex-rs discriminates on `error.type` in the 429 arm (api_bridge.rs:135)
+  // but on `error.code` elsewhere (api_bridge.rs:80, 92), and the SSE
+  // classifier below already matches on `code`. Accept either: upstream uses
+  // both spellings for the same taxonomy and a body that says
+  // `code: "insufficient_quota"` must not be flattened into a throttle just
+  // because it did not repeat itself in `type`.
+  const discriminator = (error && (stringField(error, 'type') || stringField(error, 'code'))) || ''
   // A status-only message is still better than an empty card: some upstream
   // 5xx replies are HTML from an edge proxy and carry no JSON error at all.
-  const message = (error && stringField(error, 'message')) || `HTTP ${failure.status} from /responses`
+  const statusMessage = `HTTP ${failure.status} from /responses`
+  const message = (error && stringField(error, 'message')) || statusMessage
   const retryAfterSeconds = Number(failure.headers['retry-after'])
-  const retryAfterMs = Number.isFinite(retryAfterSeconds) ? retryAfterSeconds * 1000 : undefined
-  if (failure.status === 429 && type === 'usage_limit_reached') {
-    // The header names the pool that was actually exhausted. 'codex' is the
-    // fallback because it is the vendor segment on every limit header observed
-    // on this endpoint, so it is also what the limitName lookup below needs to
-    // find anything at all — defaulting to '' would just lose both fields.
-    const limitId = failure.headers['x-codex-active-limit'] || 'codex'
+  // > 0, not just finite: `Number('')` is 0 and an HTTP-date `Retry-After` is
+  // NaN, and a `retryAfterMs: 0` would tell a consumer "the server asked you
+  // to retry immediately" when in fact the server said nothing parseable.
+  const retryAfterMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+    ? retryAfterSeconds * 1000
+    : undefined
+
+  if (failure.status === 429 && discriminator === 'usage_limit_reached') {
+    // Same normalization codex-rs applies before building the header prefix
+    // (rate_limits.rs:61-66): trim, lower-case, empty falls back to `codex`.
+    // The fallback matters twice over — it is also the only prefix under which
+    // the limit-name lookup below can find anything.
+    const activeLimit = (failure.headers['x-codex-active-limit'] ?? '').trim().toLowerCase()
+    const limitId = activeLimit || 'codex'
+    // Header names cannot contain '_', so a pool id such as `codex_other`
+    // addresses the `x-codex-other-*` family. This is the prefix rule from
+    // rate_limits.rs:66-67, not a guess — do not re-add a second lookup on the
+    // raw id, it can never match a header upstream actually sends.
+    const limitName = failure.headers[`x-${limitId.replace(/_/g, '-')}-limit-name`]?.trim()
     const resets = error ? error.resets_at : undefined
     return {
       errorType: 'usage_limit_reached',
@@ -1880,22 +1944,36 @@ function classifyHttpFailure(failure: HttpFailure): {
       // place that unit is stated.
       resetsAt: typeof resets === 'number' ? resets : undefined,
       limitId,
-      // The display name lives under a header derived from the pool id. Try
-      // the dashed spelling first because header names cannot contain '_',
-      // then the raw id in case a future pool id is already dash-shaped.
-      limitName: failure.headers[`x-${limitId.replace(/_/g, '-')}-limit-name`] ?? failure.headers[`x-${limitId}-limit-name`],
+      // Empty-string headers are dropped rather than surfaced as a blank
+      // label, matching the filter codex-rs applies at rate_limits.rs:85-87.
+      limitName: limitName || undefined,
     }
   }
-  // A 429 whose body does not say usage_limit_reached is a throttle, not an
-  // exhausted subscription window. Keeping them distinct is the entire point
-  // of this classifier: the app retries one and offers a provider switch for
-  // the other.
+  // Both of these MUST be tested before the generic 429 below. OpenAI delivers
+  // billing exhaustion as a 429, and codex-rs handles `usage_not_included`
+  // inside the very same TOO_MANY_REQUESTS arm (api_bridge.rs:160-161). An
+  // earlier ordering here returned `rate_limited` first and flattened both
+  // into "try again in a moment", which is the opposite of what either means:
+  // neither clears on its own.
+  if (discriminator === 'insufficient_quota') return { errorType: 'quota_exceeded', message }
+  if (discriminator === 'usage_not_included') return { errorType: 'usage_not_included', message }
+  // A 429 whose body names none of the above is a throttle, not an exhausted
+  // subscription window. Keeping them distinct is the entire point of this
+  // classifier: the app retries one and offers a provider switch for the
+  // other.
   if (failure.status === 429) return { errorType: 'rate_limited', message, retryAfterMs }
-  if (type === 'insufficient_quota') return { errorType: 'quota_exceeded', message }
   const sse = classifyResponseFailed(parsed ?? undefined)
-  // Header retry-after only fills in when the body had none — the body is the
-  // more specific signal when upstream bothered to send both.
-  return { errorType: sse.errorType, message: sse.message, retryAfterMs: sse.retryAfterMs ?? retryAfterMs }
+  return {
+    errorType: sse.errorType,
+    // With no `error` object there was nothing for the SSE classifier to read,
+    // and its no-op message ('response.failed event received') is a lie here —
+    // this failure never involved an SSE frame. Keep the status line, which at
+    // least tells the reader what happened.
+    message: error ? sse.message : message,
+    // Header retry-after only fills in when the body had none — the body is
+    // the more specific signal when upstream bothered to send both.
+    retryAfterMs: sse.retryAfterMs ?? retryAfterMs,
+  }
 }
 
 /** Best-effort retry-after extraction. Upstream sometimes puts it in

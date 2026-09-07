@@ -527,14 +527,21 @@ export type SemanticApiErrorEvent = {
    *  untranslated so a consumer comparing it against another provider's
    *  payload knows exactly which representation it holds. */
   resetsAt?: number
-  /** For `usage_limit_reached`: which limit pool was exhausted, from the
-   *  `x-codex-active-limit` header (e.g. `codex`). Present because an account
-   *  can hold several pools and only one of them being empty is the difference
-   *  between "wait" and "switch". */
+  /** For `usage_limit_reached`: which limit pool was exhausted. Present
+   *  because an account can hold several pools and only one of them being
+   *  empty is the difference between "wait" and "switch".
+   *
+   *  This is the `x-codex-active-limit` header value, trimmed and
+   *  lower-cased, falling back to `codex` when the header is absent — it is
+   *  NOT codex's own `normalize_limit_id` form
+   *  (rate_limits.rs:270-272), which additionally rewrites `-` to `_`. A
+   *  consumer joining this against a codex-emitted `limit_id` must normalize
+   *  the separator itself; nothing here rewrites separators, so a value that
+   *  arrives as `codex_other` is reported as `codex_other`. */
   limitId?: string
-  /** For `usage_limit_reached`: the pool's human-facing name, from the
-   *  matching `x-<limitId>-limit-name` header. Display only — never branch on
-   *  it, upstream is free to reword it. */
+  /** For `usage_limit_reached`: the pool's human-facing name, read from
+   *  `x-<limitId with _ as ->-limit-name`. Display only — never branch on it,
+   *  upstream is free to reword it. */
   limitName?: string
   /** Convenience flag: `errorType === 'server_overloaded'`. */
   isOverloaded?: boolean
@@ -624,6 +631,12 @@ export type SemanticProviderRequestEvent = {
     | 'upstream-error'
     | 'watchdog-timeout'
     | 'adapter-detached'
+    /** Upstream answered with a non-2xx status and the adapter classified the
+     *  buffered error document. Distinct from 'response-error', which means
+     *  the socket broke while bytes were in flight — one is a server verdict,
+     *  the other is a transport fault, and a request-outcome census that
+     *  cannot separate them is measuring nothing useful. */
+    | 'http-error'
   selected?: boolean
   /** Presence of x-openai-subagent; absence does not prove a root request. */
   subagentHeaderPresent: boolean

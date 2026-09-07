@@ -312,15 +312,22 @@ function defaultUpstreamFor(authMode: CodexAuthMode): string {
     : 'https://api.openai.com/v1'
 }
 
-// Rate-limit telemetry headers, matched by shape rather than by an exact
-// list. Observed names are vendor-prefixed with the pool the account is billed
-// against — `x-codex-primary-used-percent`,
-// `x-codex-secondary-reset-after-seconds`, `x-codex-limit-name` — so the
-// vendor segment is the part most likely to differ for an account on a
-// different product. Matching `x-<anything>-<window>-<metric>` keeps a new
-// prefix working, while the fixed tail means the pattern can only ever admit
-// headers whose own name says "this is a limit window".
-const RATE_LIMIT_HEADER = /^x-.+-(?:primary|secondary)-(?:used-percent|reset-after-seconds|window-minutes)$|^x-.+-limit-name$/
+// Rate-limit telemetry headers. The names are not guessed: codex-rs builds
+// them at vendor/codex-src/codex-rs/codex-api/src/rate_limits.rs:67-84 as
+// `x-<limit>-primary-used-percent`, `-primary-window-minutes`,
+// `-primary-reset-at`, the same three for `secondary`, and
+// `x-<limit>-limit-name`. That file is the authority for this list — an
+// earlier draft of this allowlist invented `-reset-after-seconds`, a header
+// upstream has never sent, and so forwarded nothing at all.
+//
+// WHY the `<limit>` segment is a wildcard rather than a literal `codex`: the
+// same source derives the prefix from the server-provided metered limit id
+// (`codex`, `codex_other`, ...), and its own tests exercise prefixes like
+// `x-codex-bengalfox-*` (rate_limits.rs:336-340), so an account on a
+// different pool sends a different prefix. The fixed tail is what keeps the
+// pattern honest — it can only ever admit a header whose own name says "this
+// is a limit window".
+const RATE_LIMIT_HEADER = /^x-.+-(?:primary|secondary)-(?:used-percent|reset-at|window-minutes)$|^x-.+-limit-name$/
 
 /** Narrow an upstream response's headers to the rate-limit subset that the
  *  semantic adapter needs to classify a 429.
@@ -331,8 +338,8 @@ const RATE_LIMIT_HEADER = /^x-.+-(?:primary|secondary)-(?:used-percent|reset-aft
  *  recording. Upstream replies carry set-cookie, request ids and account
  *  identifiers that no consumer of this event reads. The pool identity
  *  (`x-codex-active-limit`) and the window telemetry are the only things the
- *  429 body cannot supply on its own — codex-api/src/api_bridge.rs reads the
- *  same header to decide which limit was hit. */
+ *  429 body cannot supply on its own — codex-api/src/api_bridge.rs:136 reads
+ *  the same header to decide which limit was hit. */
 export function pickRateLimitHeaders(headers: Headers): Record<string, string> {
   const picked: Record<string, string> = {}
   headers.forEach((value, key) => {
