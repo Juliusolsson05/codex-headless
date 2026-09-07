@@ -312,6 +312,48 @@ function defaultUpstreamFor(authMode: CodexAuthMode): string {
     : 'https://api.openai.com/v1'
 }
 
+// Rate-limit telemetry headers. The names are not guessed: codex-rs builds
+// them at vendor/codex-src/codex-rs/codex-api/src/rate_limits.rs:67-84 as
+// `x-<limit>-primary-used-percent`, `-primary-window-minutes`,
+// `-primary-reset-at`, the same three for `secondary`, and
+// `x-<limit>-limit-name`. That file is the authority for this list — an
+// earlier draft of this allowlist invented `-reset-after-seconds`, a header
+// upstream has never sent, and so forwarded nothing at all.
+//
+// WHY the `<limit>` segment is a wildcard rather than a literal `codex`: the
+// same source derives the prefix from the server-provided metered limit id
+// (`codex`, `codex_other`, ...), and its own tests exercise prefixes like
+// `x-codex-bengalfox-*` (rate_limits.rs:336-340), so an account on a
+// different pool sends a different prefix. The fixed tail is what keeps the
+// pattern honest — it can only ever admit a header whose own name says "this
+// is a limit window".
+const RATE_LIMIT_HEADER = /^x-.+-(?:primary|secondary)-(?:used-percent|reset-at|window-minutes)$|^x-.+-limit-name$/
+
+/** Narrow an upstream response's headers to the rate-limit subset that the
+ *  semantic adapter needs to classify a 429.
+ *
+ *  WHY an allowlist and not the whole header bag: the `response` event is
+ *  consumed by the semantic layer and mirrored into debug bundles, so every
+ *  header forwarded here is a header that can end up in a shareable
+ *  recording. Upstream replies carry set-cookie, request ids and account
+ *  identifiers that no consumer of this event reads. The pool identity
+ *  (`x-codex-active-limit`) and the window telemetry are the only things the
+ *  429 body cannot supply on its own — codex-api/src/api_bridge.rs:136 reads
+ *  the same header to decide which limit was hit. */
+export function pickRateLimitHeaders(headers: Headers): Record<string, string> {
+  const picked: Record<string, string> = {}
+  headers.forEach((value, key) => {
+    // Normalize to lower case so the adapter can index by literal name.
+    // Node's fetch already lower-cases, but a future undici/Headers swap or a
+    // hand-built Headers in a test must not change how the adapter reads it.
+    const lower = key.toLowerCase()
+    if (lower === 'x-codex-active-limit' || lower === 'retry-after' || RATE_LIMIT_HEADER.test(lower)) {
+      picked[lower] = value
+    }
+  })
+  return picked
+}
+
 export class ResponsesProxy extends EventEmitter {
   private server: Server | null = null
   readonly info: CodexResponsesProxyInfo
@@ -791,6 +833,12 @@ export class ResponsesProxy extends EventEmitter {
       requestId,
       path: originalUrl,
       status: upstreamRes.status,
+      // WHY only rate-limit headers travel on the event: the adapter must
+      // classify a 429 body against the active limit pool, and the pool
+      // identity lives in headers, not the body (codex-api/src/api_bridge.rs
+      // reads x-codex-active-limit). Forwarding every header would put auth
+      // and request ids into the semantic stream for no consumer.
+      headers: pickRateLimitHeaders(upstreamRes.headers),
     })
 
     if (!upstreamRes.body) {

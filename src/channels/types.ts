@@ -495,7 +495,15 @@ export type SemanticApiErrorEvent = {
   /** One of: `context_window_exceeded`, `quota_exceeded`,
    *  `usage_not_included`, `server_overloaded`, `invalid_request`,
    *  `retryable`, or `stream` for the generic fallback. Matches the
-   *  ApiError variants in codex-api/src/error.rs. */
+   *  ApiError variants in codex-api/src/error.rs.
+   *
+   *  `usage_limit_reached` and `rate_limited` come from the HTTP layer, not
+   *  from an SSE frame, so they have no codex-api counterpart. WHY they are
+   *  two members and not one: an exhausted subscription window
+   *  (`usage_limit_reached`, with `resetsAt`) is not retryable in any useful
+   *  sense — the answer is to wait hours or switch provider — while a plain
+   *  429 clears in seconds. Both used to be classified `retryable`, which
+   *  made the two indistinguishable to any consumer. */
   errorType:
     | 'context_window_exceeded'
     | 'quota_exceeded'
@@ -504,6 +512,8 @@ export type SemanticApiErrorEvent = {
     | 'invalid_request'
     | 'retryable'
     | 'stream'
+    | 'usage_limit_reached'
+    | 'rate_limited'
   message: string
   /** For `retryable`: the server-suggested delay in milliseconds if
    *  present on the upstream error. Parsed from the `Retry-After`-style
@@ -511,6 +521,28 @@ export type SemanticApiErrorEvent = {
   retryAfterMs?: number
   /** HTTP status when available (upstream transport errors). */
   status?: number
+  /** For `usage_limit_reached`: when the exhausted window reopens, in UNIX
+   *  SECONDS as upstream sends it (`error.resets_at`). Deliberately not
+   *  milliseconds and not an ISO string — the value is passed through
+   *  untranslated so a consumer comparing it against another provider's
+   *  payload knows exactly which representation it holds. */
+  resetsAt?: number
+  /** For `usage_limit_reached`: which limit pool was exhausted. Present
+   *  because an account can hold several pools and only one of them being
+   *  empty is the difference between "wait" and "switch".
+   *
+   *  This is the `x-codex-active-limit` header value, trimmed and
+   *  lower-cased, falling back to `codex` when the header is absent — it is
+   *  NOT codex's own `normalize_limit_id` form
+   *  (rate_limits.rs:270-272), which additionally rewrites `-` to `_`. A
+   *  consumer joining this against a codex-emitted `limit_id` must normalize
+   *  the separator itself; nothing here rewrites separators, so a value that
+   *  arrives as `codex_other` is reported as `codex_other`. */
+  limitId?: string
+  /** For `usage_limit_reached`: the pool's human-facing name, read from
+   *  `x-<limitId with _ as ->-limit-name`. Display only — never branch on it,
+   *  upstream is free to reword it. */
+  limitName?: string
   /** Convenience flag: `errorType === 'server_overloaded'`. */
   isOverloaded?: boolean
   source: SemanticSource
@@ -599,6 +631,12 @@ export type SemanticProviderRequestEvent = {
     | 'upstream-error'
     | 'watchdog-timeout'
     | 'adapter-detached'
+    /** Upstream answered with a non-2xx status and the adapter classified the
+     *  buffered error document. Distinct from 'response-error', which means
+     *  the socket broke while bytes were in flight — one is a server verdict,
+     *  the other is a transport fault, and a request-outcome census that
+     *  cannot separate them is measuring nothing useful. */
+    | 'http-error'
   selected?: boolean
   /** Presence of x-openai-subagent; absence does not prove a root request. */
   subagentHeaderPresent: boolean
