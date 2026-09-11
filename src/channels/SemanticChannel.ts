@@ -704,6 +704,8 @@ export class SemanticChannel extends EventEmitter {
   }
 
   publishApiError(params: {
+    requestId?: string
+    rateLimitReachedType?: SemanticApiErrorEvent['rateLimitReachedType']
     turnId: string | null
     errorType: SemanticApiErrorEvent['errorType']
     message: string
@@ -721,6 +723,8 @@ export class SemanticChannel extends EventEmitter {
   }): void {
     const ev: SemanticApiErrorEvent = {
       type: 'api_error',
+      requestId: params.requestId,
+      rateLimitReachedType: params.rateLimitReachedType,
       turnId: params.turnId,
       errorType: params.errorType,
       message: params.message,

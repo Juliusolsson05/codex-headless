@@ -481,6 +481,16 @@ export type SemanticStreamErrorEvent = {
   ts: number
 }
 
+/** Source profile: codex-rs/protocol/src/protocol.rs at 47ca4619.
+ * Unknown backend reasons remain absent: treating a future reason as ordinary
+ * usage exhaustion would offer a reset or owner action the backend never proved. */
+export type RateLimitReachedType =
+  | 'rate_limit_reached'
+  | 'workspace_owner_credits_depleted'
+  | 'workspace_member_credits_depleted'
+  | 'workspace_owner_usage_limit_reached'
+  | 'workspace_member_usage_limit_reached'
+
 /** Hard API-level failure. Port of codex-rs's ApiError classification
  *  from codex-api/src/error.rs:14-32. The `errorType` values are
  *  stable identifiers suitable for UI branching — NOT human-readable
@@ -491,6 +501,12 @@ export type SemanticStreamErrorEvent = {
  *  else might reconstruct an error later. */
 export type SemanticApiErrorEvent = {
   type: 'api_error'
+  /** Local proxy correlation, not an upstream tracking header. Scope by proxy
+   * instance/session run: two failed attempts can have identical text and time,
+   * while redelivery of one attempt must retain its identity. */
+  requestId?: string
+  /** Validated workspace cap/credit reason, when supplied by the backend. */
+  rateLimitReachedType?: RateLimitReachedType
   turnId: string | null
   /** One of: `context_window_exceeded`, `quota_exceeded`,
    *  `usage_not_included`, `server_overloaded`, `invalid_request`,
