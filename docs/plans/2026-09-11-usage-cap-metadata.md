@@ -1,6 +1,6 @@
 # Preserve usage-cap reasons and request identity
 
-Status: implementation authorized. Issue: #49; consumer: Juliusolsson05/agent-code#885.
+Status: implemented and locally verified. Issue: #49; consumer: Juliusolsson05/agent-code#885.
 
 The existing API error distinguishes hard usage caps from temporary throttling,
 but drops the workspace reason and local proxy request ID. Preserve both as
@@ -21,3 +21,7 @@ redelivery without combining separate failed attempts.
 Source profile: openai/codex 47ca4619be10c20c1cec6ee9944738c5b961fa1d,
 codex-rs/{codex-api/src/api_bridge.rs,protocol/src/protocol.rs}. No new transport,
 upstream tracking headers, native transcript writes, or automatic recovery.
+
+Verification: 16 focused HTTP-failure tests pass; `npm run check` passes
+(test contract, typecheck, 212 tests, build and packed-artifact verification).
+Fixtures are source-derived; no live cap was manufactured.

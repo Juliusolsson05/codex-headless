@@ -868,6 +868,10 @@ export class CodexResponsesAdapter {
           // response.created, so no `resp_...` id exists to attach to. The
           // consumer keys this off the session, not the turn.
           turnId: flow.responseId,
+          // The proxy already names every attempt. Reuse that identity instead
+          // of requiring consumers to dedupe by timestamps or error prose.
+          requestId: flow.requestId,
+          rateLimitReachedType: classified.rateLimitReachedType,
           errorType: classified.errorType,
           message: classified.message,
           retryAfterMs: classified.retryAfterMs,
@@ -1873,6 +1877,21 @@ function classifyResponseFailed(
   return { errorType: 'retryable', message, retryAfterMs: retryAfter }
 }
 
+function parseRateLimitReachedType(value: unknown): SemanticApiErrorEvent['rateLimitReachedType'] {
+  // Match the upstream enum exactly. Do not normalize unknown values into an
+  // owner/member role: those roles determine which recovery action is possible.
+  switch (value) {
+    case 'rate_limit_reached':
+    case 'workspace_owner_credits_depleted':
+    case 'workspace_member_credits_depleted':
+    case 'workspace_owner_usage_limit_reached':
+    case 'workspace_member_usage_limit_reached':
+      return value
+    default:
+      return undefined
+  }
+}
+
 /** Port of the TransportError::Http arm of
  *  vendor/codex-src/codex-rs/codex-api/src/api_bridge.rs:133-168. Runs on
  *  buffered non-2xx bodies only.
@@ -1885,6 +1904,7 @@ function classifyResponseFailed(
  *  meet at the bottom — anything this function can't distinguish is handed to
  *  the SSE classifier so a body-only error keeps its existing errorType. */
 function classifyHttpFailure(failure: HttpFailure): {
+  rateLimitReachedType?: SemanticApiErrorEvent['rateLimitReachedType']
   errorType: SemanticApiErrorEvent['errorType']
   message: string
   retryAfterMs?: number
@@ -1936,6 +1956,7 @@ function classifyHttpFailure(failure: HttpFailure): {
     const resets = error ? error.resets_at : undefined
     return {
       errorType: 'usage_limit_reached',
+      rateLimitReachedType: parseRateLimitReachedType(failure.headers['x-codex-rate-limit-reached-type']),
       message,
       retryAfterMs,
       // Unix SECONDS, passed through untranslated. Converting to ms or to a

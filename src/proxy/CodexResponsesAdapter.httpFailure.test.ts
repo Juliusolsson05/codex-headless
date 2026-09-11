@@ -46,6 +46,37 @@ function emitFailure(
 }
 
 describe('HTTP failures on /responses', () => {
+  it.each([
+    'rate_limit_reached',
+    'workspace_owner_credits_depleted',
+    'workspace_member_credits_depleted',
+    'workspace_owner_usage_limit_reached',
+    'workspace_member_usage_limit_reached',
+  ])('preserves the source-derived workspace reason %s through the event channel', reason => {
+    const { proxy, semantic } = createRecordedAdapterHarness()
+    const errors: SemanticApiErrorEvent[] = []
+    semantic.on('api_error', event => errors.push(event))
+    const headers = pickRateLimitHeaders(new Headers({ 'x-codex-rate-limit-reached-type': reason }))
+    emitFailure(proxy, 'attempt-a', 429, headers, USAGE_LIMIT_BODY)
+    emitFailure(proxy, 'attempt-b', 429, headers, USAGE_LIMIT_BODY)
+    expect(errors).toMatchObject([
+      { requestId: 'attempt-a', rateLimitReachedType: reason, errorType: 'usage_limit_reached', resetsAt: 1788659183 },
+      { requestId: 'attempt-b', rateLimitReachedType: reason, errorType: 'usage_limit_reached', resetsAt: 1788659183 },
+    ])
+    // Repeated transport completion is not a new failed request.
+    proxy.emit('event', { kind: 'response-end', requestId: 'attempt-b', path: '/v1/responses', bytes: USAGE_LIMIT_BODY.length })
+    expect(errors).toHaveLength(2)
+  })
+
+  it.each([undefined, '', 'future_reason', 'WORKSPACE_OWNER_CREDITS_DEPLETED'])('does not infer a reason from %s', reason => {
+    const { proxy, semantic } = createRecordedAdapterHarness()
+    const errors: SemanticApiErrorEvent[] = []
+    semantic.on('api_error', event => errors.push(event))
+    emitFailure(proxy, 'unknown', 429, reason === undefined ? {} : { 'x-codex-rate-limit-reached-type': reason }, USAGE_LIMIT_BODY)
+    expect(errors[0]).toMatchObject({ requestId: 'unknown', errorType: 'usage_limit_reached' })
+    expect(errors[0].rateLimitReachedType).toBeUndefined()
+  })
+
   it('publishes usage_limit_reached with the active limit and reset time', () => {
     const { proxy, semantic } = createRecordedAdapterHarness()
     const published = vi.spyOn(semantic, 'publishApiError')
@@ -165,6 +196,7 @@ describe('HTTP failures on /responses', () => {
   it('forwards only rate-limit headers on the response event', () => {
     const picked = pickRateLimitHeaders(new Headers({
       'x-codex-active-limit': 'codex',
+      'x-codex-rate-limit-reached-type': 'workspace_member_usage_limit_reached',
       'x-codex-primary-used-percent': '100',
       'x-codex-secondary-reset-at': '1788659183',
       'x-codex-primary-window-minutes': '300',
@@ -183,6 +215,7 @@ describe('HTTP failures on /responses', () => {
       'x-codex-limit-name',
       'x-codex-primary-used-percent',
       'x-codex-primary-window-minutes',
+      'x-codex-rate-limit-reached-type',
       'x-codex-secondary-reset-at',
     ])
   })

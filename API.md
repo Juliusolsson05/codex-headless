@@ -808,6 +808,18 @@ taxonomy.
 | `retryAfterMs?` | `number` | For `retryable`: server-suggested delay. |
 | `status?` | `number` | HTTP status when available. |
 | `isOverloaded?` | `boolean` | Convenience for `errorType === 'server_overloaded'`. |
+| `requestId?` | `string` | Local proxy attempt ID; scope by proxy instance/session run. Present for HTTP failures even when no turn started. |
+| `rateLimitReachedType?` | `RateLimitReachedType` | Validated backend reason for an ordinary limit or workspace owner/member cap/credit exhaustion. Unknown values are omitted. |
+| `resetsAt?` | `number` | Usage-limit reset in Unix **seconds**, unchanged from the backend. |
+| `limitId?`, `limitName?` | `string` | Active pool identity and optional display name. |
+
+HTTP errors also classify `usage_limit_reached` (hard usage cap) and
+`rate_limited` (temporary 429). `RateLimitReachedType` is one of
+`rate_limit_reached`, `workspace_owner_credits_depleted`,
+`workspace_member_credits_depleted`, `workspace_owner_usage_limit_reached`, or
+`workspace_member_usage_limit_reached`. These optional fields do not imply that
+native rollout history persists the error. Only the exact rate-limit header is
+forwarded; upstream request IDs and unrelated response headers remain excluded.
 
 ##### Usage accounting
 

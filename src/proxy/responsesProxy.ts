@@ -347,7 +347,7 @@ export function pickRateLimitHeaders(headers: Headers): Record<string, string> {
     // Node's fetch already lower-cases, but a future undici/Headers swap or a
     // hand-built Headers in a test must not change how the adapter reads it.
     const lower = key.toLowerCase()
-    if (lower === 'x-codex-active-limit' || lower === 'retry-after' || RATE_LIMIT_HEADER.test(lower)) {
+    if (lower === 'x-codex-active-limit' || lower === 'x-codex-rate-limit-reached-type' || lower === 'retry-after' || RATE_LIMIT_HEADER.test(lower)) {
       picked[lower] = value
     }
   })
