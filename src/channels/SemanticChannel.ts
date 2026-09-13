@@ -661,12 +661,15 @@ export class SemanticChannel extends EventEmitter {
     turnId: string
     stopReason: string | null
     isRefusal?: boolean
+    interruption?: SemanticTurnStoppedEvent['interruption']
     source: SemanticSource
     confidence?: SemanticTurnStoppedEvent['confidence']
   }): void {
     const ev: SemanticTurnStoppedEvent = {
       type: 'turn_stopped',
       turnId: params.turnId,
+      // Present only for an adapter-sealed turn; see the type's doc.
+      ...(params.interruption ? { interruption: params.interruption } : {}),
       stopReason: params.stopReason,
       // Default: the `refusal` string is the conventional content-policy
       // refusal signal in recent OpenAI API shapes. Conservative fallback

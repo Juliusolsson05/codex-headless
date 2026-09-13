@@ -767,12 +767,14 @@ settled" signal. Optional fields are populated per-`kind`.
 **`turn_stopped`** → `SemanticTurnStoppedEvent`
 
 Fires when the turn ended with information beyond "done": a rollout
-`turn_aborted`, or a proxy `response.incomplete`.
+`turn_aborted`, a proxy `response.incomplete`, or the host sealing a flow
+that a machine sleep severed (`CodexResponsesAdapter.sealFlowsSilentSince`).
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `type` | `'turn_stopped'` | |
 | `turnId` | `string` | |
+| `interruption?` | `'system-suspended'` | Present only when the adapter, not upstream, stopped the turn because the machine slept. Kept out of `stopReason`, which is upstream's vocabulary. Mirrors `claude-code-headless`. |
 | `stopReason` | `string \| null` | Freeform — codex-rs's `incomplete_details.reason` is a freeform string. Common values: `max_output_tokens`, `content_filter`, `interrupted`. `null` = stream ended without one. |
 | `isRefusal` | `boolean` | Convenience for `stopReason === 'refusal'`. |
 
@@ -1680,6 +1682,7 @@ class CodexResponsesAdapter {
   constructor(proxy: ResponsesProxy, headless: CodexHeadless)
   attach(): void
   detach(): void
+  sealFlowsSilentSince(silentSince: number, interruption: 'system-suspended'): void
 }
 ```
 
@@ -1687,6 +1690,12 @@ class CodexResponsesAdapter {
   watchdog timer. Idempotent.
 - `detach()` — unsubscribes, clears the watchdog, drops all in-flight
   flow bookkeeping.
+- `sealFlowsSilentSince(silentSince, interruption)` — for hosts that
+  learn the machine slept: every flow with no proxy event since
+  `silentSince` is closed. An active turn gets `turn_stopped` with
+  `interruption`, `finishTurn` and phase `idle`; the request is recorded as
+  `cancelled` with cause `system-suspended`. A completed flow waiting on a
+  client tool keeps its `awaiting-tool` phase — the tool was suspended too.
 
 #### What it does
 
@@ -1716,7 +1725,10 @@ class CodexResponsesAdapter {
 
 - A **watchdog** sweeps every 10 s and releases any flow silent for
   more than 60 s — sealing its turn with `confidence: 'fallback'` and
-  freeing the active slot so subsequent turns are not starved.
+  freeing the active slot so subsequent turns are not starved. A sweep
+  that itself runs more than 60 s late (the process was frozen, usually
+  by a machine sleep) defers one tick, so a host's `sealFlowsSilentSince`
+  can close those flows with their real cause first.
 - The decoder is incremental (`StringDecoder`) so a multi-byte
   codepoint split across HTTP chunk boundaries is never corrupted, and
   CRLF line endings are normalized to LF before SSE frame splitting.

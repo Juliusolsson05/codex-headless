@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { StringDecoder } from 'string_decoder'
 import type { CodexHeadless } from '../CodexHeadless.js'
-import type { SemanticApiErrorEvent, SemanticBlockKind, StreamPhase } from '../channels/types.js'
+import type { SemanticApiErrorEvent, SemanticBlockKind, SemanticTurnStoppedEvent, StreamPhase } from '../channels/types.js'
 import type { ResponsesProxy } from './responsesProxy.js'
 import { fingerprintProviderSession } from '../transcript/ProviderSessionFingerprint.js'
 
@@ -478,6 +478,10 @@ export class CodexResponsesAdapter {
   // WATCHDOG_STALE_MS, and forcibly releases them. Armed in
   // attach(), cleared in detach().
   private watchdogTimer: ReturnType<typeof setInterval> | null = null
+  // When the watchdog last ran. A run that arrives far later than its interval
+  // means the process was frozen (the machine slept), and every flow looks
+  // stale at that moment for the same reason — see runWatchdog.
+  private lastWatchdogRunAt: number | null = null
 
   constructor(proxy: ResponsesProxy, headless: CodexResponsesAdapterHeadless) {
     this.proxy = proxy
@@ -511,6 +515,7 @@ export class CodexResponsesAdapter {
       }
     }, WATCHDOG_INTERVAL_MS)
     this.watchdogTimer.unref?.()
+    this.lastWatchdogRunAt = Date.now()
   }
 
   detach(): void {
@@ -586,7 +591,8 @@ export class CodexResponsesAdapter {
       | 'upstream-error'
       | 'watchdog-timeout'
       | 'adapter-detached'
-      | 'http-error',
+      | 'http-error'
+      | 'system-suspended',
   ): void {
     if (flow.requestTerminalObserved) return
     flow.requestTerminalObserved = true
@@ -988,6 +994,17 @@ export class CodexResponsesAdapter {
   // called startTurn, so there's nothing to seal.
   private runWatchdog(): void {
     const now = Date.now()
+    const previousRunAt = this.lastWatchdogRunAt
+    this.lastWatchdogRunAt = now
+    // A tick this late means the interval could not fire: the process was
+    // frozen, almost always because the machine slept (#963). Every flow is
+    // "silent" for the same reason, so releasing now would close a slept-through
+    // turn as an anonymous watchdog timeout — the host could no longer tell the
+    // user it was interrupted by sleep, and a stream that survived the sleep
+    // would be cut before it can deliver its next chunk. Defer exactly one tick:
+    // the host's suspension notice (sealFlowsSilentSince) arrives in the
+    // meantime, and without one the next tick releases as before.
+    if (previousRunAt !== null && now - previousRunAt > WATCHDOG_STALE_MS) return
     const staleFlows: FlowState[] = []
     for (const flow of this.flows.values()) {
       if (now - flow.lastEventAt > WATCHDOG_STALE_MS) {
@@ -1017,6 +1034,57 @@ export class CodexResponsesAdapter {
         this.activeFlowId = null
       }
       this.publishRequestTerminal(flow, 'cancelled', 'watchdog-timeout')
+      this.flows.delete(flow.flowId)
+    }
+  }
+
+  /** Seal every flow that has had no proxy event since `silentSince` (#963).
+   *
+   *  WHY this exists: when the machine sleeps, the stream's connection dies with
+   *  it. The watchdog would eventually release such a flow, but as an anonymous
+   *  timeout, and without publishing `idle` — so a pane sitting in
+   *  `awaiting-tool` or any phase the `turn_completed` bridge refuses to leave kept
+   *  its pre-sleep clock. The host calls this as soon as it learns the machine was
+   *  suspended, passing the moment the suspension began.
+   *
+   *  WHY immediately (unlike Claude's host grace period): a Codex retry cannot
+   *  claim the active slot while a dead flow still holds it — follow-ups are
+   *  demoted to secondary until the slot is released — so waiting would only
+   *  delay the retry.
+   *
+   *  Only flows silent for the WHOLE window are touched; any event after the
+   *  suspension began proves the stream survived. A completed flow (a client tool
+   *  is running, phase `awaiting-tool`) has no open turn and is dropped without a
+   *  phase change: the tool's process was suspended too and usually completes. */
+  sealFlowsSilentSince(
+    silentSince: number,
+    interruption: NonNullable<SemanticTurnStoppedEvent['interruption']>,
+  ): void {
+    for (const flow of [...this.flows.values()]) {
+      if (flow.lastEventAt > silentSince) continue
+      const isActive = this.activeFlowId === flow.flowId
+      if (isActive && flow.turnOpened && flow.responseId) {
+        this.headless.semantic.publishTurnStopped({
+          turnId: flow.responseId,
+          stopReason: null,
+          interruption,
+          source: 'proxy',
+          confidence: 'medium',
+        })
+        this.headless.semantic.finishTurn({
+          turnId: flow.responseId,
+          fullText: flow.fullText || undefined,
+          source: 'proxy',
+          confidence: 'fallback',
+        })
+        flow.turnOpened = false
+      }
+      if (isActive) {
+        // Publish before releasing: publishPhase only speaks for the active flow.
+        this.publishPhase(flow, 'idle')
+        this.activeFlowId = null
+      }
+      this.publishRequestTerminal(flow, 'cancelled', 'system-suspended')
       this.flows.delete(flow.flowId)
     }
   }
