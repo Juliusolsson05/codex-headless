@@ -447,6 +447,12 @@ export type SemanticBlockCompletedEvent = SemanticBlockRef & {
 export type SemanticTurnStoppedEvent = {
   type: 'turn_stopped'
   turnId: string
+  /** Why the adapter, not upstream, stopped this turn, when it knows.
+   *  `'system-suspended'`: the machine slept and the stream's connection died
+   *  with it (see `CodexResponsesAdapter.sealFlowsSilentSince`). Kept apart from
+   *  `stopReason`, which is upstream's own vocabulary; mirrors
+   *  claude-code-headless so hosts handle both providers with one rule. */
+  interruption?: 'system-suspended'
   stopReason: string | null
   /** Convenience flag when stopReason indicates a content-policy
    *  refusal. Saves the renderer from hardcoding the value. */
@@ -647,6 +653,11 @@ export type SemanticProviderRequestEvent = {
     | 'upstream-error'
     | 'watchdog-timeout'
     | 'adapter-detached'
+    /** The host reported the machine slept and this flow had no event since the
+     *  suspension began, so its connection is gone (#963 in agent-code; see
+     *  `CodexResponsesAdapter.sealFlowsSilentSince`). Distinct from
+     *  'watchdog-timeout', which cannot tell a sleep from a stalled stream. */
+    | 'system-suspended'
     /** Upstream answered with a non-2xx status and the adapter classified the
      *  buffered error document. Distinct from 'response-error', which means
      *  the socket broke while bytes were in flight — one is a server verdict,
