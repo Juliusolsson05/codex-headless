@@ -63,9 +63,21 @@ it('reads the composer as empty again after Ctrl+C clears the draft', async () =
 // the hint row. Cells alone read that as an empty composer; an empty-only
 // caller would write into an exiting process.
 it('never reads the quit frame as empty', async () => {
-  const exit = recording.events.find(event => event.dir === 'exit')!.t
-  const terminal = await replayUntil(exit)
+  // Cut right after the paint that shows `› Shutting down...` (#54 review
+  // round 2 B: the exit event comes after the screen was cleared).
+  const quit = recording.events.find(event => event.dir === 'out' && event.data!.includes('Shutting down'))!.t
+  const terminal = await replayUntil(quit + 1)
+  expect(terminal.snapshotPlain()).toContain('› Shutting down...')
   expect(classifyCodexComposerState(terminal.snapshotComposerCells())).not.toBe('empty')
+})
+
+// #54 review round 2 (A, B, C): the status row carries the cwd, which is
+// user-controlled, so a hint word in it must never count as Codex's hint.
+it('never takes a hint from the cwd in the status row', () => {
+  const status = (cwd: string) => row(`  GPT-6-Sol high fast · ${cwd}`)
+  expect(classifyCodexComposerState([row('  [Image #1]'), row(''), row('› Ask Codex to do anything', true), row(''), status('~/for shortcuts')])).toBe('unknown')
+  expect(classifyCodexComposerState([row('› Shutting down...', true), row(''), status('~/for shortcuts')])).toBe('unknown')
+  expect(classifyCodexComposerState([row('› Ask Codex to do anything', true), row(''), status('~/to queue message'), row('  ← for agents · ? for shortcuts')])).toBe('empty')
 })
 
 const row = (text: string, dim = false) => ({ text, cells: [...text].filter(c => c.trim()).map(chars => ({ chars, dim })) })

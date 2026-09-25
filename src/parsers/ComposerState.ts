@@ -15,11 +15,12 @@
  * directly above a blank row and the provider's footer, so any other shape is
  * `unknown`, never `empty` and never `drafted`.
  *
- * Callers must treat `unknown` as "cannot verify": it is NOT a refusal
- * signal for normal delivery (a false occupied blocks every prompt; the Claude
- * gate latched that way for 186 s once), and NOT consent where an empty
- * composer is required. Only `empty` is consent, and `empty` requires Codex's
- * own empty-composer hint (see EMPTY_HINT); `drafted` is the only occupancy.
+ * Callers must treat `unknown` as "cannot verify" and map it to NEITHER
+ * side: it is not occupancy (a false occupied blocks every prompt; the Claude
+ * gate latched that way for 186 s once), and it is not ready or consent
+ * either (#54 review C: a Claude-style "anything else is ready" fall-through
+ * would drop real drafts). Only `empty` is consent, and it requires Codex's
+ * own empty-composer hint (EMPTY_HINT_ROW); only `drafted` is occupancy.
  */
 
 export type CodexComposerState = 'empty' | 'drafted' | 'unknown'
@@ -55,8 +56,16 @@ const MAX_COMPOSER_ROWS = 12
  * chat_composer.rs:1128). No hint (quit, a narrow pane that dropped it, a
  * draft) is never `empty`.
  */
-const EMPTY_HINT = /\bfor shortcuts\b/u
-const QUEUE_HINT = /\bto queue(?: message)?\b/u
+//
+// WHY anchored to the START of a hint row, never searched in the status row
+// (#54 review round 2, A, B and C): the status row carries the cwd, which is
+// user-controlled. A folder named `for shortcuts` forged `empty` over an
+// attached image, and one named `to queue message` forged `drafted`. The
+// hints are the LEFT side of the footer row below the status row (0.157), or
+// the queue row itself (0.149.1); the right side is Codex's context (e.g.
+// "⚠ 1 warning · f2 to view").
+const EMPTY_HINT_ROW = /^ {2}(?:\S+ for agents · )?\S+ for shortcuts\b/u
+const QUEUE_HINT_ROW = /^ {2}\S+ to queue(?: message)?\b/u
 
 export function classifyCodexComposerState(rows: ReadonlyArray<ComposerCellRow> | null): CodexComposerState {
   if (!rows || rows.length === 0) return 'unknown'
@@ -94,7 +103,10 @@ export function classifyCodexComposerState(rows: ReadonlyArray<ComposerCellRow> 
       if (!cell.dim) return 'drafted'
     }
   }
-  // Codex offers "tab to queue" only for a draft while a turn runs.
-  if (footer.some(row => QUEUE_HINT.test(row))) return 'drafted'
-  return footer.some(row => EMPTY_HINT.test(row)) ? 'empty' : 'unknown'
+  // Codex offers "tab to queue" only for a draft while a turn runs. The
+  // footer head is either the status row (cwd: never searched) or the queue
+  // row; rows below the head are Codex's hint rows.
+  const hintRows = footer.slice(1)
+  if (QUEUE_HINT_ROW.test(footer[0]!) || hintRows.some(row => QUEUE_HINT_ROW.test(row))) return 'drafted'
+  return hintRows.some(row => EMPTY_HINT_ROW.test(row)) ? 'empty' : 'unknown'
 }
