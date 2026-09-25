@@ -11,8 +11,11 @@ Replayed through this package's `HeadlessTerminal`, `classifyCodex01491ComposerS
 ## Change
 `CodexHeadless.getComposerState(): 'empty' | 'drafted' | 'unknown'`, read from the LIVE xterm buffer, not a throttled snapshot:
 - **Anchor:** the bottom-most `›` row within the bottom pane, its continuation rows, then a blank row, then one or two footer rows. The first footer row must be the status shape `  <x> · <y>`, and nothing else may follow. Anything else is `unknown`, so transcript text that begins with `›` cannot pose as the composer.
-- **Classification:** plain (non-dim, non-blank) cells on the composer rows after the marker mean `drafted`. Only dim or blank cells mean `empty`.
-- **Fail closed:** a Vim status suffix on the footer is `unknown`, and an `[Image #n]` attachment label on the composer rows is `drafted`.
+- **Classification (after review round 1):**
+  - `drafted`: plain (non-dim) cells on the composer rows, an `[Image #n]` label on them, or Codex's own "tab to queue message" hint (`ComposerHasDraft` while a task runs).
+  - `empty`: no plain cells AND the footer shows Codex's `? for shortcuts` hint. Codex shows that hint ONLY in `FooterMode::ComposerEmpty`, and its `is_empty()` counts attachments and bash mode (`vendor/codex-src/codex-rs/tui/src/bottom_pane/footer.rs:224-231`, `chat_composer.rs:1128`).
+  - `unknown`: everything else. Dim cells alone are not enough: the quit frame paints `› Shutting down...` dim, and an image attached above the textarea keeps the dim placeholder (#54 review A and C).
+- **Anchor:** the footer head is the status row or, during a turn, the queue row. A Vim atom on either footer row makes the result `unknown`.
 - The 0.149.1 classifier and `PromptInputEvidence` are untouched; they stay version-gated.
 
 ## Tests

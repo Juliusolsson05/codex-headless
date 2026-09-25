@@ -18,7 +18,8 @@
  * Callers must treat `unknown` as "cannot verify": it is NOT a refusal
  * signal for normal delivery (a false occupied blocks every prompt; the Claude
  * gate latched that way for 186 s once), and NOT consent where an empty
- * composer is required.
+ * composer is required. Only `empty` is consent, and `empty` requires Codex's
+ * own empty-composer hint (see EMPTY_HINT); `drafted` is the only occupancy.
  */
 
 export type CodexComposerState = 'empty' | 'drafted' | 'unknown'
@@ -32,6 +33,9 @@ export type ComposerCellRow = {
 
 // `  <model> · <cwd>`, the provider status row; 0.149.1 and 0.157.0 agree.
 const STATUS_ROW = /^ {2}\S.* · .+$/u
+// While a turn runs, the queue hint can take the status row's place (0.149.1
+// recorded case `active-footer-tab-queue`; upstream footer.rs QueueMessage).
+const QUEUE_ROW = /^ {2}\S+ to queue(?: message)?\b/u
 // A Vim status atom means the key semantics of the composer changed under us.
 const VIM_STATUS_SUFFIX = / {2,}Vim: (?:Insert|Normal)$/u
 const MARKER_ROW = /^›(?: |$)/u
@@ -39,21 +43,38 @@ const MARKER_ROW = /^›(?: |$)/u
 // multi-line draft, but a marker further up is transcript, not composer.
 const MAX_COMPOSER_ROWS = 12
 
+/**
+ * WHY `empty` needs Codex's own word for it (#54 review A, C): dim cells are
+ * not enough. The quit frame paints `› Shutting down...` dim, and an image
+ * attached above the textarea leaves the dim placeholder in place; both read
+ * "empty" from cells alone, and an empty-only caller would then write into an
+ * exiting process or submit an image it never saw. Codex shows the
+ * `? for shortcuts` hint ONLY in `FooterMode::ComposerEmpty`, and its
+ * `is_empty()` already counts attachments and bash mode
+ * (vendor/codex-src/codex-rs/tui/src/bottom_pane/footer.rs:224-231,
+ * chat_composer.rs:1128). No hint (quit, a narrow pane that dropped it, a
+ * draft) is never `empty`.
+ */
+const EMPTY_HINT = /\bfor shortcuts\b/u
+const QUEUE_HINT = /\bto queue(?: message)?\b/u
+
 export function classifyCodexComposerState(rows: ReadonlyArray<ComposerCellRow> | null): CodexComposerState {
   if (!rows || rows.length === 0) return 'unknown'
   const text = rows.map(row => row.text.replace(/[ \t]+$/u, ''))
   const blank = (index: number) => (text[index] ?? '').trim() === ''
+  const footerHead = (index: number) => STATUS_ROW.test(text[index] ?? '') || QUEUE_ROW.test(text[index] ?? '')
   let last = text.length - 1
   while (last >= 0 && blank(last)) last -= 1
   if (last < 1) return 'unknown'
 
-  // The footer is the status row, optionally followed by ONE more provider
-  // row (0.157: shortcut hints and warnings). Nothing else may follow it.
+  // The footer is the status (or queue) row, optionally followed by ONE more
+  // provider row (0.157: hints and warnings). Nothing else may follow it.
   let status: number
-  if (STATUS_ROW.test(text[last]!) && blank(last - 1)) status = last
-  else if (!blank(last - 1) && STATUS_ROW.test(text[last - 1]!) && blank(last - 2)) status = last - 1
+  if (footerHead(last) && blank(last - 1)) status = last
+  else if (!blank(last - 1) && footerHead(last - 1) && blank(last - 2)) status = last - 1
   else return 'unknown'
-  if (VIM_STATUS_SUFFIX.test(text[status]!)) return 'unknown'
+  const footer = text.slice(status, last + 1)
+  if (footer.some(row => VIM_STATUS_SUFFIX.test(row))) return 'unknown'
 
   const separator = status - 1
   let marker = -1
@@ -73,5 +94,7 @@ export function classifyCodexComposerState(rows: ReadonlyArray<ComposerCellRow> 
       if (!cell.dim) return 'drafted'
     }
   }
-  return 'empty'
+  // Codex offers "tab to queue" only for a draft while a turn runs.
+  if (footer.some(row => QUEUE_HINT.test(row))) return 'drafted'
+  return footer.some(row => EMPTY_HINT.test(row)) ? 'empty' : 'unknown'
 }

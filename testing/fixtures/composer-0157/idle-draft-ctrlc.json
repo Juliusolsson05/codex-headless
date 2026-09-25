@@ -1,5 +1,5 @@
 {
- "source": "Raw PTY stream of codex-cli 0.157.0 (100x30), recorded 2026-09-25 with node-pty in a trusted repo: idle start, a typed draft (no Enter, no model request), Ctrl+C twice. Home directory name redacted with a same-length string so cursor positions are unchanged.",
+ "source": "Raw PTY stream of codex-cli 0.157.0 (100x30), recorded 2026-09-25 with node-pty in a trusted repo: idle start, a typed draft (no Enter, no model request), Ctrl+C twice. Home directory name and the session id in the exit text redacted with same-length strings so cursor positions are unchanged.",
  "codexVersion": "0.157.0",
  "cols": 100,
  "rows": 30,
@@ -580,7 +580,7 @@
   {
    "t": 14488,
    "dir": "out",
-   "data": "Disconnected from this task. Any running work continues.\r\nReconnect: \u001b[36mcodex resume 01a0d94b-636b-7622-b2a2-7bdf97b9f7aa\u001b[39m\r\nStop the current turn: run \u001b[36mcodex agents\u001b[39m, select this task, and press x.\r\n"
+   "data": "Disconnected from this task. Any running work continues.\r\nReconnect: \u001b[36mcodex resume 00000000-0000-7000-8000-000000000000\u001b[39m\r\nStop the current turn: run \u001b[36mcodex agents\u001b[39m, select this task, and press x.\r\n"
   },
   {
    "t": 14494,
