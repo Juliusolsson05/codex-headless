@@ -16,15 +16,21 @@ import { ResponsesProxy } from './responsesProxy.js'
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 
-function mirrorOf(payload: unknown): Record<string, unknown> {
+// The raw mirrored line, so size is measured on what reaches disk.
+function mirrorLineOf(payload: unknown): string {
   const dir = mkdtempSync(join(tmpdir(), 'cxh-mirror-'))
   dirs.push(dir)
   const file = join(dir, 'proxy-events.jsonl')
   const proxy = new ResponsesProxy({} as never, file)
   proxy.emit('event', payload)
-  const lines = readFileSync(file, 'utf8').trim().split('\n')
+  const text = readFileSync(file, 'utf8')
+  const lines = text.split('\n').filter(line => line.length > 0)
   expect(lines).toHaveLength(1)
-  return JSON.parse(lines[0]!) as Record<string, unknown>
+  return lines[0]!
+}
+
+function mirrorOf(payload: unknown): Record<string, unknown> {
+  return JSON.parse(mirrorLineOf(payload)) as Record<string, unknown>
 }
 
 // A recorded event, field for field (Codex 0.157.0, 2026-09-25): 204 bytes
@@ -42,8 +48,34 @@ it('inlines a recorded chunk as base64 that round-trips its bytes', () => {
   const chunk = line.chunk as { _buffer_b64?: string }
   expect(chunk._buffer_b64).toBeDefined()
   expect(Buffer.from(chunk._buffer_b64!, 'base64').toString('utf8')).toBe('event: response.created\n')
-  // base64 is 4/3 of the payload; the decimal array was about 3.65×.
-  expect(JSON.stringify(chunk).length).toBeLessThan(24 * 4 / 3 + 20)
+})
+
+// #53 review B: a size bound on a 24-byte chunk says nothing about the
+// chunks that fill the file (987 of the first 1,000 recorded ones exceed
+// 24 bytes; median 260, max 16,384). This recorded 2,865-byte chunk was a
+// 10,692-byte line; base64 plus the event fields must stay near 4/3.
+const models = JSON.parse(readFileSync(
+  new URL('../../testing/fixtures/proxy-mirror/models-chunk-2865.json', import.meta.url),
+  'utf8',
+)) as { path: string; size: number; oldMirroredLineBytes: number; base64: string }
+
+it('mirrors a recorded full-size chunk byte-exact at base64 size, measured on the line', () => {
+  const bytes = Buffer.from(models.base64, 'base64')
+  expect(bytes.length).toBe(models.size)
+  const payload = { kind: 'response-chunk', requestId: 'req-2', path: models.path, size: models.size, chunk: bytes }
+  const line = mirrorLineOf(payload)
+  const chunk = (JSON.parse(line) as { chunk: { _buffer_b64: string } }).chunk
+  expect(Buffer.from(chunk._buffer_b64, 'base64').equals(bytes)).toBe(true)
+  const fields = JSON.stringify({ ...payload, chunk: { _buffer_b64: '' } }).length
+  expect(Buffer.byteLength(line + '\n')).toBeLessThanOrEqual(fields + Math.ceil(bytes.length / 3) * 4 + 1)
+  expect(Buffer.byteLength(line)).toBeLessThan(models.oldMirroredLineBytes / 2)
+})
+
+// #53 review A: the replacer handles a Buffer anywhere in an event, not only
+// at `chunk` (API.md promises it for every Buffer payload).
+it('inlines a nested Buffer too', () => {
+  const line = mirrorOf({ kind: 'probe', body: { nested: [Buffer.from([0, 255])] } })
+  expect((line.body as { nested: unknown[] }).nested[0]).toEqual({ _buffer_b64: 'AP8=' })
 })
 
 it('keeps a chunk that splits a UTF-8 character byte-exact', () => {
