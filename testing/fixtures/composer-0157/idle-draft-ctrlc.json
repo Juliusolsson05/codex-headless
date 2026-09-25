@@ -1,0 +1,591 @@
+{
+ "source": "Raw PTY stream of codex-cli 0.157.0 (100x30), recorded 2026-09-25 with node-pty in a trusted repo: idle start, a typed draft (no Enter, no model request), Ctrl+C twice. Home directory name redacted with a same-length string so cursor positions are unchanged.",
+ "codexVersion": "0.157.0",
+ "cols": 100,
+ "rows": 30,
+ "events": [
+  {
+   "t": 37,
+   "dir": "out",
+   "data": "\u001b[?2004h\u001b[>4;0m\u001b[>5u\u001b[?1004h"
+  },
+  {
+   "t": 37,
+   "dir": "out",
+   "data": "\u001b[6n\u001b]10;?\u001b\\\u001b]11;?\u001b\\\u001b[?u\u001b[c"
+  },
+  {
+   "t": 289,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[?25l\u001b[?1049h\u001b[>4;0m\u001b[>5u\u001b[?1007l\u001b[?1000h\u001b[?1002h\u001b[?1006h\u001b[?1003h\u001b[?25l"
+  },
+  {
+   "t": 289,
+   "dir": "out",
+   "data": "\u001b[1;1H"
+  },
+  {
+   "t": 289,
+   "dir": "out",
+   "data": "\u001b[J"
+  },
+  {
+   "t": 290,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[?25l"
+  },
+  {
+   "t": 290,
+   "dir": "out",
+   "data": "\u001b[1;1H\u001b[2m\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\u001b[2;1H\u2502 >_ \u001b[22m\u001b[1mOpenAI Codex\u001b[22m\u001b[2m\u001b[2m (v0.157.0)            \u2502\u001b[3;1H\u2502                                       \u2502\u001b[4;1H\u2502 model:     \u001b[3mloading\u001b[23m   \u001b[22m\u001b[38;2;99;168;248;49m/model\u001b[2m\u001b[39;49m to change \u2502\u001b[5;1H\u2502 directory: \u001b[22mloading\u001b[2m                    \u2502\u001b[6;1H\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f\u001b[27;1H\u001b[22m\u001b[1m\u203a\u001b[27;3H\u001b[22m\u001b[2m\u001b[2mAsk Codex to do anything\u001b[30;3H\u001b[22m\u001b[1m?\u001b[30;5H\u001b[22mfor\u001b[30;9Hshortcuts\u001b[39m\u001b[49m\u001b[0m\u001b[1;1H"
+  },
+  {
+   "t": 290,
+   "dir": "out",
+   "data": "\u001b[0 q\u001b[1;1H\u001b[2m\u256d\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h"
+  },
+  {
+   "t": 291,
+   "dir": "out",
+   "data": "\u001b[?2026l\u001b[?2026l"
+  },
+  {
+   "t": 291,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 293,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h"
+  },
+  {
+   "t": 293,
+   "dir": "out",
+   "data": "\u001b[?2026l"
+  },
+  {
+   "t": 294,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 294,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h"
+  },
+  {
+   "t": 294,
+   "dir": "out",
+   "data": "\u001b[?2026l"
+  },
+  {
+   "t": 301,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 309,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[?25l\u001b[1;41H\u001b[2m\u2500\u2500\u2500\u2500\u2500\u2500\u256e\u001b[2;41H      \u2502\u001b[3;41H      \u2502\u001b[4;41H      \u2502\u001b[5;14H\u001b[22m~/Desktop/Development/agent-code\u001b[2m \u2502\u001b[6;41H\u2500\u2500\u2500\u2500\u2500\u2500\u256f\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 310,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 310,
+   "dir": "out",
+   "data": "\u001b[?1006l\u001b[?1015l\u001b[?1003l\u001b[?1002l\u001b[?1000l\u001b[<1u\u001b[?1007l\u001b[?1049l\u001b[<1u\u001b[>4;0m\u001b[?2004l\u001b[?1004l\u001b[0 q\u001b[?25h"
+  },
+  {
+   "t": 549,
+   "dir": "out",
+   "data": "Installing daemon from CLI version 0.157.0 into /Users/exampleuser1/.codex/packages/app-server-daemon...\r\n"
+  },
+  {
+   "t": 4078,
+   "dir": "out",
+   "data": "\u001b[?2004h\u001b[>4;0m\u001b[>5u\u001b[?1004h\u001b[?25l\u001b[?1049h"
+  },
+  {
+   "t": 4078,
+   "dir": "out",
+   "data": "\u001b[>4;0m\u001b[>5u\u001b[?1007l\u001b[?1000h\u001b[?1002h\u001b[?1006h\u001b[?1003h\u001b[?25l"
+  },
+  {
+   "t": 4078,
+   "dir": "out",
+   "data": "\u001b[1;1H\u001b[J"
+  },
+  {
+   "t": 4079,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[?25l\u001b[1;1H\u001b[2m\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\u001b[2;1H\u2502 >_ \u001b[22m\u001b[1mOpenAI Codex\u001b[22m\u001b[2m\u001b[2m (v0.157.0)                  \u2502\u001b[3;1H\u2502                                             \u2502\u001b[4;1H\u2502 model:     \u001b[3mloading\u001b[23m   \u001b[22m\u001b[38;2;99;168;248;49m/model\u001b[2m\u001b[39;49m to change       \u2502\u001b[5;1H\u2502 directory: \u001b[22m~/Desktop/Development/agent-code\u001b[2m \u2502\u001b[6;1H\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f\u001b[27;1H\u001b[22m\u001b[1m\u203a\u001b[27;3H\u001b[22m\u001b[2m\u001b[2mAsk Codex to do anything\u001b[30;3H\u001b[22m\u001b[1m?\u001b[30;5H\u001b[22mfor\u001b[30;9Hshortcuts\u001b[39m\u001b[49m\u001b[0m\u001b[1;1H\u001b[0 q\u001b[1;1H\u001b[2m\u256d\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 4079,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 4087,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 4092,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 4092,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 4093,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 4098,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 4098,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h"
+  },
+  {
+   "t": 4098,
+   "dir": "out",
+   "data": "\u001b[?2026l"
+  },
+  {
+   "t": 4098,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h"
+  },
+  {
+   "t": 4098,
+   "dir": "out",
+   "data": "\u001b[?2026l"
+  },
+  {
+   "t": 4099,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h"
+  },
+  {
+   "t": 4099,
+   "dir": "out",
+   "data": "\u001b[?2026l"
+  },
+  {
+   "t": 4107,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 4108,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 5095,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 5104,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 5113,
+   "dir": "out",
+   "data": "\u001b]0;agent-code\u0007"
+  },
+  {
+   "t": 5114,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 5114,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[?25l"
+  },
+  {
+   "t": 5114,
+   "dir": "out",
+   "data": "\u001b[25;33H\u001b[1mTip:\u001b[25;38H\u001b[22mUse\u001b[25;42H\u001b[1m/rename\u001b[25;50H\u001b[22mto\u001b[25;53Hrename\u001b[25;60Hyour\u001b[25;65Hthreads\u001b[25;73Hfor\u001b[25;77Heasier\u001b[25;84Hthread\u001b[25;91Hresuming.\u001b[29;3H\u001b[38;2;246;226;183;49mGPT-6-Sol default fast\u001b[29;26H\u001b[39;49m\u00b7\u001b[29;28H\u001b[38;2;171;223;167;49m~/Desktop/Development/agent-code\u001b[30;3H\u001b[1m\u001b[39;49m\u2190\u001b[30;9H\u001b[22magen\u001b[30;14Hs \u00b7 \u001b[1m?\u001b[30;20H\u001b[22mfor\u001b[30;24Hshortcuts\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 5124,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 5180,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 5336,
+   "dir": "out",
+   "data": "\u001b]0;\u2839 agent-code\u0007"
+  },
+  {
+   "t": 5380,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[?25l\u001b[29;57H\u001b[0m\u001b[49m\u001b[K\u001b[1;47H\u001b[2m\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\u001b[2;47H        \u2502\u001b[3;47H        \u2502\u001b[4;14H\u001b[22mGPT-6-Sol high   \u001b[38;5;5;49mfast\u001b[2m\u001b[39;49m   \u001b[22m\u001b[38;2;99;168;248;49m/model\u001b[4;45H\u001b[2m\u001b[39;49mto change \u2502\u001b[5;47H        \u2502\u001b[6;47H\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f\u001b[29;13H\u001b[22m\u001b[38;2;246;226;183;49mhigh fast\u001b[39;49m \u00b7 \u001b[38;2;171;223;167;49m~/Desktop/Development/agent-code\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 5380,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 5381,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 5483,
+   "dir": "out",
+   "data": "\u001b]0;\u2838 agent-code\u0007"
+  },
+  {
+   "t": 5500,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 5552,
+   "dir": "out",
+   "data": "\u001b]0;\u283c agent-code\u0007"
+  },
+  {
+   "t": 5552,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 5614,
+   "dir": "out",
+   "data": "\u001b]0;\u2834 agent-code\u0007"
+  },
+  {
+   "t": 5616,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 5717,
+   "dir": "out",
+   "data": "\u001b]0;\u2826 agent-code\u0007"
+  },
+  {
+   "t": 5819,
+   "dir": "out",
+   "data": "\u001b]0;\u2827 agent-code\u0007"
+  },
+  {
+   "t": 5913,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 6015,
+   "dir": "out",
+   "data": "\u001b]0;\u280f agent-code\u0007"
+  },
+  {
+   "t": 6118,
+   "dir": "out",
+   "data": "\u001b]0;\u280b agent-code\u0007"
+  },
+  {
+   "t": 6218,
+   "dir": "out",
+   "data": "\u001b]0;\u2819 agent-code\u0007"
+  },
+  {
+   "t": 6349,
+   "dir": "out",
+   "data": "\u001b]0;\u2839 agent-code\u0007"
+  },
+  {
+   "t": 6350,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h"
+  },
+  {
+   "t": 6350,
+   "dir": "out",
+   "data": "\u001b[?2026l"
+  },
+  {
+   "t": 6451,
+   "dir": "out",
+   "data": "\u001b]0;\u2838 agent-code\u0007"
+  },
+  {
+   "t": 6552,
+   "dir": "out",
+   "data": "\u001b]0;\u283c agent-code\u0007"
+  },
+  {
+   "t": 6653,
+   "dir": "out",
+   "data": "\u001b]0;\u2834 agent-code\u0007"
+  },
+  {
+   "t": 6736,
+   "dir": "out",
+   "data": "\u001b]0;\u2826 agent-code\u0007"
+  },
+  {
+   "t": 6737,
+   "dir": "out",
+   "data": "\u001b]0;agent-code\u0007"
+  },
+  {
+   "t": 6737,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[?25l\u001b[30;76H\u26a0\u001b[30;78H\u001b[38;2;196;167;103;49m1 warning\u001b[30;88H\u001b[39;49m\u00b7\u001b[30;90H\u001b[1mf2\u001b[30;93H\u001b[22mto\u001b[30;96Hview\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H"
+  },
+  {
+   "t": 6737,
+   "dir": "out",
+   "data": "\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 6931,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9006,
+   "dir": "in",
+   "label": "type-draft",
+   "data": "please review the draft"
+  },
+  {
+   "t": 9007,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9007,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[?25l\u001b[25;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;3H \u001b[30;5H   \u001b[30;9H      \u001b[30;16H \u001b[30;18H \u001b[30;20H   \u001b[30;24H         \u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h"
+  },
+  {
+   "t": 9007,
+   "dir": "out",
+   "data": "\u001b[?2026l"
+  },
+  {
+   "t": 9008,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9008,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9008,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9008,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h"
+  },
+  {
+   "t": 9008,
+   "dir": "out",
+   "data": "\u001b[?2026l"
+  },
+  {
+   "t": 9008,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9008,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9008,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9008,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9009,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9009,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9009,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9009,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h"
+  },
+  {
+   "t": 9009,
+   "dir": "out",
+   "data": "\u001b[?2026l"
+  },
+  {
+   "t": 9009,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9009,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9009,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9009,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9009,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9010,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9010,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9010,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9010,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 9030,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[?25l\u001b[27;26H\u001b[0m\u001b[49m\u001b[K\u001b[27;3Hplease review the draft\u001b[39m\u001b[49m\u001b[0m\u001b[27;26H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 13006,
+   "dir": "in",
+   "label": "ctrl-c-1",
+   "data": "\u0003"
+  },
+  {
+   "t": 13007,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;26H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 13008,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[?25l"
+  },
+  {
+   "t": 13008,
+   "dir": "out",
+   "data": "\u001b[25;33H\u001b[1mTip:\u001b[25;38H\u001b[22mUse\u001b[25;42H\u001b[1m/rename\u001b[25;50H\u001b[22mto\u001b[25;53Hrename\u001b[25;60Hyour\u001b[25;65Hthreads\u001b[25;73Hfor\u001b[25;77Heasier\u001b[25;84Hthread\u001b[25;91Hresuming.\u001b[27;3H\u001b[2mAsk Codex to do anything\u001b[30;3H\u001b[22m\u001b[1m\u2190\u001b[30;5H\u001b[22mfor\u001b[30;9Hagents\u001b[30;16H\u00b7\u001b[30;18H\u001b[1m?\u001b[30;20H\u001b[22mfor\u001b[30;24Hshortcuts\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 14006,
+   "dir": "in",
+   "label": "ctrl-c-2",
+   "data": "\u0003"
+  },
+  {
+   "t": 14007,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[27;3H\u001b[?25h\u001b[?2026l"
+  },
+  {
+   "t": 14007,
+   "dir": "out",
+   "data": "\u001b[?2026h\u001b[?25l\u001b[27;19H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[27;1H\u001b[2m\u203a\u001b[27;3HShutting down...\u001b[39m\u001b[49m\u001b[0m\u001b[?2026l"
+  },
+  {
+   "t": 14008,
+   "dir": "out",
+   "data": "\u001b[1;1H\u001b[J"
+  },
+  {
+   "t": 14008,
+   "dir": "out",
+   "data": "\u001b]0;\u0007"
+  },
+  {
+   "t": 14008,
+   "dir": "out",
+   "data": "\u001b[?1006l\u001b[?1015l\u001b[?1003l\u001b[?1002l\u001b[?1000l\u001b[<1u\u001b[?1007l\u001b[?1049l\u001b[<1u\u001b[<u\u001b[>4;0m\u001b[?2004l"
+  },
+  {
+   "t": 14008,
+   "dir": "out",
+   "data": "\u001b[?1004l"
+  },
+  {
+   "t": 14008,
+   "dir": "out",
+   "data": "\u001b[0 q\u001b[?25h"
+  },
+  {
+   "t": 14008,
+   "dir": "out",
+   "data": "\u001b[0 q\u001b[?25h"
+  },
+  {
+   "t": 14488,
+   "dir": "out",
+   "data": "Disconnected from this task. Any running work continues.\r\nReconnect: \u001b[36mcodex resume 01a0d94b-636b-7622-b2a2-7bdf97b9f7aa\u001b[39m\r\nStop the current turn: run \u001b[36mcodex agents\u001b[39m, select this task, and press x.\r\n"
+  },
+  {
+   "t": 14494,
+   "dir": "exit",
+   "code": 0
+  }
+ ]
+}
