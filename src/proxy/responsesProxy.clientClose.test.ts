@@ -101,3 +101,49 @@ it('releases the upstream stream and reports the end when the client closes afte
     'a response-end for the exchange',
   )
 })
+
+// The other two ways an exchange ends must still report exactly ONE transport
+// terminal: the client-close listener fires on every `res` close, including
+// the one after a normal finish or an upstream failure, and a second terminal
+// would contradict the first (#1238 review round 2, R2-1).
+async function replayThroughProxy(finish: (res: import('node:http').ServerResponse) => void) {
+  const upstream: Server = createServer((req, res) => {
+    req.resume()
+    if (req.url !== '/v1/responses') { res.end(); return }
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    for (const chunk of recordedChunks) res.write(chunk)
+    finish(res)
+  })
+  await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve))
+  cleanup.push(() => new Promise<void>(resolve => { upstream.closeAllConnections(); upstream.close(() => resolve()) }))
+  const address = upstream.address()
+  if (!address || typeof address === 'string') throw new Error('upstream did not bind')
+  const proxy = await ResponsesProxy.create({ upstreamBaseUrl: `http://127.0.0.1:${address.port}/v1`, authMode: 'apikey' })
+  cleanup.push(() => proxy.stop())
+  const events: Array<{ kind: string; requestId?: string; downstreamClosed?: boolean }> = []
+  proxy.on('event', event => events.push(event))
+  await new Promise<void>(resolve => {
+    const client = httpRequest(`${proxy.info.proxyBaseUrl}/responses`, { method: 'POST', headers: { 'content-type': 'application/json' } }, res => {
+      res.resume()
+      res.on('end', () => resolve())
+      res.on('error', () => resolve())
+      res.on('close', () => resolve())
+    })
+    client.on('error', () => resolve())
+    client.end('{}')
+  })
+  // Let every late close/error listener run before counting.
+  await new Promise(resolve => setTimeout(resolve, 100))
+  return events.filter(event => ['response-end', 'response-error', 'upstream-error'].includes(event.kind))
+}
+
+it('reports exactly one response-end, not marked downstreamClosed, when the stream finishes normally', async () => {
+  const terminals = await replayThroughProxy(res => res.end())
+  expect(terminals).toEqual([expect.objectContaining({ kind: 'response-end' })])
+  expect(terminals[0]!.downstreamClosed).toBeUndefined()
+})
+
+it('reports only the response-error when upstream fails mid-stream', async () => {
+  const terminals = await replayThroughProxy(res => { setTimeout(() => res.socket?.destroy(), 20) })
+  expect(terminals.map(event => event.kind)).toEqual(['response-error'])
+})
