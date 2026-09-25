@@ -416,11 +416,23 @@ export class ResponsesProxy extends EventEmitter {
         // Substitute a base64 encoding inline so the mirror file
         // stays human-decodable without forcing all callers to
         // pre-encode.
+        //
+        // WHY the replacer reads `this[key]` and not `value` (agent-code#372):
+        // JSON.stringify calls a value's toJSON BEFORE the replacer, and
+        // Buffer has one, so `value` is already {type:'Buffer',data:[…]}
+        // and an instanceof check on it never matches. This replacer was
+        // written that way and never fired: every chunk ever mirrored was a
+        // decimal byte array, 3.65× its payload (2,266 MiB of chunk lines
+        // for 621 MiB of bytes in one 3.19 GB session file). The holder
+        // still has the raw Buffer. A regular function, not an arrow, so
+        // `this` is that holder. Cost (#53 review C): `this[key]` reads each
+        // property a second time, so a getter runs twice; event payloads are
+        // plain literals today. A throwing getter would drop the whole event
+        // through the catch below, so keep getters out of mirrored payloads.
         const payload = args[0]
-        const serialised = JSON.stringify(payload, (_key, value) => {
-          if (value && typeof value === 'object' && value instanceof Buffer) {
-            return { _buffer_b64: value.toString('base64') }
-          }
+        const serialised = JSON.stringify(payload, function (this: Record<string, unknown>, key, value) {
+          const raw = this[key]
+          if (Buffer.isBuffer(raw)) return { _buffer_b64: raw.toString('base64') }
           return value
         })
         appendFileSync(this.eventsFile, serialised + '\n', 'utf-8')
