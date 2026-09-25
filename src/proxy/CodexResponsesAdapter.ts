@@ -112,6 +112,10 @@ type EndEvent = {
   requestId: string
   path: string
   bytes: number
+  /** Set when the proxy ended the exchange because the CLIENT closed before
+   *  upstream finished (responsesProxy streamUpstreamResponse). Diagnostic
+   *  only: the adapter treats it like any response-end. */
+  downstreamClosed?: true
 }
 
 /** The proxy's response-headers event, emitted once per HTTP call the moment
@@ -297,14 +301,10 @@ type FlowState = {
   //                 flow is already active. Parsed (for bookkeeping)
   //                 but never published. Would-be publishes are
   //                 dropped at the handleFrame entry point.
-  //   'completed' — the SSE stream reached response.completed and
-  //                 published its terminal semantic state, but the
-  //                 HTTP transport has not emitted response-end yet.
-  //                 This state exists because response.completed is
-  //                 the semantic end of a Responses turn; waiting for
-  //                 the socket close to release the active slot makes
-  //                 client-executed tool calls such as MCP hide the
-  //                 next flow when the transport end lags.
+  //   (There was a fourth state, 'completed', for a flow that reached
+  //   response.completed but was kept until response-end. agent-code#369
+  //   removed it: markFlowTerminal now deletes the flow at the semantic
+  //   terminal, so a finished flow is simply absent from `flows`.)
   //
   // WHY this exists: before the gate was added, a retry or warmup
   // could open a second POST /v1/responses while the first was still
@@ -314,7 +314,7 @@ type FlowState = {
   // then alternated between rendering one flow's blocks and the
   // other's — the user-visible 0/1/0/1 flicker below the prompt.
   // See docs/superpowers/plans/2026-04-17-codex-semantic-flicker-fix.md.
-  attribution: 'candidate' | 'active' | 'secondary' | 'completed'
+  attribution: 'candidate' | 'active' | 'secondary'
   // Semantic terminals commonly precede response-end. This bit prevents the
   // later transport close from falsely recording a second cancelled outcome.
   requestTerminalObserved: boolean
@@ -468,6 +468,22 @@ export class CodexResponsesAdapter {
   // the same path fires on every retry and we need stable keys.
   private nextFlowSeq = 1
   private attachedHandler: ((ev: Record<string, unknown>) => void) | null = null
+
+  /**
+   * How much per-request state this adapter is holding right now.
+   *
+   * WHY it exists (agent-code#369): main-process OOMs during long Codex runs
+   * pointed at flow retention here, and nothing measured it. A host samples
+   * this into its performance heartbeat, so a leak shows up as a number that
+   * climbs across turns instead of as a crash. `bufferedChars` counts the
+   * undrained SSE text across flows, the part that grows with response size.
+   * Cheap on purpose: one pass over a map that is empty between turns.
+   */
+  diagnostics(): { flows: number; bufferedChars: number } {
+    let bufferedChars = 0
+    for (const flow of this.flows.values()) bufferedChars += flow.buffer.length
+    return { flows: this.flows.size, bufferedChars }
+  }
   // flowId of the one flow that currently owns publishing rights on
   // headless.semantic. Null when nothing is streaming. Cleared by
   // response-end / response-error / upstream-error for the active
@@ -556,7 +572,20 @@ export class CodexResponsesAdapter {
       this.activeFlowId = null
     }
     this.publishRequestTerminal(flow, phase, 'semantic-terminal')
-    flow.attribution = 'completed'
+    // WHY the flow is released HERE and not left for response-end or the
+    // watchdog (agent-code#369): in recorded Codex 0.157 traffic about half of
+    // all /v1/responses exchanges never get a response-end, because the
+    // client closes the stream after reading response.completed (16 of 32 in
+    // the source session of testing/fixtures/flow-retention). Each of those
+    // FlowState objects, with its fullText, blocks and tool accumulators, then
+    // stayed in `flows` until the watchdog, which is the
+    // "watchdog releasing proxy-* (attribution=completed ...)" line in the
+    // OOM breadcrumbs. After this point nothing reads the flow: the turn was
+    // finished above the call, late chunks and a late response-end look the
+    // flow up by request id and return when it is gone, and
+    // publishRequestTerminal is idempotent per flow.
+    flow.buffer = ''
+    this.flows.delete(flow.flowId)
   }
 
   private publishRequestObservation(
@@ -742,15 +771,9 @@ export class CodexResponsesAdapter {
       const flow = this.findFlowByRequestId(chunkEv.requestId)
       if (!flow) return
 
-      // A flow that already reached response.completed is semantically
-      // done. Late chunks for it (SSE keepalives, trailers, a retry
-      // tail) must NOT be appended or refresh lastEventAt: completed
-      // flows never drain (only 'active' does), so appending would
-      // leak flow.buffer, and refreshing lastEventAt would keep the
-      // watchdog from ever reaping the finished flow. Drop them —
-      // response-end deletes the flow, and if that never arrives the
-      // watchdog reaps it once lastEventAt (frozen here) goes stale.
-      if (flow.attribution === 'completed') return
+      // A late chunk for a flow that already reached response.completed
+      // (a keepalive or trailer) misses the lookup above and is dropped:
+      // markFlowTerminal deletes the flow at its semantic terminal (#369).
 
       // Error-document bytes. Collect and stop here — deliberately BEFORE
       // first-chunk attribution, because a request that already failed at the
@@ -1053,9 +1076,10 @@ export class CodexResponsesAdapter {
    *  delay the retry.
    *
    *  Only flows silent for the WHOLE window are touched; any event after the
-   *  suspension began proves the stream survived. A completed flow (a client tool
-   *  is running, phase `awaiting-tool`) has no open turn and is dropped without a
-   *  phase change: the tool's process was suspended too and usually completes. */
+   *  suspension began proves the stream survived. A flow that already reached its
+   *  semantic terminal (e.g. a client tool is running, phase `awaiting-tool`) is no
+   *  longer in `flows` at all (#369), so its phase is never touched here: the
+   *  tool's process was suspended too and usually completes. */
   sealFlowsSilentSince(
     silentSince: number,
     interruption: NonNullable<SemanticTurnStoppedEvent['interruption']>,
