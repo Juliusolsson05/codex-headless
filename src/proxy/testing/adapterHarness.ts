@@ -46,10 +46,12 @@ export function createRecordedAdapterHarness(): RecordedAdapterHarness {
   const adapter = new CodexResponsesAdapter(
     proxy as unknown as ResponsesProxy,
     // The adapter only ever touches `semantic` and
-    // `observeProviderThreadIdentity` on its headless handle; the recorded
-    // events below carry no provider_session_id, so the second member is
-    // never reached and a full CodexHeadless would be dead weight.
-    { semantic } as never,
+    // `observeProviderThreadIdentity` on its headless handle. The second is a
+    // no-op here: real traffic DOES carry `request_shape.provider_session_id`
+    // (the flow-retention fixture does), and without the member the adapter
+    // threw on the request and never created a flow, so a leak assertion
+    // passed for the wrong reason. A full CodexHeadless would be dead weight.
+    { semantic, observeProviderThreadIdentity: () => {} } as never,
   )
   adapter.attach()
   onTestFinished(() => {
