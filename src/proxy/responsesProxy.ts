@@ -861,7 +861,12 @@ export class ResponsesProxy extends EventEmitter {
         chunk: Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)),
       })
     })
+    // Exactly one transport terminal per exchange: whichever of end, error
+    // or the client leaving happens first wins, and the others are late.
+    let settled = false
     nodeStream.on('end', () => {
+      if (settled) return
+      settled = true
       this.emit('event', {
         kind: 'response-end',
         requestId,
@@ -870,6 +875,8 @@ export class ResponsesProxy extends EventEmitter {
       })
     })
     nodeStream.on('error', err => {
+      if (settled) return
+      settled = true
       this.emit('event', {
         kind: 'response-error',
         requestId,
@@ -877,6 +884,40 @@ export class ResponsesProxy extends EventEmitter {
         message: err instanceof Error ? err.message : String(err),
       })
       try { res.destroy() } catch { /* best-effort */ }
+    })
+    // WHY the client leaving must release the upstream body (agent-code#369,
+    // #1238 review): Codex closes its socket as soon as it has read
+    // `response.completed`, often before upstream ends the stream. The
+    // client-gone listeners above were removed when headers arrived, so the
+    // only link left is `pipe`, and when `res` closes pipe merely unpipes and
+    // PAUSES `nodeStream`. Nothing destroyed it: the undici body, its
+    // buffered bytes and the upstream socket (never returned to the pool)
+    // stayed alive for the life of the process, and because the paused
+    // stream never read its own end, NO transport event followed. That was
+    // 16 of 30 recorded exchanges (responsesProxy.clientClose.test.ts).
+    //
+    // Destroying the stream cancels the web body, which aborts the upstream
+    // request and frees the socket. The exchange is reported as a
+    // response-end marked `downstreamClosed`, not as an error: the client
+    // chose to stop reading. For an exchange that already reached its
+    // semantic terminal the adapter has released the flow and ignores it.
+    // For a client that left mid-stream (a Codex interrupt) it records the
+    // honest `cancelled` / transport-ended-before-semantic-terminal outcome
+    // now, instead of the watchdog guessing the same thing 60 s later.
+    //
+    // `close` also fires after a normal finish (pipe ends `res` once
+    // `nodeStream` ends), which `settled` turns into a no-op.
+    res.once('close', () => {
+      if (settled) return
+      settled = true
+      this.emit('event', {
+        kind: 'response-end',
+        requestId,
+        path: originalUrl,
+        bytes: bytesEstimate,
+        downstreamClosed: true,
+      })
+      nodeStream.destroy()
     })
     nodeStream.pipe(res)
   }
