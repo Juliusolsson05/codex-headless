@@ -242,3 +242,10 @@ export {
 export {
   CodexResponsesAdapter,
 } from './proxy/CodexResponsesAdapter.js'
+
+// agent-code#800 / #1313: live, attribute-aware composer occupancy.
+export {
+  classifyCodexComposerState,
+  type CodexComposerState,
+  type ComposerCellRow,
+} from './parsers/ComposerState.js'

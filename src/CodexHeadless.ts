@@ -78,6 +78,7 @@ import {
   isCodexMessageItem,
   extractCodexMessageText,
 } from './transcript/TranscriptTypes.js'
+import { classifyCodexComposerState, type CodexComposerState } from './parsers/ComposerState.js'
 import { getCodexSessionsDir } from './transcript/ProjectDir.js'
 import { fingerprintProviderSession } from './transcript/ProviderSessionFingerprint.js'
 
@@ -1374,6 +1375,16 @@ export class CodexHeadless extends EventEmitter {
 
   getActivity(): string | null {
     return this.lastActivity
+  }
+
+  /**
+   * Whether the composer holds a draft, from the live terminal buffer and its
+   * cell attributes (agent-code#800, #1313). `unknown` whenever the bottom
+   * pane is not provably the composer; see parsers/ComposerState.ts for what
+   * callers may and may not infer from it.
+   */
+  getComposerState(): CodexComposerState {
+    return classifyCodexComposerState(this.terminal.snapshotComposerCells())
   }
 
   getApprovalState(): ScreenApproval | null {
