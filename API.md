@@ -1598,7 +1598,7 @@ static ResponsesProxy.create(options?: {
 | --- | --- | --- | --- |
 | `authMode` | `CodexAuthMode` (`'apikey' \| 'chatgpt'`) | auto-detected | Which auth path Codex uses. Auto-detection reads `~/.codex/auth.json`; absent → `'apikey'`. |
 | `upstreamBaseUrl` | `string` | derived from `authMode` | The real upstream. Defaults: `apikey` → `https://api.openai.com/v1`, `chatgpt` → `https://chatgpt.com/backend-api/codex`. |
-| `eventsFile` | `string` | unset | If set, every emitted `event` is also appended as a JSON line to this file (forensic mirror; `Buffer` payloads are inlined as `{ _buffer_b64 }`). Append-only; rotation is the caller's problem. |
+| `eventsFile` | `string` | unset | If set, every emitted `event` is also appended as a JSON line to this file (forensic mirror; `Buffer` payloads are inlined as `{ _buffer_b64 }`. Dumps written before agent-code#372's fix hold `{"type":"Buffer","data":[…]}` byte arrays instead, so a reader of older files must accept both). Append-only; rotation is the caller's problem. |
 
 `create()` starts listening before resolving. The resolved instance
 exposes:

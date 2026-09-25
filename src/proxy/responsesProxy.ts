@@ -425,7 +425,10 @@ export class ResponsesProxy extends EventEmitter {
         // decimal byte array, 3.65× its payload (2,266 MiB of chunk lines
         // for 621 MiB of bytes in one 3.19 GB session file). The holder
         // still has the raw Buffer. A regular function, not an arrow, so
-        // `this` is that holder.
+        // `this` is that holder. Cost (#53 review C): `this[key]` reads each
+        // property a second time, so a getter runs twice; event payloads are
+        // plain literals today. A throwing getter would drop the whole event
+        // through the catch below, so keep getters out of mirrored payloads.
         const payload = args[0]
         const serialised = JSON.stringify(payload, function (this: Record<string, unknown>, key, value) {
           const raw = this[key]

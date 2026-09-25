@@ -85,3 +85,30 @@ it('keeps a chunk that splits a UTF-8 character byte-exact', () => {
   const line = mirrorOf({ ...recorded(), size: bytes.length, chunk: bytes })
   expect(Buffer.from((line.chunk as { _buffer_b64: string })._buffer_b64, 'base64').equals(bytes)).toBe(true)
 })
+
+// #53 review C: every test above writes ONE event into a fresh file, so an
+// overwrite instead of an append, a missing newline, a mirror of non-'event'
+// emits, or a non-UTF-8 write would all pass. A real dump is thousands of
+// events in order; this is the smallest session that pins that.
+it('appends every event as its own UTF-8 line, in order, and mirrors only "event" emits', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cxh-mirror-'))
+  dirs.push(dir)
+  const file = join(dir, 'proxy-events.jsonl')
+  const proxy = new ResponsesProxy({} as never, file)
+  proxy.on('other', () => undefined)
+  proxy.emit('event', recorded())
+  proxy.emit('other', { kind: 'must-not-be-mirrored' })
+  proxy.emit('event', { kind: 'response-error', requestId: 'req-3', message: 'upstream said: överbelastad ✗' })
+  const text = readFileSync(file, 'utf8')
+  expect(text.endsWith('\n')).toBe(true)
+  const lines = text.split('\n').filter(line => line.length > 0).map(line => JSON.parse(line) as { kind: string; message?: string })
+  expect(lines.map(line => line.kind)).toEqual(['response-chunk', 'response-error'])
+  expect(lines[1]!.message).toBe('upstream said: överbelastad ✗')
+})
+
+// #53 review C: the replacer must return stringify's own value for anything
+// that is not a Buffer, so a value with its own toJSON (a Date) keeps it.
+it('leaves values with their own toJSON as JSON renders them', () => {
+  const at = new Date('2026-09-25T00:00:00.000Z')
+  expect(mirrorOf({ kind: 'probe', at }).at).toBe('2026-09-25T00:00:00.000Z')
+})
