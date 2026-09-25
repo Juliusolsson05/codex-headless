@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events'
 import type { IPty } from 'node-pty'
 import xtermHeadless from '@xterm/headless'
+import type { ComposerCellRow } from '../parsers/ComposerState.js'
 
 const { Terminal } = xtermHeadless
 type TerminalInstance = InstanceType<typeof Terminal>
@@ -432,6 +433,33 @@ export class HeadlessTerminal extends EventEmitter {
     }
     while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
     return lines.join('\n')
+  }
+
+  /**
+   * The viewport's rows with each non-blank cell's dim flag, read from the
+   * LIVE buffer (agent-code#800). Null while PTY bytes are still being parsed,
+   * so a caller classifies a whole frame or nothing. Dim is the only
+   * attribute read: Codex paints its composer placeholder dim and a typed
+   * draft plain (see parsers/ComposerState.ts).
+   */
+  snapshotComposerCells(): ComposerCellRow[] | null {
+    if (this.pendingWrites !== 0) return null
+    const buffer = this.term.buffer.active
+    const rows: ComposerCellRow[] = []
+    for (let viewportRow = 0; viewportRow < this.term.rows; viewportRow += 1) {
+      const line = buffer.getLine(buffer.viewportY + viewportRow)
+      const cells: Array<{ chars: string; dim: boolean }> = []
+      if (line) {
+        for (let column = 0; column < line.length; column += 1) {
+          const cell = line.getCell(column)
+          const chars = cell?.getChars() ?? ''
+          if (!chars.trim()) continue
+          cells.push({ chars, dim: cell!.isDim() !== 0 })
+        }
+      }
+      rows.push({ text: line?.translateToString(true) ?? '', cells })
+    }
+    return rows
   }
 
   /**
