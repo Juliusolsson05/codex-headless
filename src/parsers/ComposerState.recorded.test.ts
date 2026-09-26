@@ -18,6 +18,10 @@ const recording = JSON.parse(readFileSync(
 const at = (label: string) => recording.events.find(event => event.label === label)!.t
 
 const terminals: HeadlessTerminal[] = []
+// The PTY listeners of each replayed terminal, so a test can deliver more
+// recorded bytes after the replay cut.
+const feeders = new WeakMap<HeadlessTerminal, Set<(data: string) => void>>()
+const feed = (terminal: HeadlessTerminal, data: string) => { for (const listener of feeders.get(terminal)!) listener(data) }
 afterEach(() => { for (const terminal of terminals.splice(0)) terminal.dispose() })
 
 async function replayUntil(until: number): Promise<HeadlessTerminal> {
@@ -30,6 +34,7 @@ async function replayUntil(until: number): Promise<HeadlessTerminal> {
   } as unknown as IPty
   const terminal = new HeadlessTerminal({ pty, cols: recording.cols, rows: recording.rows, snapshotIntervalMs: 1 })
   terminals.push(terminal)
+  feeders.set(terminal, listeners)
   terminal.attach()
   for (const event of recording.events) {
     if (event.dir === 'out' && event.t < until) for (const listener of listeners) listener(event.data!)
@@ -90,6 +95,31 @@ it('is empty only when Codex says so, with the shortcuts hint', () => {
   // No hint (a draft hid it, a narrow pane dropped it, or Codex is quitting):
   // not provably empty.
   expect(classifyCodexComposerState([row('›'), row(''), ...STATUS_ONLY])).toBe('unknown')
+})
+
+// agent-code#1319 review round 2 B: only Codex's shortcuts hint proves empty.
+// Another indented footer row (a warning line) under a dim placeholder with
+// an image above it must not, or a restart would submit the unseen image.
+it('never takes a warning row for the shortcuts hint', () => {
+  expect(classifyCodexComposerState([row('  [Image #1]'), row(''), row('› Ask Codex to do anything', true), row(''), ...STATUS_ONLY, row('  ⚠ 1 warning · f2 to view')])).toBe('unknown')
+})
+
+// agent-code#1319 review round 2 A2: the plain screen shows the previous
+// paint while a chunk is still being parsed. The settled read refuses to
+// answer then, so a text proof of an empty composer cannot come from a
+// stale frame.
+it('has no settled screen while the draft chunk is still being parsed', async () => {
+  const terminal = await replayUntil(at('type-draft'))
+  expect(terminal.snapshotSettledPlain()).toContain('› Ask Codex to do anything')
+  const draft = recording.events.filter(event => event.dir === 'out' && event.t >= at('type-draft') && event.t < at('ctrl-c-1'))
+  expect(draft.length).toBeGreaterThan(0)
+  for (const event of draft) feed(terminal, event.data!)
+  // Synchronously after the bytes arrive: the old paint is all there is.
+  expect(terminal.snapshotPlain()).not.toContain('please review the draft')
+  expect(terminal.snapshotSettledPlain()).toBeNull()
+  const deadline = Date.now() + 2000
+  while (terminal.snapshotSettledPlain() === null && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5))
+  expect(terminal.snapshotSettledPlain()).toContain('› please review the draft')
 })
 
 // #54 review A: an attached image sits ABOVE the textarea, which keeps its

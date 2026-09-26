@@ -1429,6 +1429,16 @@ export class CodexHeadless extends EventEmitter {
     return this.terminal.snapshotPlain()
   }
 
+  /**
+   * The plain screen from a fully parsed frame, or null while PTY bytes are
+   * still being parsed (agent-code#1319). Use this, never `getScreen()`, for
+   * any text-based proof that the composer is empty: `getScreen()` can show
+   * the paint from before the human's latest keystrokes.
+   */
+  getSettledScreen(): string | null {
+    return this.terminal.snapshotSettledPlain()
+  }
+
   getScreenMarkdown(): string {
     return this.terminal.snapshotMarkdown()
   }

@@ -436,6 +436,26 @@ export class HeadlessTerminal extends EventEmitter {
   }
 
   /**
+   * The plain viewport, or null while PTY bytes are still being parsed
+   * (agent-code#1319 review A2).
+   *
+   * WHY a second plain snapshot beside `snapshotPlain()`: that one reads the
+   * buffer as it stands, so while a chunk is queued in xterm's parser it shows
+   * the PREVIOUS paint. A caller that treats "a bare `›` above the status row"
+   * as proof of an empty composer (the only proof 0.149.1 and narrow 0.157
+   * panes give, because they have no shortcuts hint row) would then consent
+   * on a stale frame while the human's first keystrokes sit unparsed, and
+   * paste into their draft. Polling twice does not help: `pendingWrites` can
+   * stay non-zero for a long time (see the synchronized-output note near the
+   * bottom of this class), so elapsed time proves nothing. A proof of empty
+   * must come from a parsed frame, same rule as `snapshotComposerCells()`.
+   */
+  snapshotSettledPlain(): string | null {
+    if (this.pendingWrites !== 0) return null
+    return this.snapshotPlain()
+  }
+
+  /**
    * The viewport's rows with each non-blank cell's dim flag, read from the
    * LIVE buffer (agent-code#800). Null while PTY bytes are still being parsed,
    * so a caller classifies a whole frame or nothing. Dim is the only
