@@ -1593,6 +1593,7 @@ static ResponsesProxy.create(options?: {
   upstreamBaseUrl?: string
   authMode?: CodexAuthMode
   eventsFile?: string
+  eventsFileMaxBytes?: number
 }): Promise<ResponsesProxy>
 ```
 
@@ -1600,7 +1601,8 @@ static ResponsesProxy.create(options?: {
 | --- | --- | --- | --- |
 | `authMode` | `CodexAuthMode` (`'apikey' \| 'chatgpt'`) | auto-detected | Which auth path Codex uses. Auto-detection reads `~/.codex/auth.json`; absent → `'apikey'`. |
 | `upstreamBaseUrl` | `string` | derived from `authMode` | The real upstream. Defaults: `apikey` → `https://api.openai.com/v1`, `chatgpt` → `https://chatgpt.com/backend-api/codex`. |
-| `eventsFile` | `string` | unset | If set, every emitted `event` is also appended as a JSON line to this file (forensic mirror; `Buffer` payloads are inlined as `{ _buffer_b64 }`. Dumps written before agent-code#372's fix hold `{"type":"Buffer","data":[…]}` byte arrays instead, so a reader of older files must accept both). Append-only; rotation is the caller's problem. |
+| `eventsFile` | `string` | unset | If set, every emitted `event` is also written as a JSON line to this file (forensic mirror; `Buffer` payloads are inlined as `{ _buffer_b64 }`. Dumps written before agent-code#372's fix hold `{"type":"Buffer","data":[…]}` byte arrays instead, so a reader of older files must accept both). Written asynchronously through one ordered stream, never on the emitting call. When a line would push the total unwritten bytes (across the live and any rotated-out file) past 16 MiB, it is dropped and counted. A `{kind:'mirror-dropped', droppedEvents, droppedBytes}` line precedes the next written line, or is written at `stop()` if no line follows. Markers obey the same bounds: with a queue cap smaller than one marker (only ever a test setting), the marker is not written and the drops stay counted in the mirror's stats. Call `flushMirror()` to wait for the queue; `stop()` flushes and closes it. |
+| `eventsFileMaxBytes` | `number` | 64 MiB | When the next line would pass this size, the file is renamed to `<name>.1.jsonl` (replacing any earlier one) and a fresh file starts with `{kind:'mirror-rotated', rotatedBytes, rotations, droppedEvents, droppedBytes}`. Every file stays within the cap, markers included, so a run holds at most two files of this size. A line that cannot fit even in a fresh file is dropped and counted. A restart that appends to a file already at the cap rotates on its first event. |
 
 `create()` starts listening before resolving. The resolved instance
 exposes:

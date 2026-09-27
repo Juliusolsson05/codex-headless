@@ -17,20 +17,21 @@ const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
 
 // The raw mirrored line, so size is measured on what reaches disk.
-function mirrorLineOf(payload: unknown): string {
+async function mirrorLineOf(payload: unknown): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), 'cxh-mirror-'))
   dirs.push(dir)
   const file = join(dir, 'proxy-events.jsonl')
   const proxy = new ResponsesProxy({} as never, file)
   proxy.emit('event', payload)
+  await proxy.flushMirror()
   const text = readFileSync(file, 'utf8')
   const lines = text.split('\n').filter(line => line.length > 0)
   expect(lines).toHaveLength(1)
   return lines[0]!
 }
 
-function mirrorOf(payload: unknown): Record<string, unknown> {
-  return JSON.parse(mirrorLineOf(payload)) as Record<string, unknown>
+async function mirrorOf(payload: unknown): Promise<Record<string, unknown>> {
+  return JSON.parse(await mirrorLineOf(payload)) as Record<string, unknown>
 }
 
 // A recorded event, field for field (Codex 0.157.0, 2026-09-25): 204 bytes
@@ -43,8 +44,8 @@ const recorded = () => ({
   chunk: Buffer.from('event: response.created\n', 'utf8'),
 })
 
-it('inlines a recorded chunk as base64 that round-trips its bytes', () => {
-  const line = mirrorOf(recorded())
+it('inlines a recorded chunk as base64 that round-trips its bytes', async () => {
+  const line = await mirrorOf(recorded())
   const chunk = line.chunk as { _buffer_b64?: string }
   expect(chunk._buffer_b64).toBeDefined()
   expect(Buffer.from(chunk._buffer_b64!, 'base64').toString('utf8')).toBe('event: response.created\n')
@@ -59,11 +60,11 @@ const models = JSON.parse(readFileSync(
   'utf8',
 )) as { path: string; size: number; oldMirroredLineBytes: number; base64: string }
 
-it('mirrors a recorded full-size chunk byte-exact at base64 size, measured on the line', () => {
+it('mirrors a recorded full-size chunk byte-exact at base64 size, measured on the line', async () => {
   const bytes = Buffer.from(models.base64, 'base64')
   expect(bytes.length).toBe(models.size)
   const payload = { kind: 'response-chunk', requestId: 'req-2', path: models.path, size: models.size, chunk: bytes }
-  const line = mirrorLineOf(payload)
+  const line = await mirrorLineOf(payload)
   const chunk = (JSON.parse(line) as { chunk: { _buffer_b64: string } }).chunk
   expect(Buffer.from(chunk._buffer_b64, 'base64').equals(bytes)).toBe(true)
   const fields = JSON.stringify({ ...payload, chunk: { _buffer_b64: '' } }).length
@@ -73,16 +74,16 @@ it('mirrors a recorded full-size chunk byte-exact at base64 size, measured on th
 
 // #53 review A: the replacer handles a Buffer anywhere in an event, not only
 // at `chunk` (API.md promises it for every Buffer payload).
-it('inlines a nested Buffer too', () => {
-  const line = mirrorOf({ kind: 'probe', body: { nested: [Buffer.from([0, 255])] } })
+it('inlines a nested Buffer too', async () => {
+  const line = await mirrorOf({ kind: 'probe', body: { nested: [Buffer.from([0, 255])] } })
   expect((line.body as { nested: unknown[] }).nested[0]).toEqual({ _buffer_b64: 'AP8=' })
 })
 
-it('keeps a chunk that splits a UTF-8 character byte-exact', () => {
+it('keeps a chunk that splits a UTF-8 character byte-exact', async () => {
   // A network chunk boundary can fall inside a multi-byte character, which
   // is why the mirror stores bytes (base64) and not text.
   const bytes = Buffer.from('data: å\n', 'utf8').subarray(0, 7)
-  const line = mirrorOf({ ...recorded(), size: bytes.length, chunk: bytes })
+  const line = await mirrorOf({ ...recorded(), size: bytes.length, chunk: bytes })
   expect(Buffer.from((line.chunk as { _buffer_b64: string })._buffer_b64, 'base64').equals(bytes)).toBe(true)
 })
 
@@ -90,7 +91,7 @@ it('keeps a chunk that splits a UTF-8 character byte-exact', () => {
 // overwrite instead of an append, a missing newline, a mirror of non-'event'
 // emits, or a non-UTF-8 write would all pass. A real dump is thousands of
 // events in order; this is the smallest session that pins that.
-it('appends every event as its own UTF-8 line, in order, and mirrors only "event" emits', () => {
+it('appends every event as its own UTF-8 line, in order, and mirrors only "event" emits', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'cxh-mirror-'))
   dirs.push(dir)
   const file = join(dir, 'proxy-events.jsonl')
@@ -99,6 +100,7 @@ it('appends every event as its own UTF-8 line, in order, and mirrors only "event
   proxy.emit('event', recorded())
   proxy.emit('other', { kind: 'must-not-be-mirrored' })
   proxy.emit('event', { kind: 'response-error', requestId: 'req-3', message: 'upstream said: överbelastad ✗' })
+  await proxy.flushMirror()
   const text = readFileSync(file, 'utf8')
   expect(text.endsWith('\n')).toBe(true)
   const lines = text.split('\n').filter(line => line.length > 0).map(line => JSON.parse(line) as { kind: string; message?: string })
@@ -108,7 +110,7 @@ it('appends every event as its own UTF-8 line, in order, and mirrors only "event
 
 // #53 review C: the replacer must return stringify's own value for anything
 // that is not a Buffer, so a value with its own toJSON (a Date) keeps it.
-it('leaves values with their own toJSON as JSON renders them', () => {
+it('leaves values with their own toJSON as JSON renders them', async () => {
   const at = new Date('2026-09-25T00:00:00.000Z')
-  expect(mirrorOf({ kind: 'probe', at }).at).toBe('2026-09-25T00:00:00.000Z')
+  expect((await mirrorOf({ kind: 'probe', at })).at).toBe('2026-09-25T00:00:00.000Z')
 })

@@ -2,10 +2,11 @@ import { EventEmitter } from 'events'
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'http'
 import type { Socket } from 'net'
 import { Readable } from 'stream'
-import { appendFileSync, readFileSync } from 'fs'
+import { readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 
+import { EventsMirror } from './eventsMirror.js'
 import { decompressZstdBounded } from './zstd.js'
 
 // Local HTTP proxy for Codex's Responses API.
@@ -121,10 +122,13 @@ type Options = {
    *    time.
    *
    *  Format mirrors mitmAddon.py: one JSON object per line, terminated
-   *  by `\n`, no header. Append-only; rotation is the caller's
-   *  problem (Agent Code allocates a fresh path per session run, so
-   *  natural rotation falls out for free). */
+   *  by `\n`, no header. Written asynchronously, bounded, and rotated
+   *  to `<name>.1.jsonl` at `eventsFileMaxBytes` (agent-code#372; see
+   *  eventsMirror.ts for why each of those). */
   eventsFile?: string
+  /** Rotate the mirror once it would pass this size. Default 64 MiB, so a
+   *  run holds at most two files of this size. */
+  eventsFileMaxBytes?: number
 }
 
 
@@ -384,20 +388,21 @@ export class ResponsesProxy extends EventEmitter {
   // merged retries' bytes into the later request's flow state. Opaque
   // monotonic id avoids that and is cheap.
   private nextRequestSeq = 1
-  // Path of the on-disk JSONL mirror, or null if disabled. When set,
-  // `emit('event', …)` ALSO appends the event as a JSON line. Append
-  // is synchronous (`appendFileSync`) because the events we emit are
-  // small (KB-range, even with body_b64) and ordering matters for
-  // forensic readback — an async stream tap would let later events
-  // race ahead during a fast burst. Cost: a microbenchmark on a 4 MB
-  // event takes <2 ms on SSD; the proxy's hot path (kind:
-  // 'response-chunk') is bounded by network anyway.
-  private readonly eventsFile: string | null
+  // The on-disk JSONL mirror, or null if disabled. Written through a
+  // bounded async stream; see eventsMirror.ts for why it is no longer a
+  // synchronous append per event (agent-code#372).
+  private readonly mirror: EventsMirror | null
 
-  constructor(info: CodexResponsesProxyInfo, eventsFile: string | null) {
+  constructor(
+    info: CodexResponsesProxyInfo,
+    eventsFile: string | null,
+    mirrorOptions: { eventsFileMaxBytes?: number } = {},
+  ) {
     super()
     this.info = info
-    this.eventsFile = eventsFile
+    this.mirror = eventsFile
+      ? new EventsMirror(eventsFile, { maxFileBytes: mirrorOptions.eventsFileMaxBytes })
+      : null
   }
 
   // Override emit to mirror events into the on-disk JSONL. Done at
@@ -405,45 +410,16 @@ export class ResponsesProxy extends EventEmitter {
   // produces — request, response-chunk, response-end, response-error,
   // upgrade-rejected, server-error, request-error, rejected — lands
   // on disk consistently. If we mirrored per-handler we'd inevitably
-  // forget to add the call when adding a new event kind.
+  // forget to add the call when adding a new event kind. The mirror only
+  // serialises and queues here; the disk write happens off this path.
   override emit(event: string, ...args: unknown[]): boolean {
-    if (this.eventsFile && event === 'event' && args.length > 0) {
-      try {
-        // Strip Buffer instances out of mirror payloads. The
-        // 'response-chunk' event carries a Buffer with raw upstream
-        // bytes — JSON.stringify of a Buffer produces a useless
-        // {"type":"Buffer","data":[…]} blob and balloons disk size.
-        // Substitute a base64 encoding inline so the mirror file
-        // stays human-decodable without forcing all callers to
-        // pre-encode.
-        //
-        // WHY the replacer reads `this[key]` and not `value` (agent-code#372):
-        // JSON.stringify calls a value's toJSON BEFORE the replacer, and
-        // Buffer has one, so `value` is already {type:'Buffer',data:[…]}
-        // and an instanceof check on it never matches. This replacer was
-        // written that way and never fired: every chunk ever mirrored was a
-        // decimal byte array, 3.65× its payload (2,266 MiB of chunk lines
-        // for 621 MiB of bytes in one 3.19 GB session file). The holder
-        // still has the raw Buffer. A regular function, not an arrow, so
-        // `this` is that holder. Cost (#53 review C): `this[key]` reads each
-        // property a second time, so a getter runs twice; event payloads are
-        // plain literals today. A throwing getter would drop the whole event
-        // through the catch below, so keep getters out of mirrored payloads.
-        const payload = args[0]
-        const serialised = JSON.stringify(payload, function (this: Record<string, unknown>, key, value) {
-          const raw = this[key]
-          if (Buffer.isBuffer(raw)) return { _buffer_b64: raw.toString('base64') }
-          return value
-        })
-        appendFileSync(this.eventsFile, serialised + '\n', 'utf-8')
-      } catch {
-        // Best-effort. A failed mirror write must never break the
-        // live proxy — disk full or permissions issues should
-        // degrade to "no on-disk record" silently rather than crash
-        // the session.
-      }
-    }
+    if (this.mirror && event === 'event' && args.length > 0) this.mirror.write(args[0])
     return super.emit(event, ...args)
+  }
+
+  /** Resolves once every mirrored event so far has reached the OS. */
+  flushMirror(): Promise<void> {
+    return this.mirror?.flush() ?? Promise.resolve()
   }
 
   static async create(options: Options = {}): Promise<ResponsesProxy> {
@@ -459,6 +435,7 @@ export class ResponsesProxy extends EventEmitter {
         authMode,
       },
       options.eventsFile ?? null,
+      { eventsFileMaxBytes: options.eventsFileMaxBytes },
     )
     proxy.server = server
     server.on('connection', socket => {
@@ -539,6 +516,20 @@ export class ResponsesProxy extends EventEmitter {
   }
 
   async stop(): Promise<void> {
+    // WHY the mirror closes AFTER the server: tearing the sockets down emits
+    // the final response-error / response-end events, and those belong on
+    // disk. Closing it at all matters because the mirror is asynchronous now
+    // (agent-code#372): without an awaited close, the last events of a run
+    // could still be queued when the session is torn down. `finally`, so a
+    // server.close() rejection cannot leave the stream open.
+    try {
+      await this.stopServer()
+    } finally {
+      await this.mirror?.close()
+    }
+  }
+
+  private async stopServer(): Promise<void> {
     const server = this.server
     this.server = null
     if (!server) return
