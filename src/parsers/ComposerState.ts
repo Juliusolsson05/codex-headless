@@ -96,14 +96,25 @@ export function classifyCodexComposerState(rows: ReadonlyArray<ComposerCellRow> 
   // (agent-code#1327): Codex does not scroll a tall draft's marker away, the
   // composer grows upward (recorded: 0.157.1, a 20-line draft with `›` on row
   // 7, testing/fixtures/composer-0157/tall-draft-ctrlc.json). The bound read
-  // every draft over 12 rows as `unknown`, which is not occupancy, so Agent
+  // every draft of 13 or more composer rows as `unknown`, which is not occupancy, so Agent
   // Code's own Enter appended to it. The bound exists to keep a transcript
   // `›` from being taken for the composer; a tall composer is one continuous
   // block of rows, so past the bound a blank row ends the search and the
   // frame stays `unknown`. A draft with a blank line that far up, or taller
   // than the viewport, is the unrecorded residual.
+  //
+  // The walk starts at the separator itself, not above the window (#57 review
+  // C): starting above it skipped a blank row INSIDE the window, so a
+  // transcript `›` 14 rows up was reached across that blank and a markerless
+  // frame read `drafted`, which is occupancy. Every row from the separator
+  // to the marker must be non-blank, with ONE exception taken from the
+  // recording: right after a Ctrl+J the draft's last row is the empty line the
+  // cursor sits on, directly above the separator. Only that single trailing
+  // row may be blank; a blank anywhere else ends the walk (several trailing
+  // blank lines stay `unknown`, an unrecorded residual).
   if (marker < 0) {
-    for (let index = separator - MAX_COMPOSER_ROWS - 1; index >= 0 && !blank(index); index -= 1) {
+    const top = blank(separator - 1) ? separator - 2 : separator - 1
+    for (let index = top; index >= 0 && !blank(index); index -= 1) {
       if (MARKER_ROW.test(text[index]!)) { marker = index; break }
     }
   }
