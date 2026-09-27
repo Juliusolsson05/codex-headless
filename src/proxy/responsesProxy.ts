@@ -215,6 +215,11 @@ export type CodexRequestShape = {
   input_items_count: number | null
   tools_count: number | null
   has_reasoning: boolean
+  /** True when the request asks for structured output (`text.format`, an
+   *  output schema). Codex sets it only on temporary structured turns, such
+   *  as 0.157 title generation (tui `thread_title.rs`); ordinary turns never
+   *  carry one. The latest-request-body sidecar skips these (#70 review a). */
+  has_output_schema: boolean
   client_metadata: {
     thread_id: string | null
     session_id: string | null
@@ -248,6 +253,8 @@ function extractRequestShape(body: Buffer): CodexRequestShape | null {
   const input = Array.isArray(obj.input) ? obj.input.length : null
   const tools = Array.isArray(obj.tools) ? obj.tools.length : null
   const hasReasoning = obj.reasoning != null && typeof obj.reasoning === 'object'
+  const text = obj.text && typeof obj.text === 'object' ? obj.text as Record<string, unknown> : null
+  const hasOutputSchema = text?.format != null && typeof text.format === 'object'
   const metadataObject = obj.client_metadata
   const metadata = metadataObject && typeof metadataObject === 'object'
     ? metadataObject as Record<string, unknown>
@@ -269,6 +276,7 @@ function extractRequestShape(body: Buffer): CodexRequestShape | null {
     input_items_count: input,
     tools_count: tools,
     has_reasoning: hasReasoning,
+    has_output_schema: hasOutputSchema,
     client_metadata: clientMetadata,
     provider_session_id:
       threadId !== null && threadId === sessionId ? threadId : null,
@@ -706,7 +714,14 @@ export class ResponsesProxy extends EventEmitter {
       ...(bodyB64 !== undefined ? { body_b64: bodyB64 } : {}),
       ...(requestShape !== null ? { request_shape: requestShape } : {}),
     })
-    this.latestBody?.record(requestId, endpoint, body)
+    // The newest MAIN-turn prompt, for debug bundles whose events tail no
+    // longer holds this request (agent-code#1336). Temporary structured turns
+    // (title generation) are skipped: see latestRequestBody.ts for why, and
+    // for why a body whose shape could not be read is still kept (a prompt we
+    // cannot classify is better evidence than none).
+    if (body && body.length > 0 && endpoint.startsWith('responses') && requestShape?.has_output_schema !== true) {
+      this.latestBody?.record(requestId, endpoint, body)
+    }
 
     const abort = new AbortController()
     const headersTimer = setTimeout(() => {

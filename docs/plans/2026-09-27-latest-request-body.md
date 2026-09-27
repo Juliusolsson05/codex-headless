@@ -26,3 +26,16 @@ All three are red with the wiring removed.
 
 ## Then
 The app bump carries this to Agent Code. Its reader's WHY comment, which describes only the Claude invariant, gets the Codex one.
+
+## Review a (round 1)
+- **Stale "latest"**, after a crash between write and rename, a failed removal, or a read while a newer write was queued. Fixed with three rules (see the module header):
+  - `record()` unlinks the real-name file synchronously;
+  - a superseded write never renames;
+  - only the newest pending body is kept.
+  If the directory refuses the unlink, nothing can make the file current; that stays unreported, like every mirror failure.
+- **Title generation replaced the main prompt.** Codex 0.157 title turns carry an output schema (`text.format`, `codex_output_schema`). `request_shape` gains `has_output_schema`, and such requests are skipped. A body whose shape cannot be read is still kept.
+- **Main-process cost.** Base64 is encoded in 768 KiB slices, one per turn after a drain, instead of 21 MiB in one call. At most one body is pending.
+- **SECURITY.md accuracy.** Bodies between 2 MiB and 16 MiB are persisted only in the sidecar.
+- **Fresh sessions never reach the file (P1).** This is an app-side selection bug, not a package bug: the bundle asks for `resume-<providerSessionId>` while a fresh run lives under `shell-<paneId>`. It is fixed in the app PR that bumps this package, where it is reachable and testable.
+- **Tests:** compaction is recorded, the title turn is skipped, a newer record removes the file at once, a superseded write cannot resurrect an older body, and a multi-slice body round-trips.
+  - Mutations killed: the endpoint narrowing, the schema check, the generation check and the unlink.

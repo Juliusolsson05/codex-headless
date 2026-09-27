@@ -97,3 +97,30 @@ it('removes the sidecar rather than keep an older prompt when the newest body is
   await proxy.flushMirror()
   expect(existsSync(sidecar)).toBe(false)
 })
+
+// #70 review a. Codex 0.157 title generation runs an ephemeral thread whose
+// request carries an output schema (tui `thread_title.rs` through
+// codex-api `create_text_param_for_request`: text.format, name
+// `codex_output_schema`). It must not replace the main prompt.
+it('keeps the main prompt when a title-generation request follows it', async () => {
+  const { proxy, sidecar } = await startProxy()
+  const prompt = Buffer.from(JSON.stringify({ input: [{ role: 'user', content: 'the main prompt' }], tools: [{ type: 'function' }] }))
+  const title = Buffer.from(JSON.stringify({
+    input: [{ role: 'user', content: 'Generate a concise, single-line task title' }],
+    text: { format: { type: 'json_schema', strict: true, name: 'codex_output_schema', schema: {} } },
+  }))
+  await send(proxy, '/responses', 'POST', prompt)
+  await send(proxy, '/responses', 'POST', title)
+  await proxy.flushMirror()
+
+  expect(Buffer.from(sidecarLine(sidecar).body_b64 as string, 'base64').equals(prompt)).toBe(true)
+})
+
+it('records a compaction request, which also carries the conversation', async () => {
+  const { proxy, sidecar } = await startProxy()
+  const compact = Buffer.from(JSON.stringify({ input: [{ role: 'user', content: 'compact me' }] }))
+  await send(proxy, '/responses/compact', 'POST', compact)
+  await proxy.flushMirror()
+
+  expect(sidecarLine(sidecar)).toMatchObject({ endpoint: 'responses/compact' })
+})
