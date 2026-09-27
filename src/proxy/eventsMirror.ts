@@ -134,43 +134,62 @@ export class EventsMirror {
   /**
    * Writes `line` (possibly empty, to write only a pending drop marker) so
    * that EVERY file stays within `maxFileBytes`, markers included, and the
-   * unwritten total stays within `maxQueuedBytes`. Anything that cannot fit
-   * is dropped and counted; there is no "overshoot a little" exception
-   * (#56 reviews A3, A4, B2 each found one, and each made the advertised
-   * bound false).
+   * unwritten total, markers included, stays within `maxQueuedBytes`.
+   * Anything that cannot fit is dropped and counted; there is no "overshoot
+   * a little" exception (#56 reviews A3, A4, B2 each found one, and each
+   * made the advertised bound false).
+   *
+   * WHY every decision is made BEFORE rotating (#56 round-2 review C1): a
+   * rotation replaces the previous `.1`. Rotating first and only then
+   * finding that the line cannot fit even a fresh file evicted accepted
+   * events for a line that was dropped anyway: with a cap of one line,
+   * three rejected events rotated three times and left only markers. The
+   * rotation marker is deterministic (its counts are known now), so the
+   * fresh file's first write can be measured before anything is renamed.
    */
   private append(line: string): void {
     const bytes = Buffer.byteLength(line)
-    if (bytes > 0 && (bytes > this.maxQueuedBytes || this.queuedBytes + bytes > this.maxQueuedBytes)) {
-      this.drop(bytes)
-      return
-    }
     const sink = this.open()
     if (!sink) return
     let prefix = this.dropMarker()
-    let target = sink
-    if (this.fileBytes + Buffer.byteLength(prefix) + bytes > this.maxFileBytes && this.fileBytes > 0) {
-      const rotatedBytes = this.rotate()
-      if (rotatedBytes === null) return
-      target = this.sink!
-      prefix = JSON.stringify({
-        kind: 'mirror-rotated',
-        rotatedBytes,
-        rotations: this.rotations,
-        droppedEvents: this.droppedEvents,
-        droppedBytes: this.droppedBytes,
-      }) + '\n'
-    }
-    // Even a fresh file cannot hold it (a line near the cap, or a cap so
-    // small the marker alone fills it): drop the line, keep the marker if it
-    // fits so the file still says what happened.
+    let rotate = false
     if (this.fileBytes + Buffer.byteLength(prefix) + bytes > this.maxFileBytes) {
-      if (bytes > 0) this.drop(bytes)
-      if (prefix && this.fileBytes + Buffer.byteLength(prefix) <= this.maxFileBytes) this.put(target, prefix)
+      const marker = this.rotationMarker()
+      if (this.fileBytes === 0 || Buffer.byteLength(marker) + bytes > this.maxFileBytes) {
+        // It fits no file: drop it without touching what is already kept.
+        // The drop is reported by the next marker that fits (or at close).
+        if (bytes > 0) {
+          this.drop(bytes)
+          return
+        }
+        // A marker-only write (close) that does not fit the current file:
+        // rotate for it if it fits a fresh one, else give up on it.
+        if (this.fileBytes === 0 || Buffer.byteLength(marker) > this.maxFileBytes) return
+      }
+      prefix = marker
+      rotate = true
+    }
+    // The marker counts against the queue too (#56 round-2 review A2). A
+    // line bigger than the whole queue budget is dropped here as well.
+    const total = Buffer.byteLength(prefix) + bytes
+    if (bytes > 0 && this.queuedBytes + total > this.maxQueuedBytes) {
+      this.drop(bytes)
       return
     }
-    if (prefix) this.reportedDrops = this.droppedEvents
-    if (prefix || line) this.put(target, prefix + line)
+    if (rotate && this.rotate() === null) return
+    this.reportedDrops = this.droppedEvents
+    if (total > 0) this.put(this.sink!, prefix + line)
+  }
+
+  /** The first line of the file a rotation would start now. */
+  private rotationMarker(): string {
+    return JSON.stringify({
+      kind: 'mirror-rotated',
+      rotatedBytes: this.fileBytes,
+      rotations: this.rotations + 1,
+      droppedEvents: this.droppedEvents,
+      droppedBytes: this.droppedBytes,
+    }) + '\n'
   }
 
   private dropMarker(): string {

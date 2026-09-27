@@ -204,7 +204,6 @@ it('bounds the queue across a rotation', () => {
 // close(), and must not take the healthy live file down with it.
 it('settles flush and close when a rotated-out stream fails', async () => {
   const file = tempFile()
-  // Room for two lines, or one line plus the rotation marker.
   const mirror = new EventsMirror(file, { maxFileBytes: LINE_BYTES * 2 + 200 })
   mirror.write(event(1))
   mirror.write(event(2))
@@ -221,6 +220,81 @@ it('settles flush and close when a rotated-out stream fails', async () => {
   ])
   expect(settled).toBe('settled')
   expect(linesOf(file).map(line => line.kind === 'response-chunk' ? line.requestId : line.kind)).toEqual(['mirror-rotated', 'req-3', 'req-4'])
+})
+
+// #56 round-2 review A1: the test above cannot control WHEN Node delivers the
+// old stream's error, so it did not pin the accounting. Here the failure is
+// delivered synchronously while the live file's write is certainly pending:
+// only the failed stream's share may be given back, or flush() reports idle
+// while the live write is still in flight (and later goes negative).
+it('gives back only the failed stream\'s share of pending writes', async () => {
+  const file = tempFile()
+  const mirror = new EventsMirror(file, { maxFileBytes: LINE_BYTES * 2 + 200 })
+  type Internals = { sink: object; pendingWrites: number; fail(sink: object): void }
+  const internals = mirror as unknown as Internals
+  mirror.write(event(1))
+  mirror.write(event(2))
+  await mirror.flush()
+  const oldSink = internals.sink
+  mirror.write(event(3))
+  expect(internals.sink).not.toBe(oldSink)
+  const pendingOnLive = internals.pendingWrites
+  expect(pendingOnLive).toBeGreaterThan(0)
+  internals.fail(oldSink)
+  expect(internals.pendingWrites).toBe(pendingOnLive)
+  await mirror.close()
+  expect(internals.pendingWrites).toBe(0)
+  expect(linesOf(file).map(line => line.kind === 'response-chunk' ? line.requestId : line.kind)).toEqual(['mirror-rotated', 'req-3'])
+})
+
+// #56 round-2 review C1: a line that fits no file (the rotation marker plus
+// the line exceed the cap) is dropped WITHOUT rotating. Rotating first
+// evicted the accepted event 1 for three events that were dropped anyway.
+it('never evicts kept events to make room for a line that cannot fit', async () => {
+  const file = tempFile()
+  const mirror = new EventsMirror(file, { maxFileBytes: LINE_BYTES })
+  for (let n = 1; n <= 4; n += 1) {
+    mirror.write(event(n))
+    await mirror.flush()
+  }
+  await mirror.close()
+  expect(mirror.stats()).toMatchObject({ droppedEvents: 3, rotations: expect.any(Number) })
+  const kept = [...linesOf(rotatedMirrorPath(file)), ...linesOf(file)]
+  expect(kept.filter(line => line.kind === 'response-chunk').map(line => line.requestId)).toEqual(['req-1'])
+  expect(statSync(file).size).toBeLessThanOrEqual(LINE_BYTES)
+})
+
+// #56 round-2 review A3 (and C's surviving mutant): the cap counts the
+// rotation marker. A line that fits alone but not with the marker in front
+// of it cannot start a fresh file, so it is dropped rather than written over
+// the cap.
+it('counts the rotation marker against the file cap', async () => {
+  const file = tempFile()
+  const cap = LINE_BYTES + 50
+  const mirror = new EventsMirror(file, { maxFileBytes: cap })
+  mirror.write(event(1))
+  await mirror.flush()
+  mirror.write(event(2))
+  await mirror.close()
+  expect(mirror.stats()).toMatchObject({ droppedEvents: 1 })
+  for (const path of [file, rotatedMirrorPath(file)]) {
+    if (existsSync(path)) expect(statSync(path).size).toBeLessThanOrEqual(cap)
+  }
+  const kept = [...linesOf(rotatedMirrorPath(file)), ...linesOf(file)]
+  expect(kept.filter(line => line.kind === 'response-chunk').map(line => line.requestId)).toEqual(['req-1'])
+})
+
+// #56 round-2 review A2: the queue bound counts marker bytes too. Two lines
+// that fit the queue alone do not fit it once the second one's rotation
+// marker is added.
+it('counts the rotation marker against the queue', () => {
+  const file = tempFile()
+  const mirror = new EventsMirror(file, { maxFileBytes: LINE_BYTES + 200, maxQueuedBytes: LINE_BYTES * 2 + 10 })
+  mirror.write(event(1))
+  mirror.write(event(2))
+  expect(mirror.stats()).toMatchObject({ droppedEvents: 1, rotations: 0 })
+  expect((mirror as unknown as { queuedBytes: number }).queuedBytes).toBeLessThanOrEqual(LINE_BYTES * 2 + 10)
+  return mirror.close()
 })
 
 // #56 review B3: the 64 MiB default is the documented bound. Real recorded
