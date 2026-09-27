@@ -7,6 +7,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 
 import { EventsMirror } from './eventsMirror.js'
+import { LatestRequestBodySidecar } from './latestRequestBody.js'
 import { decompressZstdBounded } from './zstd.js'
 
 // Local HTTP proxy for Codex's Responses API.
@@ -214,6 +215,15 @@ export type CodexRequestShape = {
   input_items_count: number | null
   tools_count: number | null
   has_reasoning: boolean
+  /** True when the request asks for structured output (`text.format`, an
+   *  output schema). In the TUI that Agent Code runs, Codex sets it on
+   *  temporary structured turns such as 0.157 title generation
+   *  (`thread_title.rs`). It is a per-turn option upstream, though (exec,
+   *  app-server `turn_start`), so a main turn COULD carry one; Agent Code
+   *  sends none today. The latest-request-body sidecar skips these (#70
+   *  reviews a, c): a structured main turn would leave the sidecar one turn
+   *  behind, which is the accepted cost of keeping title prompts out. */
+  has_output_schema: boolean
   client_metadata: {
     thread_id: string | null
     session_id: string | null
@@ -247,6 +257,8 @@ function extractRequestShape(body: Buffer): CodexRequestShape | null {
   const input = Array.isArray(obj.input) ? obj.input.length : null
   const tools = Array.isArray(obj.tools) ? obj.tools.length : null
   const hasReasoning = obj.reasoning != null && typeof obj.reasoning === 'object'
+  const text = obj.text && typeof obj.text === 'object' ? obj.text as Record<string, unknown> : null
+  const hasOutputSchema = text?.format != null && typeof text.format === 'object'
   const metadataObject = obj.client_metadata
   const metadata = metadataObject && typeof metadataObject === 'object'
     ? metadataObject as Record<string, unknown>
@@ -268,6 +280,7 @@ function extractRequestShape(body: Buffer): CodexRequestShape | null {
     input_items_count: input,
     tools_count: tools,
     has_reasoning: hasReasoning,
+    has_output_schema: hasOutputSchema,
     client_metadata: clientMetadata,
     provider_session_id:
       threadId !== null && threadId === sessionId ? threadId : null,
@@ -392,6 +405,9 @@ export class ResponsesProxy extends EventEmitter {
   // bounded async stream; see eventsMirror.ts for why it is no longer a
   // synchronous append per event (agent-code#372).
   private readonly mirror: EventsMirror | null
+  // The newest Responses request body, next to the events file, so a debug
+  // bundle has the prompt even when the events tail does not (latestRequestBody.ts).
+  private readonly latestBody: LatestRequestBodySidecar | null
 
   constructor(
     info: CodexResponsesProxyInfo,
@@ -403,6 +419,8 @@ export class ResponsesProxy extends EventEmitter {
     this.mirror = eventsFile
       ? new EventsMirror(eventsFile, { maxFileBytes: mirrorOptions.eventsFileMaxBytes })
       : null
+    // Same opt-in as the mirror: no events file, no sidecar (agent-code#1336).
+    this.latestBody = eventsFile ? new LatestRequestBodySidecar(eventsFile) : null
   }
 
   // Override emit to mirror events into the on-disk JSONL. Done at
@@ -417,9 +435,10 @@ export class ResponsesProxy extends EventEmitter {
     return super.emit(event, ...args)
   }
 
-  /** Resolves once every mirrored event so far has reached the OS. */
+  /** Resolves once every mirrored event, and the latest-request-body sidecar,
+   *  has reached the OS. */
   flushMirror(): Promise<void> {
-    return this.mirror?.flush() ?? Promise.resolve()
+    return Promise.all([this.mirror?.flush(), this.latestBody?.flush()]).then(() => undefined)
   }
 
   static async create(options: Options = {}): Promise<ResponsesProxy> {
@@ -526,6 +545,7 @@ export class ResponsesProxy extends EventEmitter {
       await this.stopServer()
     } finally {
       await this.mirror?.close()
+      await this.latestBody?.flush()
     }
   }
 
@@ -698,6 +718,24 @@ export class ResponsesProxy extends EventEmitter {
       ...(bodyB64 !== undefined ? { body_b64: bodyB64 } : {}),
       ...(requestShape !== null ? { request_shape: requestShape } : {}),
     })
+    // The newest MAIN-turn prompt, for debug bundles whose events tail no
+    // longer holds this request (agent-code#1336). Temporary structured turns
+    // (title generation) are skipped: see latestRequestBody.ts for why, and
+    // for why a body whose shape could not be read is still kept (a prompt we
+    // cannot classify is better evidence than none).
+    // Subagent calls are skipped too (#70 review b): Codex tags every
+    // non-main Responses call with `x-openai-subagent` (codex-api
+    // requests/headers.rs and responses_metadata.rs: review, compact,
+    // collab_spawn, guardian, memory_consolidation, or a custom label; the
+    // rule below is label-agnostic, so the exact list does not matter). A spawned worker's task has
+    // no output schema, so without this it replaced the top-level prompt in
+    // multi-agent sessions. `compact` is kept: a compaction request carries
+    // the main conversation, and it is what a bundle after compaction needs.
+    const subagent = req.headers['x-openai-subagent']
+    const auxiliary = subagent !== undefined && subagent !== 'compact'
+    if (body && body.length > 0 && endpoint.startsWith('responses') && requestShape?.has_output_schema !== true && !auxiliary) {
+      this.latestBody?.record(requestId, endpoint, body)
+    }
 
     const abort = new AbortController()
     const headersTimer = setTimeout(() => {
