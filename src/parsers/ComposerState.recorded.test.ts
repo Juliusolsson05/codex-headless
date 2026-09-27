@@ -31,7 +31,17 @@ afterEach(() => { for (const terminal of terminals.splice(0)) terminal.dispose()
 // signal; a parser that never drains fails on the test timeout instead of
 // passing a wrong frame.
 async function drained(terminal: HeadlessTerminal): Promise<void> {
-  while ((terminal as unknown as { pendingWrites: number }).pendingWrites !== 0) await new Promise(resolve => setTimeout(resolve, 5))
+  while ((terminal as unknown as { pendingWrites: number }).pendingWrites !== 0) await new Promise(resolve => setImmediate(resolve))
+}
+// Feeds recorded chunks ONE AT A TIME, letting xterm drain between them, as a
+// PTY delivers them (#57 review, Pi a). Dumping ~630 events in one synchronous
+// burst could leave `pendingWrites` stuck (HeadlessTerminal's documented
+// write-callback stall), which no wait can recover from.
+async function feedPaced(terminal: HeadlessTerminal, listeners: Set<(data: string) => void>, chunks: string[]): Promise<void> {
+  for (const chunk of chunks) {
+    for (const listener of listeners) listener(chunk)
+    await drained(terminal)
+  }
 }
 
 async function replayUntil(until: number): Promise<HeadlessTerminal> {
@@ -46,10 +56,7 @@ async function replayUntil(until: number): Promise<HeadlessTerminal> {
   terminals.push(terminal)
   feeders.set(terminal, listeners)
   terminal.attach()
-  for (const event of recording.events) {
-    if (event.dir === 'out' && event.t < until) for (const listener of listeners) listener(event.data!)
-  }
-  await drained(terminal)
+  await feedPaced(terminal, listeners, recording.events.filter(event => event.dir === 'out' && event.t < until).map(event => event.data!))
   return terminal
 }
 
@@ -283,8 +290,7 @@ async function replayTallUntil(label: string, settleMs = 800): Promise<HeadlessT
   const terminal = new HeadlessTerminal({ pty, cols: tall.cols, rows: tall.rows, snapshotIntervalMs: 1 })
   terminals.push(terminal)
   terminal.attach()
-  for (const event of tall.events) if (event.dir === 'out' && event.t < until) for (const listener of listeners) listener(event.data!)
-  await drained(terminal)
+  await feedPaced(terminal, listeners, tall.events.filter(event => event.dir === 'out' && event.t < until).map(event => event.data!))
   return terminal
 }
 
