@@ -7,6 +7,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 
 import { EventsMirror } from './eventsMirror.js'
+import { LatestRequestBodySidecar } from './latestRequestBody.js'
 import { decompressZstdBounded } from './zstd.js'
 
 // Local HTTP proxy for Codex's Responses API.
@@ -392,6 +393,9 @@ export class ResponsesProxy extends EventEmitter {
   // bounded async stream; see eventsMirror.ts for why it is no longer a
   // synchronous append per event (agent-code#372).
   private readonly mirror: EventsMirror | null
+  // The newest Responses request body, next to the events file, so a debug
+  // bundle has the prompt even when the events tail does not (latestRequestBody.ts).
+  private readonly latestBody: LatestRequestBodySidecar | null
 
   constructor(
     info: CodexResponsesProxyInfo,
@@ -403,6 +407,8 @@ export class ResponsesProxy extends EventEmitter {
     this.mirror = eventsFile
       ? new EventsMirror(eventsFile, { maxFileBytes: mirrorOptions.eventsFileMaxBytes })
       : null
+    // Same opt-in as the mirror: no events file, no sidecar (agent-code#1336).
+    this.latestBody = eventsFile ? new LatestRequestBodySidecar(eventsFile) : null
   }
 
   // Override emit to mirror events into the on-disk JSONL. Done at
@@ -417,9 +423,10 @@ export class ResponsesProxy extends EventEmitter {
     return super.emit(event, ...args)
   }
 
-  /** Resolves once every mirrored event so far has reached the OS. */
+  /** Resolves once every mirrored event, and the latest-request-body sidecar,
+   *  has reached the OS. */
   flushMirror(): Promise<void> {
-    return this.mirror?.flush() ?? Promise.resolve()
+    return Promise.all([this.mirror?.flush(), this.latestBody?.flush()]).then(() => undefined)
   }
 
   static async create(options: Options = {}): Promise<ResponsesProxy> {
@@ -526,6 +533,7 @@ export class ResponsesProxy extends EventEmitter {
       await this.stopServer()
     } finally {
       await this.mirror?.close()
+      await this.latestBody?.flush()
     }
   }
 
@@ -698,6 +706,7 @@ export class ResponsesProxy extends EventEmitter {
       ...(bodyB64 !== undefined ? { body_b64: bodyB64 } : {}),
       ...(requestShape !== null ? { request_shape: requestShape } : {}),
     })
+    this.latestBody?.record(requestId, endpoint, body)
 
     const abort = new AbortController()
     const headersTimer = setTimeout(() => {
