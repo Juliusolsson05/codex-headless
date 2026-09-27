@@ -33,13 +33,17 @@ afterEach(() => { for (const terminal of terminals.splice(0)) terminal.dispose()
 async function drained(terminal: HeadlessTerminal): Promise<void> {
   while ((terminal as unknown as { pendingWrites: number }).pendingWrites !== 0) await new Promise(resolve => setImmediate(resolve))
 }
-// Feeds recorded chunks ONE AT A TIME, letting xterm drain between them, as a
-// PTY delivers them (#57 review, Pi a). Dumping ~630 events in one synchronous
-// burst could leave `pendingWrites` stuck (HeadlessTerminal's documented
-// write-callback stall), which no wait can recover from.
+// Feeds recorded chunks in batches, letting xterm drain between batches.
+// WHY batches (#57 review rounds 1 and 2): one synchronous burst of ~630
+// events put the whole recording in xterm's queue at once, which under load
+// left a half-painted frame behind (Pi a); one chunk per drain fixed that but
+// cost one scheduler tick per chunk, ~630 ticks, and ran past the 5 s test
+// timeout under load (A, B, C round 2). Fifty chunks per drain keeps the
+// queue shallow at ~13 drains per replay.
+const REPLAY_BATCH = 50
 async function feedPaced(terminal: HeadlessTerminal, listeners: Set<(data: string) => void>, chunks: string[]): Promise<void> {
-  for (const chunk of chunks) {
-    for (const listener of listeners) listener(chunk)
+  for (let start = 0; start < chunks.length; start += REPLAY_BATCH) {
+    for (const chunk of chunks.slice(start, start + REPLAY_BATCH)) for (const listener of listeners) listener(chunk)
     await drained(terminal)
   }
 }
