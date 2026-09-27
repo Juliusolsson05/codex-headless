@@ -115,11 +115,99 @@ it('has no settled screen while the draft chunk is still being parsed', async ()
   expect(draft.length).toBeGreaterThan(0)
   for (const event of draft) feed(terminal, event.data!)
   // Synchronously after the bytes arrive: the old paint is all there is.
-  expect(terminal.snapshotPlain()).not.toContain('please review the draft')
+  // Pinned exactly (#55 review B), so this test keeps proving the dangerous
+  // stale empty-composer frame exists, not merely that the draft is absent.
+  expect(terminal.snapshotPlain()).toContain('› Ask Codex to do anything')
+  expect(terminal.snapshotPlain()).toContain('? for shortcuts')
   expect(terminal.snapshotSettledPlain()).toBeNull()
+  await settled(terminal)
+  expect(terminal.snapshotSettledPlain()).toContain('› please review the draft')
+})
+
+// The draft window's recorded output chunks, in order.
+const draftChunks = () => recording.events.filter(event => event.dir === 'out' && event.t >= at('type-draft') && event.t < at('ctrl-c-1')).map(event => event.data!)
+// Waits for xterm to parse everything admitted so far. Reads the private
+// counter because the public settled reads are what these tests pin.
+async function parsed(terminal: HeadlessTerminal): Promise<void> {
+  const deadline = Date.now() + 2000
+  while ((terminal as unknown as { pendingWrites: number }).pendingWrites !== 0 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5))
+  expect((terminal as unknown as { pendingWrites: number }).pendingWrites).toBe(0)
+}
+async function settled(terminal: HeadlessTerminal): Promise<void> {
   const deadline = Date.now() + 2000
   while (terminal.snapshotSettledPlain() === null && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5))
-  expect(terminal.snapshotSettledPlain()).toContain('› please review the draft')
+}
+
+// #55 review C1: the production race is ONE chunk in flight (the human's
+// first keystroke's echo), not the 27 queued above. A `pendingWrites > 1`
+// typo would answer here with the stale empty composer.
+it('has no settled screen while a single chunk is being parsed', async () => {
+  const terminal = await replayUntil(at('type-draft'))
+  feed(terminal, draftChunks()[0]!)
+  expect(terminal.snapshotSettledPlain()).toBeNull()
+  expect(terminal.snapshotComposerCells()).toBeNull()
+  await settled(terminal)
+  expect(terminal.snapshotSettledPlain()).not.toBeNull()
+})
+
+// #55 review A1: 'pty-data' listeners run synchronously on arrival, before
+// the chunk reaches xterm. A settled read from inside one must not answer
+// with the paint from before the chunk.
+it('has no settled screen inside a pty-data listener', async () => {
+  const terminal = await replayUntil(at('type-draft'))
+  const seen: unknown[] = []
+  terminal.on('pty-data', () => seen.push(terminal.snapshotSettledPlain(), terminal.snapshotComposerCells()))
+  feed(terminal, draftChunks()[0]!)
+  expect(seen).toEqual([null, null])
+})
+
+// #55 review A2: Codex opens a synchronized update in one chunk and closes it
+// in the next (chunks 74/75 of this recording). In between every byte is
+// parsed, but the buffer is half a redraw: the hint is already cleared over
+// the old composer.
+it('has no settled screen inside an open synchronized update', async () => {
+  const chunks = draftChunks()
+  const openOnly = chunks.findIndex(data => data.includes('\x1b[?2026h') && !data.includes('\x1b[?2026l'))
+  expect(openOnly).toBeGreaterThan(0)
+  expect(chunks[openOnly + 1]).toContain('\x1b[?2026l')
+  const terminal = await replayUntil(at('type-draft'))
+  for (const data of chunks.slice(0, openOnly + 1)) feed(terminal, data)
+  await parsed(terminal)
+  expect(terminal.snapshotPlain()).not.toBe('')
+  expect(terminal.snapshotSettledPlain()).toBeNull()
+  expect(terminal.snapshotComposerCells()).toBeNull()
+  feed(terminal, chunks[openOnly + 1]!)
+  await parsed(terminal)
+  expect(terminal.snapshotSettledPlain()).not.toBeNull()
+})
+
+// A PTY read can split the escape sequence itself. The same recorded chunk,
+// cut inside `\x1b[?2026h`, must still count as opening the update.
+it('sees a synchronized update opened across two chunks', async () => {
+  const chunks = draftChunks()
+  const openOnly = chunks.findIndex(data => data.includes('\x1b[?2026h') && !data.includes('\x1b[?2026l'))
+  const data = chunks[openOnly]!
+  const cut = data.indexOf('\x1b[?2026h') + 4
+  const terminal = await replayUntil(at('type-draft'))
+  for (const earlier of chunks.slice(0, openOnly)) feed(terminal, earlier)
+  feed(terminal, data.slice(0, cut))
+  feed(terminal, data.slice(cut))
+  await parsed(terminal)
+  expect(terminal.snapshotSettledPlain()).toBeNull()
+})
+
+// #55 review A3: xterm reflows on resize at once, Codex redraws only after
+// SIGWINCH. Until a post-resize chunk is parsed the rows are old paint under
+// the new geometry.
+it('has no settled screen after a resize until the provider paints again', async () => {
+  const terminal = await replayUntil(at('type-draft'))
+  expect(terminal.snapshotSettledPlain()).not.toBeNull()
+  terminal.resize(recording.cols - 10, recording.rows)
+  expect(terminal.snapshotSettledPlain()).toBeNull()
+  expect(terminal.snapshotComposerCells()).toBeNull()
+  feed(terminal, draftChunks()[0]!)
+  await parsed(terminal)
+  expect(terminal.snapshotSettledPlain()).not.toBeNull()
 })
 
 // #54 review A: an attached image sits ABOVE the textarea, which keeps its

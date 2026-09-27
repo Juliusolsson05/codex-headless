@@ -359,7 +359,9 @@ node-pty errors on 0/negative dimensions.
 | `isIdle()` | `boolean` | True if Codex's Working row is NOT visible (waiting for input). |
 | `isWorking()` | `boolean` | True if the Working row IS visible. |
 | `getActivity()` | `string \| null` | Current activity verb (e.g. `"working… 10s"`) or `null` if idle. |
-| `getScreen()` | `string` | Current plain-text viewport snapshot. |
+| `getScreen()` | `string` | Current plain-text viewport snapshot. May still show the paint from before PTY bytes that are not parsed yet: never use it to prove the composer is empty. |
+| `getSettledScreen()` | `string \| null` | The viewport from a frame Codex finished painting, or `null` while bytes are being parsed, inside an open synchronized update, or after a resize before Codex redraws. Use this for any text proof of an empty composer, and treat `null` as not empty. |
+| `getComposerState()` | `'empty' \| 'drafted' \| 'unknown'` | Whether the composer holds a draft, read from settled cells and their dim attribute; `unknown` whenever it is not provable. |
 | `getScreenMarkdown()` | `string` | Current viewport with bold/italic reconstructed as markdown. |
 | `getAssistantInProgress()` | `string` | In-progress assistant text extracted from the current viewport; `''` if none yet. |
 | `getApprovalState()` | `ScreenApproval \| null` | Last-detected command-approval overlay state, or `null`. |
