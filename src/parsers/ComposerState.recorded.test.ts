@@ -282,8 +282,11 @@ const tall = JSON.parse(readFileSync(
   new URL('../../testing/fixtures/composer-0157/tall-draft-ctrlc.json', import.meta.url),
   'utf8',
 )) as Recording
-async function replayTallUntil(label: string, settleMs = 800): Promise<HeadlessTerminal> {
-  const until = tall.events.find(event => event.label === label)!.t + settleMs
+// One tall replay, advanced label by label on the SAME terminal: each check
+// feeds only the chunks since the previous one. Replaying from scratch per
+// label tripled the work (~1,450 chunks for three heights) and ran past the
+// 5 s test timeout under load (#1343 round-3 review C).
+function tallReplay(): { terminal: HeadlessTerminal; advanceTo(label: string, settleMs?: number): Promise<void> } {
   const listeners = new Set<(data: string) => void>()
   const pty = {
     write: () => undefined,
@@ -294,13 +297,22 @@ async function replayTallUntil(label: string, settleMs = 800): Promise<HeadlessT
   const terminal = new HeadlessTerminal({ pty, cols: tall.cols, rows: tall.rows, snapshotIntervalMs: 1 })
   terminals.push(terminal)
   terminal.attach()
-  await feedPaced(terminal, listeners, tall.events.filter(event => event.dir === 'out' && event.t < until).map(event => event.data!))
-  return terminal
+  let fedUntil = -Infinity
+  return {
+    terminal,
+    async advanceTo(label, settleMs = 800) {
+      const until = tall.events.find(event => event.label === label)!.t + settleMs
+      const chunks = tall.events.filter(event => event.dir === 'out' && event.t >= fedUntil && event.t < until).map(event => event.data!)
+      fedUntil = until
+      await feedPaced(terminal, listeners, chunks)
+    },
+  }
 }
 
 it('reads a recorded draft as drafted at every height up to 20 rows', async () => {
+  const { terminal, advanceTo } = tallReplay()
   for (const [label, rowsShown] of [['type-line-10', 11], ['type-line-14', 15], ['draft-typed', 20]] as const) {
-    const terminal = await replayTallUntil(label)
+    await advanceTo(label)
     const plain = terminal.snapshotPlain()
     // The marker is on screen, the whole draft under it.
     expect(plain).toContain('› long draft line 01 with a few words')
@@ -310,7 +322,8 @@ it('reads a recorded draft as drafted at every height up to 20 rows', async () =
 })
 
 it('reads the recorded composer as empty again after Ctrl+C clears the tall draft', async () => {
-  const terminal = await replayTallUntil('ctrl-c-1')
+  const { terminal, advanceTo } = tallReplay()
+  await advanceTo('ctrl-c-1')
   expect(classifyCodexComposerState(terminal.snapshotComposerCells())).toBe('empty')
 })
 
