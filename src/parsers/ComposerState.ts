@@ -40,8 +40,10 @@ const QUEUE_ROW = /^ {2}\S+ to queue(?: message)?\b/u
 // A Vim status atom means the key semantics of the composer changed under us.
 const VIM_STATUS_SUFFIX = / {2,}Vim: (?:Insert|Normal)$/u
 const MARKER_ROW = /^›(?: |$)/u
-// How far above the footer the marker may sit: the composer grows with a
-// multi-line draft, but a marker further up is transcript, not composer.
+// How far above the footer the marker may sit with blank rows in between: the
+// composer grows with a multi-line draft, but a marker further up across a
+// blank row is transcript, not composer. Past this, only an unbroken block of
+// rows is followed (see classifyCodexComposerState).
 const MAX_COMPOSER_ROWS = 12
 
 /**
@@ -89,6 +91,32 @@ export function classifyCodexComposerState(rows: ReadonlyArray<ComposerCellRow> 
   let marker = -1
   for (let index = separator - 1; index >= Math.max(0, separator - MAX_COMPOSER_ROWS); index -= 1) {
     if (MARKER_ROW.test(text[index]!)) { marker = index; break }
+  }
+  // WHY the search goes on past the bound, but only through unbroken rows
+  // (agent-code#1327): Codex does not scroll a tall draft's marker away, the
+  // composer grows upward (recorded: 0.157.1, a 20-line draft with `›` on row
+  // 7, testing/fixtures/composer-0157/tall-draft-ctrlc.json). The bound read
+  // every draft of 13 or more composer rows as `unknown`, which is not occupancy, so Agent
+  // Code's own Enter appended to it. The bound exists to keep a transcript
+  // `›` from being taken for the composer; a tall composer is one continuous
+  // block of rows, so past the bound a blank row ends the search and the
+  // frame stays `unknown`. A draft with a blank line that far up, or taller
+  // than the viewport, is the unrecorded residual.
+  //
+  // The walk starts at the separator itself, not above the window (#57 review
+  // C): starting above it skipped a blank row INSIDE the window, so a
+  // transcript `›` 14 rows up was reached across that blank and a markerless
+  // frame read `drafted`, which is occupancy. Every row from the separator
+  // to the marker must be non-blank, with ONE exception taken from the
+  // recording: right after a Ctrl+J the draft's last row is the empty line the
+  // cursor sits on, directly above the separator. Only that single trailing
+  // row may be blank; a blank anywhere else ends the walk (several trailing
+  // blank lines stay `unknown`, an unrecorded residual).
+  if (marker < 0) {
+    const top = blank(separator - 1) ? separator - 2 : separator - 1
+    for (let index = top; index >= 0 && !blank(index); index -= 1) {
+      if (MARKER_ROW.test(text[index]!)) { marker = index; break }
+    }
   }
   if (marker < 0) return 'unknown'
 

@@ -24,6 +24,30 @@ const feeders = new WeakMap<HeadlessTerminal, Set<(data: string) => void>>()
 const feed = (terminal: HeadlessTerminal, data: string) => { for (const listener of feeders.get(terminal)!) listener(data) }
 afterEach(() => { for (const terminal of terminals.splice(0)) terminal.dispose() })
 
+// Waits until xterm has parsed every byte fed so far (#57 reviews A and B).
+// These waits used to give up after 2 s of wall clock and then read whatever
+// frame existed: under load the 110 KB tall-draft replay was still parsing,
+// and a half-painted frame read `unknown`. Draining is the real completion
+// signal; a parser that never drains fails on the test timeout instead of
+// passing a wrong frame.
+async function drained(terminal: HeadlessTerminal): Promise<void> {
+  while ((terminal as unknown as { pendingWrites: number }).pendingWrites !== 0) await new Promise(resolve => setImmediate(resolve))
+}
+// Feeds recorded chunks in batches, letting xterm drain between batches.
+// WHY batches (#57 review rounds 1 and 2): one synchronous burst of ~630
+// events put the whole recording in xterm's queue at once, which under load
+// left a half-painted frame behind (Pi a); one chunk per drain fixed that but
+// cost one scheduler tick per chunk, ~630 ticks, and ran past the 5 s test
+// timeout under load (A, B, C round 2). Fifty chunks per drain keeps the
+// queue shallow at ~13 drains per replay.
+const REPLAY_BATCH = 50
+async function feedPaced(terminal: HeadlessTerminal, listeners: Set<(data: string) => void>, chunks: string[]): Promise<void> {
+  for (let start = 0; start < chunks.length; start += REPLAY_BATCH) {
+    for (const chunk of chunks.slice(start, start + REPLAY_BATCH)) for (const listener of listeners) listener(chunk)
+    await drained(terminal)
+  }
+}
+
 async function replayUntil(until: number): Promise<HeadlessTerminal> {
   const listeners = new Set<(data: string) => void>()
   const pty = {
@@ -36,13 +60,7 @@ async function replayUntil(until: number): Promise<HeadlessTerminal> {
   terminals.push(terminal)
   feeders.set(terminal, listeners)
   terminal.attach()
-  for (const event of recording.events) {
-    if (event.dir === 'out' && event.t < until) for (const listener of listeners) listener(event.data!)
-  }
-  const deadline = Date.now() + 2000
-  while (terminal.snapshotComposerCells() === null && Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, 5))
-  }
+  await feedPaced(terminal, listeners, recording.events.filter(event => event.dir === 'out' && event.t < until).map(event => event.data!))
   return terminal
 }
 
@@ -129,13 +147,10 @@ const draftChunks = () => recording.events.filter(event => event.dir === 'out' &
 // Waits for xterm to parse everything admitted so far. Reads the private
 // counter because the public settled reads are what these tests pin.
 async function parsed(terminal: HeadlessTerminal): Promise<void> {
-  const deadline = Date.now() + 2000
-  while ((terminal as unknown as { pendingWrites: number }).pendingWrites !== 0 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5))
-  expect((terminal as unknown as { pendingWrites: number }).pendingWrites).toBe(0)
+  await drained(terminal)
 }
 async function settled(terminal: HeadlessTerminal): Promise<void> {
-  const deadline = Date.now() + 2000
-  while (terminal.snapshotSettledPlain() === null && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5))
+  await drained(terminal)
 }
 
 // #55 review C1: the production race is ONE chunk in flight (the human's
@@ -235,7 +250,17 @@ it('reads a draft on continuation rows, up to the composer bound', () => {
   expect(classifyCodexComposerState([row('›'), row('  real draft'), row(''), ...IDLE_FOOTER])).toBe('drafted')
   const continuation = (count: number) => Array.from({ length: count }, () => row('  more of the draft'))
   expect(classifyCodexComposerState([row('› start'), ...continuation(11), row(''), ...STATUS_ONLY])).toBe('drafted')
-  expect(classifyCodexComposerState([row('› start'), ...continuation(12), row(''), ...STATUS_ONLY])).toBe('unknown')
+  // agent-code#1327: this used to expect `unknown`, which is the bug the
+  // tall-draft recording shows. An unbroken draft past the bound is followed.
+  expect(classifyCodexComposerState([row('› start'), ...continuation(12), row(''), ...STATUS_ONLY])).toBe('drafted')
+  // Within the bound a blank row inside the draft is fine; past it, a blank
+  // row ends the search, so the frame stays unreadable (the residual).
+  expect(classifyCodexComposerState([row('› start'), row(''), ...continuation(4), row(''), ...STATUS_ONLY])).toBe('drafted')
+  expect(classifyCodexComposerState([row('› start'), row(''), ...continuation(12), row(''), ...STATUS_ONLY])).toBe('unknown')
+  // The exact edge (#57 review C, surviving mutant): a marker 12 rows up with
+  // a blank row inside is still in the bounded search; 13 rows up it is not.
+  expect(classifyCodexComposerState([row('› start'), row(''), ...continuation(10), row(''), ...STATUS_ONLY])).toBe('drafted')
+  expect(classifyCodexComposerState([row('› start'), row(''), ...continuation(11), row(''), ...STATUS_ONLY])).toBe('unknown')
 })
 
 // A transcript user message starts with `›` too, and it is plain text. With
@@ -246,4 +271,119 @@ it('does not read a transcript row, a markerless pane or Vim mode as a composer 
   expect(classifyCodexComposerState([row('  status left'), row(''), ...IDLE_FOOTER])).toBe('unknown')
   expect(classifyCodexComposerState([row('›'), row(''), row('  gpt · ~/p      Vim: Insert')])).toBe('unknown')
   expect(classifyCodexComposerState([row('›'), row(''), row('  gpt · ~/p'), row('  ? for shortcuts      Vim: Normal')])).toBe('unknown')
+})
+
+// agent-code#1327: a raw recording of codex-cli 0.157.1 typing a 20-line
+// draft (Ctrl+J newlines, no Enter). Codex does not scroll its marker away:
+// the composer grows upward, `›` on row 7 and the draft down to row 26. Our
+// 12-row marker search read it `unknown` from 13 composer rows, which published
+// provider-not-ready, and Agent Code's own Enter then appended to the draft.
+const tall = JSON.parse(readFileSync(
+  new URL('../../testing/fixtures/composer-0157/tall-draft-ctrlc.json', import.meta.url),
+  'utf8',
+)) as Recording
+// One tall replay, advanced label by label on the SAME terminal: each check
+// feeds only the chunks since the previous one. Replaying from scratch per
+// label tripled the work (~1,450 chunks for three heights) and ran past the
+// 5 s test timeout under load (#1343 round-3 review C).
+function tallReplay(): { terminal: HeadlessTerminal; advanceTo(label: string, settleMs?: number): Promise<void> } {
+  const listeners = new Set<(data: string) => void>()
+  const pty = {
+    write: () => undefined,
+    resize: () => undefined,
+    onData: (listener: (data: string) => void) => { listeners.add(listener); return { dispose: () => listeners.delete(listener) } },
+    onExit: () => ({ dispose: () => undefined }),
+  } as unknown as IPty
+  const terminal = new HeadlessTerminal({ pty, cols: tall.cols, rows: tall.rows, snapshotIntervalMs: 1 })
+  terminals.push(terminal)
+  terminal.attach()
+  let fedUntil = -Infinity
+  return {
+    terminal,
+    async advanceTo(label, settleMs = 800) {
+      const until = tall.events.find(event => event.label === label)!.t + settleMs
+      const chunks = tall.events.filter(event => event.dir === 'out' && event.t >= fedUntil && event.t < until).map(event => event.data!)
+      fedUntil = until
+      await feedPaced(terminal, listeners, chunks)
+    },
+  }
+}
+
+it('reads a recorded draft as drafted at every height up to 20 rows', async () => {
+  const { terminal, advanceTo } = tallReplay()
+  for (const [label, rowsShown] of [['type-line-10', 11], ['type-line-14', 15], ['draft-typed', 20]] as const) {
+    await advanceTo(label)
+    const plain = terminal.snapshotPlain()
+    // The marker is on screen, the whole draft under it.
+    expect(plain).toContain('› long draft line 01 with a few words')
+    expect(plain).toContain(`  long draft line ${String(rowsShown).padStart(2, '0')} with a few words`)
+    expect(classifyCodexComposerState(terminal.snapshotComposerCells())).toBe('drafted')
+  }
+})
+
+it('reads the recorded composer as empty again after Ctrl+C clears the tall draft', async () => {
+  const { terminal, advanceTo } = tallReplay()
+  await advanceTo('ctrl-c-1')
+  expect(classifyCodexComposerState(terminal.snapshotComposerCells())).toBe('empty')
+})
+
+// Negative first (steering q33/q34): past the 12-row bound the search follows
+// only an UNBROKEN block of rows. A `›` further up, across a blank row, is
+// transcript, not composer, and must not turn an unreadable frame into a
+// draft (or a transcript line into occupancy).
+// #57 review C: the blank row can also sit INSIDE the 12-row window. The walk
+// past the bound must still stop there (a walk that started above the window
+// never saw it and read this markerless frame as `drafted`).
+it('does not follow a tall search across a blank row inside the window', () => {
+  for (const blankAt of [1, 2, 3, 4, 12]) {
+    const rows = [
+      row('› old user message in transcript'),
+      ...Array.from({ length: 13 }, (_, i) => row(i + 1 === blankAt ? '' : `  continuation ${i}`)),
+      row(''),
+      row('  GPT-6-Sol high fast · ~/p'),
+      row('  ? for shortcuts'),
+    ]
+    expect(classifyCodexComposerState(rows)).toBe('unknown')
+  }
+})
+
+// The one blank row the long walk may start above is the empty cursor line a
+// Ctrl+J leaves at the bottom of a draft (recorded: type-line-14 cuts right
+// after a newline). Two trailing blank rows are not that line.
+it('allows only the single trailing cursor line to be blank', () => {
+  const draft = (trailingBlanks: number) => [
+    row('› start of a tall draft'),
+    ...Array.from({ length: 13 }, (_, i) => row(`  draft ${i}`)),
+    ...Array.from({ length: trailingBlanks }, () => row('')),
+    row(''),
+    ...STATUS_ONLY,
+  ]
+  expect(classifyCodexComposerState(draft(1))).toBe('drafted')
+  expect(classifyCodexComposerState(draft(2))).toBe('unknown')
+})
+
+// #57 review C (surviving mutant): the long walk runs only when the bounded
+// search found no marker. A real empty composer under an older, unbroken
+// transcript block is `empty`, not the transcript's `drafted`.
+it('keeps the nearest marker when one is within the bound', () => {
+  const rows = [
+    row('› old user message in transcript'),
+    ...Array.from({ length: 13 }, (_, i) => row(`  transcript ${i}`)),
+    row('› Ask Codex to do anything', true),
+    row(''),
+    ...IDLE_FOOTER,
+  ]
+  expect(classifyCodexComposerState(rows)).toBe('empty')
+})
+
+it('does not follow a tall search across a blank row to a transcript marker', () => {
+  const rows = [
+    row('› an old user message in the transcript'),
+    row(''),
+    ...Array.from({ length: 13 }, (_, i) => row(`  continuation ${i}`)),
+    row(''),
+    row('  GPT-6-Sol high fast · ~/p'),
+    row('  ? for shortcuts'),
+  ]
+  expect(classifyCodexComposerState(rows)).toBe('unknown')
 })
