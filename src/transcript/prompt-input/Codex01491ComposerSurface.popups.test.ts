@@ -43,4 +43,10 @@ describe('Codex 0.157 popups above the composer', () => {
       '  model · high · fast',
     ]))).toMatchObject({ kind: 'primary-composer', draftText: 'explain the memory settings' })
   })
+
+  it.each(['@', 'look at @', '$', 'use $', '/'])('declines a draft that ends in a bare popup sigil: %j', draft => {
+    // The popup opens on the sigil alone, before any character follows it.
+    expect(classifyCodex01491ComposerSurface(frame([`› ${draft}`, '', '  model · high · fast'])))
+      .toEqual({ kind: 'completion-popup' })
+  })
 })

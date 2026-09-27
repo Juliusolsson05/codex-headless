@@ -231,5 +231,7 @@ function isKnownNonComposerModal(text: string): boolean {
 // prompt, which could claim a sibling rollout.
 function draftMayOpenPopup(draft: string): boolean {
   if (draft.trimStart().startsWith('/')) return true
-  return /(?:^|\s)[@$]\S/u.test(draft)
+  // Any token that STARTS with the sigil, including the bare sigil itself: the
+  // popup opens on `@` / `$` before a single character follows it.
+  return /(?:^|\s)[@$]/u.test(draft)
 }
