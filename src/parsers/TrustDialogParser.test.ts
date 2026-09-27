@@ -94,6 +94,42 @@ describe('detectCodexTrustDialog', () => {
     expect(detectCodexTrustDialog(inverted).visible).toBe(false)
   })
 
+  it('ignores a verbatim legacy dialog quoted above the live composer', () => {
+    // Review c of #67: the legacy layout had the same copied-frame phantom the
+    // 0.156+ layout was fixed for. Its hint is the last painted row too.
+    const quoted = [
+      '• Here is the old Codex screen I captured:',
+      REAL_DIALOG,
+      '',
+      '› Ask Codex to do anything',
+      '',
+      '  gpt-5.4 medium fast · ~/project',
+    ].join('\n')
+    expect(detectCodexTrustDialog(quoted).visible).toBe(false)
+    expect(extractCodexStreamingText(quoted)).toContain('Yes, continue')
+  })
+
+  it('requires the legacy options to be adjacent rows directly under the question', () => {
+    const scattered = [
+      '> You are in /tmp/x',
+      '  Do you trust the contents of this directory?',
+      '• unrelated assistant paragraph one',
+      '› 1. Yes, continue',
+      '• unrelated assistant paragraph two',
+      '  2. No, quit',
+      '  Press enter to continue',
+    ].join('\n')
+    expect(detectCodexTrustDialog(scattered).visible).toBe(false)
+  })
+
+  it('reads the legacy Windows hint wrapped over two rows', () => {
+    const wrapped = REAL_DIALOG.replace(
+      '  Press enter to continue',
+      '  Press enter to continue and create a\n  sandbox...',
+    )
+    expect(detectCodexTrustDialog(wrapped).visible).toBe(true)
+  })
+
   it('returns not-visible for empty input', () => {
     expect(detectCodexTrustDialog('').visible).toBe(false)
   })

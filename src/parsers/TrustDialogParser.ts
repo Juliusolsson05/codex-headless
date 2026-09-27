@@ -92,6 +92,7 @@ const YOU_ARE_IN_RE = /^\s*>\s*You are in\s+(.+?)\s*$/
 // keys, so either row may or may not be marked.
 const YES_ROW_RE = /^\s*[›>]?\s*1\.\s*Yes, continue\s*$/
 const NO_ROW_RE = /^\s*[›>]?\s*2\.\s*No, quit\s*$/
+const LEGACY_HINT_RE = /^\s*Press enter to continue(?: and create a sandbox\.\.\.)?\s*$/
 
 /**
  * Detect Codex's trust dialog from a plain-text screen snapshot.
@@ -107,11 +108,38 @@ export function detectCodexTrustDialog(screen: string): CodexTrustDialogState {
 
 function detectYouAreInLayout(screen: string): CodexTrustDialogState | null {
   if (!QUESTION_RE.test(screen)) return null
-
   const lines = screen.split('\n')
-  let anchorIdx = -1
+
+  // WHY bottom-up, like the 0.156+ layout (review c of #67). The first
+  // structural version only required the anchor with the two option rows
+  // somewhere below it, so a transcript quoting the dialog verbatim (or even
+  // with unrelated rows between its lines) was still a live, answerable
+  // phantom. rust-v0.149.1's trust_directory.rs paints "Press enter to
+  // continue" (or the Windows "… and create a sandbox..." variant) as the
+  // dialog's LAST row, below an optional error paragraph, and the options are
+  // adjacent picker rows; a quoted copy always has the live composer below it.
+  let last = lines.length - 1
+  while (last >= 0 && lines[last].trim() === '') last--
+  if (last < 0) return null
+  let hintStart = last
+  if (!LEGACY_HINT_RE.test(lines[last])) {
+    if (last === 0 || lines[last - 1].trim() === '' ||
+      !LEGACY_HINT_RE.test(`${lines[last - 1].trim()} ${lines[last].trim()}`)) return null
+    hintStart = last - 1
+  }
+
+  let yesIdx = -1
+  for (let i = hintStart - 2; i >= 0; i--) {
+    if (YES_ROW_RE.test(lines[i]) && NO_ROW_RE.test(lines[i + 1])) {
+      yesIdx = i
+      break
+    }
+  }
+  if (yesIdx === -1) return null
+
   let workspace: string | undefined
-  for (let i = 0; i < lines.length; i++) {
+  let anchorIdx = -1
+  for (let i = yesIdx - 1; i >= 0; i--) {
     const m = lines[i].match(YOU_ARE_IN_RE)
     if (m) {
       anchorIdx = i
@@ -120,22 +148,6 @@ function detectYouAreInLayout(screen: string): CodexTrustDialogState | null {
     }
   }
   if (anchorIdx === -1) return null
-
-  // Both option rows must appear BELOW the anchor, in order. Scanning the
-  // whole screen would re-admit a transcript that happens to quote them.
-  let yesIdx = -1
-  let noIdx = -1
-  for (let i = anchorIdx + 1; i < lines.length; i++) {
-    if (yesIdx === -1 && YES_ROW_RE.test(lines[i])) {
-      yesIdx = i
-      continue
-    }
-    if (yesIdx !== -1 && NO_ROW_RE.test(lines[i])) {
-      noIdx = i
-      break
-    }
-  }
-  if (yesIdx === -1 || noIdx === -1) return null
 
   return {
     visible: true,

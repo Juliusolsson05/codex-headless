@@ -16,6 +16,14 @@ const HISTORY_FOOTER = /^\s{2}reverse-i-search:/i
 const COMPLETION_FOOTER = /^\s{2}Press enter to insert or esc to close\s*$/i
 const QUEUE_FOOTER = /^  tab to queue(?: message)?\s+\d+% context left\s*$/i
 const IDLE_FOOTER = /^  \S.*\s·\s.+$/u
+// The 0.156+ trust dialog's key hint (#63, codex-headless#65). Codex paints it
+// as the dialog's LAST row, where a composer paints its status footer, and it
+// also has the IDLE_FOOTER shape ("  enter continue · esc quit"). Without this
+// check the dialog was read as a composer whose "draft" is
+// "1. Trust and continue". It is matched on the bottom row only (one wrap
+// allowed: the Windows "… and create sandbox ·" hint wraps below 46 columns),
+// so the same words typed into a draft are never mistaken for it.
+const TRUST_HINT_FOOTER = /^\s*enter continue(?: and create sandbox)?\s*·\s*esc (?:quit|back)\s*$/i
 // Codex 0.149.1 renders Vim mode as a distinct right-hand status atom, with a
 // run of layout padding before the atom and no content after it. A cwd ending
 // in `/Vim: Insert` is part of the left status value and has neither boundary.
@@ -43,6 +51,11 @@ export function classifyCodex01491ComposerSurface(
   const bottom = rows[lastNonBlank] ?? ''
   if (HISTORY_FOOTER.test(bottom)) return { kind: 'history-search' }
   if (COMPLETION_FOOTER.test(bottom)) return { kind: 'completion-popup' }
+  const aboveBottom = rows[lastNonBlank - 1] ?? ''
+  if (TRUST_HINT_FOOTER.test(bottom) ||
+    (aboveBottom.trim() !== '' && TRUST_HINT_FOOTER.test(`${aboveBottom.trim()} ${bottom.trim()}`))) {
+    return { kind: 'non-composer-modal' }
+  }
 
   const composerRow = findComposerRow(rows, lastNonBlank)
   if (composerRow >= 0) {
@@ -154,11 +167,9 @@ function findPreviousNonBlank(rows: readonly string[], from: number): number {
 }
 
 function isKnownNonComposerModal(text: string): boolean {
-  // The 0.156+ trust dialog has none of the legacy phrases (#65); its key hint
-  // row is the one line of it that always sits in this bottom window (it may
-  // wrap once, the Windows variant below 46 columns, hence \s around the dot).
+  // The 0.156+ trust dialog is recognised structurally by TRUST_HINT_FOOTER
+  // before this point, since its hint is always the pane's last row.
   return /Do you trust the contents of this directory/i.test(text) ||
-    /enter continue(?: and create sandbox)?\s*·\s*esc (?:quit|back)/i.test(text) ||
     /Press enter to continue/i.test(text) ||
     /Would you like to run the following command/i.test(text) ||
     /Yes, and don't ask again/i.test(text) ||

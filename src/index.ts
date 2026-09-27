@@ -81,6 +81,9 @@ export {
   detectCodexTrustDialog,
   CODEX_TRUST_DIALOG_ACCEPT_KEYS,
   CODEX_TRUST_DIALOG_DECLINE_KEYS,
+  CODEX_TRUST_DIALOG_FOLDER_ACCESS_ACCEPT_KEYS,
+  CODEX_TRUST_DIALOG_FOLDER_ACCESS_DECLINE_KEYS,
+  type CodexTrustDialogLayout,
   type CodexTrustDialogState,
 } from './parsers/TrustDialogParser.js'
 
