@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import { trustDialogModule } from '../conditions/trustDialog.js'
+import { extractCodexStreamingText } from './ScreenParser.js'
 import {
   CODEX_TRUST_DIALOG_ACCEPT_KEYS,
   CODEX_TRUST_DIALOG_DECLINE_KEYS,
@@ -164,6 +165,45 @@ describe('detectCodexTrustDialog on the 0.156+ Folder access layout', () => {
     expect(detectCodexTrustDialog(prose).visible).toBe(false)
   })
 
+  it('ignores a verbatim copy of the dialog inside a transcript', () => {
+    // Review of #67 (a and b): a pasted upstream .snap or copied terminal frame
+    // satisfied every whole-line anchor and raised an answerable phantom. What
+    // a copy cannot fake is position: the live composer is always below it.
+    for (const name of ['renders_snapshot_for_remote_git_subdirectory', 'renders_restricted_folder']) {
+      const transcript = [
+        '• Here is the Codex screen I captured:',
+        frame(name),
+        '',
+        '› Ask Codex to do anything',
+        '',
+        '  gpt-6-sol high · ~/project',
+      ].join('\n')
+      expect(detectCodexTrustDialog(transcript).visible).toBe(false)
+      // And the quoted frame stays visible as assistant text.
+      expect(extractCodexStreamingText(transcript)).toContain('Folder access')
+    }
+  })
+
+  it('reads the Windows sandbox hint wrapped over two rows at narrow widths', () => {
+    // Upstream wraps "enter continue and create sandbox · esc quit" (46 columns
+    // with the inset) below 46 columns. Built from the upstream git_repo frame,
+    // which carries that hint, re-wrapped the way a 40-column Paragraph does.
+    const wrapped = frame('renders_snapshot_for_git_repo').replace(
+      /^\s*enter continue and create sandbox · esc quit\s*$/m,
+      '  enter continue and create sandbox ·\n  esc quit',
+    )
+    expect(wrapped).toContain('sandbox ·\n  esc quit')
+    expect(detectCodexTrustDialog(wrapped).visible).toBe(true)
+  })
+
+  it('rejects an option 1 label upstream cannot paint', () => {
+    expect(detectCodexTrustDialog(frame('renders_snapshot_for_git_repo').replace('1. Trust and continue', '1. Delete folder')).visible).toBe(false)
+  })
+
+  it('requires the two options to be adjacent rows', () => {
+    expect(detectCodexTrustDialog(frame('renders_snapshot_for_git_repo').replace(/(1\. Trust and continue[^\n]*)\n/, '$1\n\n')).visible).toBe(false)
+  })
+
   it('requires the key hint below the options', () => {
     expect(detectCodexTrustDialog(frame('renders_snapshot_for_git_repo').replace(/\n.*enter continue.*$/m, '')).visible).toBe(false)
   })
@@ -207,6 +247,18 @@ describe('keystrokes and condition actions per layout', () => {
       { kind: 'pty', id: 'accept', label: 'Open restricted', data: '1\r' },
       { kind: 'pty', id: 'reject', label: 'Back to Agent Command Center', data: '2' },
     ])
+  })
+
+  it('labels option 2 Quit when that is what the screen says', () => {
+    // Both option-2 texts are live on the same binary; the Back variant alone
+    // would not catch a condition that always said "Back" (review of #67 b).
+    const state = detectCodexTrustDialog(frame('renders_snapshot_for_git_repo'))
+    expect(trustDialogModule.actions(state).map(action => action.label)).toEqual(['Trust and continue', 'Quit'])
+  })
+
+  it('keeps blanking the streaming text for the legacy dialog', () => {
+    // ScreenParser now delegates to this detector; pin the legacy side too.
+    expect(extractCodexStreamingText(REAL_DIALOG)).toBe('')
   })
 
   it('hands every caller its own action objects', () => {

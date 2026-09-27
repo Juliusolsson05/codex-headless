@@ -176,11 +176,12 @@ function detectYouAreInLayout(screen: string): CodexTrustDialogState | null {
 // contents", no `Yes, continue` / `No, quit`. So the previous parser returned
 // not-visible for a live, blocking dialog.
 //
-// The same STRUCTURAL rule as the legacy layout, for the same reason (prose
-// that quotes the dialog must never raise a blocking modal): a row that is
-// exactly `Folder access`, then BELOW it an adjacent `1.` / `2.` pair, then
-// BELOW that the key hint. Each piece must be a whole line, and the option
-// labels must be ones upstream can paint. The question paragraph is NOT an
+// The same STRUCTURAL rule as the legacy layout, for the same reason (text
+// that quotes the dialog must never raise a blocking modal), plus position:
+// the key hint must be the LAST painted row (see detectFolderAccessLayout),
+// with the nearest adjacent `1.` / `2.` pair above it and the nearest
+// `Folder access` title above that. Each piece must be a whole line, and the
+// option labels must be ones upstream can paint. The question paragraph is NOT an
 // anchor: it has three different texts (trust / restricted / existing task)
 // and it wraps at every width.
 //
@@ -199,9 +200,9 @@ function detectYouAreInLayout(screen: string): CodexTrustDialogState | null {
 //
 // Width floor: every anchor line is at most 33 characters
 // ("  2. Back to Agent Command Center"), and upstream's own 40-column snapshots
-// keep each on one row, so detection holds at 40 columns. The exception is
-// the Windows sandbox hint (46 characters), which wraps below 46 columns.
-// When an anchor wraps, detection fails closed (not visible), the same
+// keep each on one row, so detection holds at 40 columns. The Windows sandbox
+// hint (46 characters) wraps below 46 columns; one wrap is accepted. When
+// anything wraps further, detection fails closed (not visible), the same
 // failure direction as the legacy layout's floor.
 const FOLDER_ACCESS_RE = /^\s*Folder access\s*$/
 const FIRST_OPTION_RE = /^\s*[›>]?\s*1\.\s*(Trust and continue|Open restricted|Open existing task)\s*$/
@@ -220,13 +221,38 @@ function detectFolderAccessLayout(screen: string): CodexTrustDialogState | null 
   if (!screen.includes('Folder access')) return null
   const lines = screen.split('\n')
 
-  const anchorIdx = lines.findIndex(line => FOLDER_ACCESS_RE.test(line))
-  if (anchorIdx === -1) return null
+  // WHY the match is anchored at the BOTTOM of the screen and read upward
+  // (review of #67, both reviewers). The first cut accepted the first
+  // `Folder access` line anywhere, then any later option pair and hint. A
+  // transcript that quotes this dialog verbatim (a pasted upstream .snap, a
+  // copied terminal frame, this repo's own plan) satisfied all of that and
+  // raised a blocking, ANSWERABLE phantom whose keys would then be written
+  // into whatever screen was really up. What a copy cannot fake is position:
+  // this dialog is Codex's onboarding screen, painted before any chat widget
+  // exists, so its key hint is the last painted row. A quoted frame inside a
+  // transcript always has the live composer (and footer) below it.
+  let last = lines.length - 1
+  while (last >= 0 && lines[last].trim() === '') last--
+  if (last < 0) return null
 
-  // The option pair is adjacent in every upstream render: two picker rows
-  // pushed back to back with no spacer between them.
+  // The hint is a wrapping paragraph. The Windows variant ("enter continue
+  // and create sandbox · esc quit", 46 columns with its inset) wraps onto a
+  // second row below 46 columns, so the last row alone or the last two rows
+  // joined must read as the hint.
+  let hintStart = last
+  let hintMatch = lines[last].match(HINT_RE)
+  if (!hintMatch && last > 0 && lines[last - 1].trim() !== '') {
+    hintMatch = `${lines[last - 1].trim()} ${lines[last].trim()}`.match(HINT_RE)
+    hintStart = last - 1
+  }
+  if (!hintMatch) return null
+  const hintVerb = hintMatch[1]
+
+  // The option pair is adjacent in every upstream render (two picker rows
+  // pushed back to back, no spacer) and is the nearest pair above the hint;
+  // only a spacer and an optional error paragraph sit between them.
   let firstIdx = -1
-  for (let i = anchorIdx + 1; i < lines.length - 1; i++) {
+  for (let i = hintStart - 2; i >= 0; i--) {
     if (FIRST_OPTION_RE.test(lines[i]) && SECOND_OPTION_RE.test(lines[i + 1])) {
       firstIdx = i
       break
@@ -235,19 +261,17 @@ function detectFolderAccessLayout(screen: string): CodexTrustDialogState | null 
   if (firstIdx === -1) return null
   const firstLabel = lines[firstIdx].match(FIRST_OPTION_RE)![1]
   const secondLabel = lines[firstIdx + 1].match(SECOND_OPTION_RE)![1]
+  if ((hintVerb === 'quit') !== (secondLabel === 'Quit')) return null
 
-  // The hint sits below the options, after at most a spacer and an error
-  // paragraph, so it is searched for rather than expected at a fixed offset.
-  let hintVerb: string | undefined
-  for (let i = firstIdx + 2; i < lines.length; i++) {
-    const m = lines[i].match(HINT_RE)
-    if (m) {
-      hintVerb = m[1]
+  // The nearest `Folder access` above the options is the dialog's own title.
+  let anchorIdx = -1
+  for (let i = firstIdx - 1; i >= 0; i--) {
+    if (FOLDER_ACCESS_RE.test(lines[i])) {
+      anchorIdx = i
       break
     }
   }
-  if (!hintVerb) return null
-  if ((hintVerb === 'quit') !== (secondLabel === 'Quit')) return null
+  if (anchorIdx === -1) return null
 
   const { workspace, trustTarget } = readFolderAccessPaths(lines.slice(anchorIdx + 1, firstIdx))
 
