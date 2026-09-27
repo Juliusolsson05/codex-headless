@@ -1,10 +1,10 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import { afterEach, expect, it } from 'vitest'
 
-import { EventsMirror, rotatedMirrorPath, serialiseMirrorEvent } from './eventsMirror.js'
+import { EventsMirror, rotatedMirrorPath } from './eventsMirror.js'
 import { ResponsesProxy } from './responsesProxy.js'
 
 // agent-code#372: the mirror was one synchronous append per event with no
@@ -187,6 +187,22 @@ it('marks drops at the end of a run on close', async () => {
     .toEqual(['req-1', 'req-2', 'mirror-dropped'])
 })
 
+// #56 round-3 review A/C: close() writes its drop marker only after the
+// queue has drained, so the marker never sits on top of a full queue.
+it('keeps the close-time drop marker within the queue bound', async () => {
+  const file = tempFile()
+  const mirror = new EventsMirror(file, { maxQueuedBytes: LINE_BYTES })
+  const internals = mirror as unknown as { queuedBytes: number; put(sink: unknown, text: string): void }
+  let peak = 0
+  const put = internals.put.bind(mirror)
+  internals.put = (sink, text) => { put(sink, text); peak = Math.max(peak, internals.queuedBytes) }
+  mirror.write(event(1))
+  mirror.write(event(2))
+  await mirror.close()
+  expect(peak).toBeLessThanOrEqual(LINE_BYTES)
+  expect(linesOf(file).map(line => line.kind === 'response-chunk' ? line.requestId : line.kind)).toEqual(['req-1', 'mirror-dropped'])
+})
+
 // #56 review A2: the queue bound is on everything unwritten, across a
 // rotation. Before, the fresh stream had an empty queue of its own and took
 // more while the old one still held its lines.
@@ -297,20 +313,28 @@ it('counts the rotation marker against the queue', () => {
   return mirror.close()
 })
 
-// #56 review B3: the 64 MiB default is the documented bound. Real recorded
-// bytes, repeated into ~4 MiB events, written until the default rotates.
+// #56 review B3: the 64 MiB default is the documented bound. The run file is
+// pre-sized (sparse, so no 64 MB is written; an earlier version wrote ~70 MB
+// of real events and timed out under load) to just under the default, as a
+// restart would find it; one recorded event must then rotate it, and one
+// event less must not.
 it('rotates at the 64 MiB default', async () => {
-  const file = tempFile()
-  const proxy = new ResponsesProxy({} as never, file)
-  const big = Buffer.concat(Array.from({ length: 1464 }, () => chunk))
-  for (let n = 1; n <= 14; n += 1) {
-    proxy.emit('event', { ...event(n), size: big.length, chunk: big })
-    await proxy.flushMirror()
-  }
-  // Within 64 MiB, and rotated only because the next event would not fit.
-  const bigLine = Buffer.byteLength(serialiseMirrorEvent({ ...event(12), size: big.length, chunk: big }) + '\n')
-  const rotated = statSync(rotatedMirrorPath(file)).size
-  expect(rotated).toBeLessThanOrEqual(64 * 1024 * 1024)
-  expect(rotated + bigLine).toBeGreaterThan(64 * 1024 * 1024)
-  await proxy.stop()
+  const DEFAULT = 64 * 1024 * 1024
+  const fits = tempFile()
+  writeFileSync(fits, '')
+  truncateSync(fits, DEFAULT - LINE_BYTES)
+  const underCap = new ResponsesProxy({} as never, fits)
+  underCap.emit('event', event(1))
+  await underCap.stop()
+  expect(existsSync(rotatedMirrorPath(fits))).toBe(false)
+  expect(statSync(fits).size).toBe(DEFAULT)
+
+  const over = tempFile()
+  writeFileSync(over, '')
+  truncateSync(over, DEFAULT - LINE_BYTES + 1)
+  const atCap = new ResponsesProxy({} as never, over)
+  atCap.emit('event', event(1))
+  await atCap.stop()
+  expect(statSync(rotatedMirrorPath(over)).size).toBe(DEFAULT - LINE_BYTES + 1)
+  expect(linesOf(over).map(line => line.kind === 'response-chunk' ? line.requestId : line.kind)).toEqual(['mirror-rotated', 'req-1'])
 })

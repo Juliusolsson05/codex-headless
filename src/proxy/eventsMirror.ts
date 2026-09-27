@@ -117,6 +117,11 @@ export class EventsMirror {
     if (!this.disabled) {
       // #56 review B1: drops at the very end of a run have no "next line" to
       // carry their marker, so without this the file would look complete.
+      // Drained FIRST (#56 round-3 review A/C): a marker-only write has no line
+      // bytes to check against the queue, so writing it onto a full queue put
+      // one marker over the bound. On an empty queue it is the only thing
+      // queued.
+      await this.flush()
       if (this.droppedEvents > this.reportedDrops) this.append('')
       await this.flush()
       this.disabled = true
