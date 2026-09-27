@@ -42,6 +42,13 @@ While the proxy is in use:
   `Authorization` header** so a leaked bundle cannot expose bearer
   tokens — but it **does** record request bodies (your prompts, base64,
   capped at 2 MiB) and response bytes. Treat that file as sensitive.
+- With `eventsFile` set, the proxy also keeps the newest main-turn Responses
+  request body (up to 16 MiB) in `latest-request-body.json` next to it, so a
+  debug bundle has the prompt even after the events tail has moved past it
+  (agent-code#1336). A body between 2 MiB and 16 MiB is persisted **only**
+  there: the mirror omits it. A crash between writing and renaming can also
+  leave a `latest-request-body.json.<pid>.<n>.tmp` copy beside it. Treat all
+  of these as sensitive.
 
 The proxy is **opt-in**. If you don't construct it, no interception
 happens — Codex talks to the upstream directly and the package observes

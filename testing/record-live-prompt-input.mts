@@ -30,6 +30,10 @@ type InputCase = {
   waitBeforeFinal?: RegExp
   setup?: (session: LiveSession) => Promise<Record<string, unknown>>
   afterDraft?: (session: LiveSession) => Promise<Record<string, unknown>>
+  /** Files created in the workspace before launch (e.g. for `@` file search). */
+  workspaceFiles?: Record<string, string>
+  /** Record only on CLIs that support the 0.156+ adjustments (see cliSupportsNoDaemon). */
+  only0156Plus?: boolean
 }
 
 type CapturedRequest = {
@@ -78,11 +82,18 @@ const fixtureSse = [
   '',
   '',
 ].join('\n')
+const TITLE_REQUEST_PREFIX = 'Generate a concise, single-line task title'
 const binary = await readFile(CODEX_BINARY)
 const binarySha256 = sha256(binary)
 const cliVersion = await binaryVersion()
 const requests: CapturedRequest[] = []
-let releaseSlowResponse: (() => void) | null = null
+// WHY a list, not one slot (#63): the first 0.157.1 diagnosis was a second
+// held slow-turn request overwriting this slot. That second request turned out
+// to be the thread-title side request (now answered unheld and unrecorded in
+// serveFixture). A list still releases every held request, so no future
+// side request can strand the turn the same way.
+const slowResponseReleasers: Array<() => void> = []
+const releaseSlowResponses = (): void => { for (const release of slowResponseReleasers.splice(0)) release() }
 
 const server = createServer(async (req, res) => {
   await serveFixture(req, res)
@@ -109,13 +120,28 @@ const allCases: InputCase[] = [
     expectedDurableText: 'RECORDED_TRUST_PROMPT',
     setup: async session => {
       await waitForScreen(session, screen =>
-        screen.includes('Do you trust the contents of this directory'),
+        screen.includes('Do you trust the contents of this directory') ||
+        screen.includes('1. Trust and continue'),
       )
       const modal = structuralScreen(session)
       await delay(300)
+      if (!session.mirror.snapshotPlain().includes('1. Trust and continue')) {
+        session.terminal.write('1')
+        await waitForComposer(session)
+        return { nonComposerWrites: ['1'], modal }
+      }
+      // WHY 0.156+ takes '1' then Enter (#63, codex-headless#65): upstream
+      // changed `1` to move the highlight only; Enter confirms. Recorded here
+      // in the isolated CODEX_HOME rather than assumed: after '1' alone the
+      // dialog must still be up, and only the Enter reaches the composer.
       session.terminal.write('1')
+      await delay(1000)
+      if (!session.mirror.snapshotPlain().includes('1. Trust and continue')) {
+        throw new Error("0.156+ trust dialog closed on '1' alone; the recorded key contract changed")
+      }
+      session.terminal.write('\r')
       await waitForComposer(session)
-      return { nonComposerWrites: ['1'], modal }
+      return { nonComposerWrites: ['1', '\r'], modal }
     },
   },
   {
@@ -157,7 +183,12 @@ const allCases: InputCase[] = [
     configOverrides: ['tui.vim_mode_default=true'],
     inputChunks: ['i', 'abc', '\r'],
     expectedSubmission: true,
-    expectedDurableText: 'abc',
+    // WHY version-specific (#63): 0.149.1 opened a Vim-default composer in
+    // Normal mode, so the leading `i` only entered Insert. rust-v0.157.1's
+    // chatwidget/constructor.rs calls `enable_vim_in_insert_mode()` instead,
+    // so the same `i` is typed text. The case id keeps its historical name so
+    // the two corpora stay comparable row by row.
+    expectedDurableText: cliStartsVimInInsert(cliVersion) ? 'iabc' : 'abc',
   },
   {
     id: 'unbound-submit-enter',
@@ -177,7 +208,12 @@ const allCases: InputCase[] = [
     id: 'tab-footer-spoof-skill-popup',
     inputChunks: ['literal tab to queue $recorded_evi', '\t'],
     expectedSubmission: false,
-    waitForPopup: /Plugin|Skill|App/i,
+    // WHY the popup's own key hint (#63): the skill list for `$recorded_evi`
+    // reads "no matches" in both recorded versions, so row words like "Skill"
+    // only matched a transient loading frame and made the wait flaky. The hint
+    // is the popup: 0.149.1 paints "Press enter to insert or esc to close"
+    // below the composer; 0.157.1 paints "enter insert · esc close" above it.
+    waitForPopup: /Press enter to insert or esc to close|enter insert · esc close/i,
   },
   {
     id: 'active-footer-tab-queue',
@@ -267,13 +303,36 @@ const allCases: InputCase[] = [
     startupOnly: true,
     expectedStartupFailure: /composer\.queue.*composer\.toggle_shortcuts|composer\.toggle_shortcuts.*composer\.queue/i,
   },
+  // WHY these two (review a of codex-headless#69): 0.157.1 paints EVERY popup
+  // above the composer, and the slash-command and file popups carry no hint
+  // row. A frame with a popup open therefore looks like an idle composer with
+  // a draft, and Enter, which selects the popup's item, must not count as a
+  // submission of the draft. Enter is the key the skill-popup case never
+  // pressed (it pressed Tab). Recorded on 0.156+ only: the 0.149.1 corpus
+  // cannot be re-recorded, because that binary is no longer installed.
+  {
+    id: 'slash-popup-enter-selects-command',
+    only0156Plus: true,
+    inputChunks: ['/stat', '\r'],
+    expectedSubmission: false,
+    waitBeforeFinal: /\/status/,
+  },
+  {
+    id: 'file-popup-enter-inserts-mention',
+    only0156Plus: true,
+    workspaceFiles: { 'README.md': '# recorded fixture\n' },
+    inputChunks: ['@READ', '\r'],
+    expectedSubmission: false,
+    waitBeforeFinal: /README\.md/,
+  },
 ]
 const requestedCases = new Set(
   (process.env.CODEX_INPUT_RECORD_CASES ?? '').split(',').filter(Boolean),
 )
+const versionCases = allCases.filter(inputCase => !inputCase.only0156Plus || cliSupportsNoDaemon(cliVersion))
 const cases = requestedCases.size === 0
-  ? allCases
-  : allCases.filter(inputCase => requestedCases.has(inputCase.id))
+  ? versionCases
+  : versionCases.filter(inputCase => requestedCases.has(inputCase.id))
 
 const output: Record<string, unknown>[] = []
 try {
@@ -416,12 +475,12 @@ try {
           screen.includes('Queued follow-up inputs') &&
           screen.includes('RECORDED_QUEUED_PROMPT'),
         )
-        releaseSlowResponse?.()
-        releaseSlowResponse = null
+        releaseSlowResponses()
       }
 
       let durableUserText: string | null = null
       let requestUserText: string | null = null
+      let promptRequest: CapturedRequest | undefined
       if (inputCase.expectedSubmission) {
         try {
           await waitFor(async () => {
@@ -447,11 +506,19 @@ try {
             `last screen=${JSON.stringify(structuralScreen(session))}`,
           )
         }
-        await waitFor(() => session.requests.length > beforeRequests,
+        // WHY find the request that carries the prompt, not the last one
+        // (#63): 0.157.1 can re-send a request that the fixture holds (the
+        // slow turn) after its own idle timeout. So after a queued follow-up,
+        // the newest request is sometimes that retry, not the follow-up. The
+        // agreement still has to hold: a request whose final user message is
+        // the durable prompt must arrive, or the recording fails.
+        const matchingRequest = () => session.requests.slice(beforeRequests)
+          .filter(request => extractLastRequestUserText(request.body) === durableUserText)
+          .at(-1)
+        await waitFor(() => matchingRequest() !== undefined,
           `${inputCase.id} fixture request`)
-        requestUserText = extractLastRequestUserText(
-          session.requests.at(-1)?.body,
-        )
+        promptRequest = matchingRequest()!
+        requestUserText = extractLastRequestUserText(promptRequest.body)
       } else {
         await delay(1_200)
         const afterUsers = await readDurableUserTexts(session.codexHome)
@@ -473,8 +540,8 @@ try {
 
       const rawPtySha256 = sha256(session.rawPtyChunks.join(''))
       const rolloutSha256 = await hashRolloutCorpus(session.codexHome)
-      const rawRequestSha256 = session.requests.length > beforeRequests
-        ? sha256(JSON.stringify(session.requests.at(-1)!.body))
+      const rawRequestSha256 = promptRequest
+        ? sha256(JSON.stringify(promptRequest.body))
         : null
       output.push({
         id: inputCase.id,
@@ -503,8 +570,7 @@ try {
         ...afterDraft,
       })
     } finally {
-      releaseSlowResponse?.()
-      releaseSlowResponse = null
+      releaseSlowResponses()
       try { session.terminal.kill() } catch { /* Provider may already have exited. */ }
       session.mirror.dispose()
       await rm(session.codexHome, { recursive: true, force: true })
@@ -521,7 +587,9 @@ process.stdout.write(`${JSON.stringify({
   provider: {
     cliVersion,
     binarySha256,
-    upstreamTag: 'rust-v0.149.1',
+    // Derived, not a literal: the 0.157.1 corpus (#63) is recorded by the
+    // same script, and a hard-coded 0.149.1 tag mislabelled its provenance.
+    upstreamTag: `rust-v${/(\d+\.\d+\.\d+)/.exec(cliVersion)?.[1] ?? 'unknown'}`,
   },
   terminal: { cols: COLS, rows: ROWS },
   source: {
@@ -542,9 +610,20 @@ async function startSession(inputCase: InputCase): Promise<LiveSession> {
     ? join(workspaceRoot, inputCase.workspaceSuffix)
     : workspaceRoot
   if (inputCase.workspaceSuffix) await mkdir(workspace, { recursive: true })
+  for (const [name, content] of Object.entries(inputCase.workspaceFiles ?? {})) {
+    await writeFile(join(workspace, name), content)
+  }
   await mkdir(join(codexHome, 'skills', 'recorded-evidence'), { recursive: true })
   await writeFile(
     join(codexHome, 'skills', 'recorded-evidence', 'SKILL.md'),
+    // WHY frontmatter from 0.156 (#63): 0.157.1 rejects a SKILL.md without
+    // YAML frontmatter ("missing YAML frontmatter delimited by ---"). The skill
+    // then does not load, so the `$` popup case has nothing to pop, and the
+    // startup warning takes over the footer row where `reverse-i-search:`
+    // paints. Gated so the 0.149.1 recording's skill file is unchanged.
+    (cliSupportsNoDaemon(cliVersion)
+      ? '---\nname: recorded-evidence\ndescription: A harmless local fixture used only by the prompt-input recorder.\n---\n\n'
+      : '') +
     '# Recorded evidence\n\nA harmless local fixture used only by the prompt-input recorder.\n',
   )
   const trusted = inputCase.trusted ?? true
@@ -564,6 +643,17 @@ async function startSession(inputCase: InputCase): Promise<LiveSession> {
       'trust_level = "trusted"',
       '',
     ] : []),
+    // WHY from 0.156 (#63): 0.157.1's bundled models.json lists
+    // gpt-5.6-sol -> gpt-6-sol as an upgrade, so a fresh CODEX_HOME opens a
+    // "Try new model" startup prompt before the composer. Recording that the
+    // migration was already seen (the same table Codex writes when the user
+    // answers) keeps the recorded model identical to the 0.149.1 corpus. Gated
+    // so the 0.149.1 recording's config stays byte-for-byte what it was.
+    ...(cliSupportsNoDaemon(cliVersion) ? [
+      '[notice.model_migrations]',
+      '"gpt-5.6-sol" = "gpt-6-sol"',
+      '',
+    ] : []),
     ...(inputCase.lowerLayerConfig ?? []),
     ...(inputCase.lowerLayerConfig?.length ? [''] : []),
   ].join('\n')
@@ -572,7 +662,21 @@ async function startSession(inputCase: InputCase): Promise<LiveSession> {
   const args = [
     '--sandbox', 'read-only',
     '--ask-for-approval', 'never',
-    '--no-alt-screen',
+    // WHY optional from 0.157 (#63): 0.157 made the fullscreen transcript
+    // (alternate screen) the default, and Agent Code launches Codex WITHOUT
+    // this flag. A corpus recorded only inline would not describe the screen
+    // the app's panes actually show. CODEX_INPUT_RECORD_ALT_SCREEN=1 records
+    // with the app's launch shape; the default keeps the historical inline
+    // recording comparable with the 0.149.1 corpus.
+    ...(process.env.CODEX_INPUT_RECORD_ALT_SCREEN === '1' ? [] : ['--no-alt-screen']),
+    // WHY --no-daemon from 0.157 (#63, #66): 0.157 auto-starts a managed
+    // app-server daemon whose control socket lives under CODEX_HOME. This
+    // recorder's isolated CODEX_HOME under macOS $TMPDIR makes that socket
+    // path longer than SUN_LEN, and Codex then refuses to start at all ("app
+    // server did not become ready … path must be shorter than SUN_LEN"). The
+    // daemon it spawned also outlives the deleted home. The flag is gated
+    // because older CLIs reject unknown arguments.
+    ...(cliSupportsNoDaemon(cliVersion) ? ['--no-daemon'] : []),
   ]
   for (const override of inputCase.configOverrides ?? []) {
     args.push('-c', override)
@@ -624,6 +728,18 @@ async function serveFixture(req: IncomingMessage, res: ServerResponse): Promise<
   for await (const chunk of req) chunks.push(Buffer.from(chunk))
   const bodyText = Buffer.concat(chunks).toString('utf8')
   const body = JSON.parse(bodyText) as unknown
+  // WHY title requests are answered but never recorded or held (#63). 0.157.1
+  // sends a SECOND request per first prompt, a thread-title side request
+  // (tui/src/app/thread_title.rs at rust-v0.157.1: "Generate a concise,
+  // single-line task title … User prompt:\n<prompt>"). It is not the user's
+  // turn. Recorded, it became `requests.at(-1)` and the rollout/request
+  // agreement compared the prompt against the title prompt. Held, because it
+  // quotes RECORDED_SLOW_TURN, it kept the slow turn's queue from draining.
+  if (extractLastRequestUserText(body)?.startsWith(TITLE_REQUEST_PREFIX)) {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
+    res.end(fixtureSse)
+    return
+  }
   requests.push({ body, receivedAt: Date.now() })
   if (bodyText.includes('RECORDED_SLOW_TURN')) {
     // Keep the HTTP request pending before any SSE bytes are written. Splitting
@@ -631,7 +747,7 @@ async function serveFixture(req: IncomingMessage, res: ServerResponse): Promise<
     // report an incomplete stream; holding the request itself preserves the
     // provider's real working/queue UI while the eventual response remains the
     // same independently validated complete fixture used by the control turns.
-    await new Promise<void>(resolveRelease => { releaseSlowResponse = resolveRelease })
+    await new Promise<void>(resolveRelease => { slowResponseReleasers.push(resolveRelease) })
   }
   res.writeHead(200, {
     'content-type': 'text/event-stream',
@@ -683,8 +799,17 @@ async function waitFor(
 
 function structuralScreen(session: LiveSession): string[] {
   const screenRows = session.mirror.snapshotPlain().split('\n')
-  const rowCount = screenRows.some(row => row.includes('Do you trust the contents')) ? 12 : 8
-  return screenRows.slice(-rowCount).map(row => sanitizeScreenRow(session, row))
+  const rowCount = screenRows.some(row => row.includes('Do you trust the contents')) ? 12
+    : screenRows.some(row => row.includes('1. Trust and continue')) ? 16 : 8
+  // WHY end at the last painted row from 0.156 (#63): 0.157.1 fullscreen
+  // paints its trust dialog (and a short session) from the TOP of the screen,
+  // so a bottom window recorded only blank rows. Gated so the 0.149.1
+  // recording conditions are unchanged.
+  let end = screenRows.length
+  if (cliSupportsNoDaemon(cliVersion)) {
+    while (end > 0 && screenRows[end - 1]!.trim() === '') end--
+  }
+  return screenRows.slice(Math.max(0, end - rowCount), end).map(row => sanitizeScreenRow(session, row))
 }
 
 function sanitizeScreenRow(session: LiveSession, row: string): string {
@@ -740,9 +865,18 @@ async function recordResizeBoundary(
     throw new Error('provider bytes arrived inside the synchronous resize boundary')
   }
 
+  // WHY wait for the rows to CHANGE, not merely for newer bytes (#63). In
+  // 0.157.1 fullscreen the first bytes after SIGWINCH are a status/spinner
+  // chunk, followed by a quiet gap, and the composer is repainted at the new
+  // width only later, on the TUI's frame timer (live: still the 52-column wrap
+  // at 300 ms, repainted by 3.3 s). Stopping at the first quiet point recorded
+  // a stale frame as "after provider redraw", and the replay test then
+  // projected a repaint onto it that never happened.
+  const narrowRows = narrow.rows.map(row => row.text).join('\n')
   await waitFor(() => {
     const frame = session.mirror.snapshotStableFrame()
-    return frame !== null && frame.generation > beforeProviderRedraw.generation
+    return frame !== null && frame.generation > beforeProviderRedraw.generation &&
+      frame.rows.map(row => row.text).join('\n') !== narrowRows
   }, 'provider redraw after resize')
   await waitForPtyQuiet(session)
   const afterProviderRedraw = session.mirror.snapshotStableFrame()
@@ -863,8 +997,7 @@ async function recordUnchangedRedrawAfterEdit(
     throw new Error('slow setup prompt did not agree at rollout/request boundaries')
   }
 
-  releaseSlowResponse?.()
-  releaseSlowResponse = null
+  releaseSlowResponses()
   await waitForScreen(session, screen =>
     !screen.includes('Working (') && screen.includes(edit),
   )
@@ -959,10 +1092,15 @@ async function waitForPtyQuiet(session: LiveSession, quietMs = 200): Promise<voi
   throw new Error('Timed out waiting for a complete quiet PTY frame')
 }
 
+// WHY the window ends at the last painted row, not the last screen row (#63):
+// 0.149.1 painted its inline UI against the bottom of the screen, so the
+// bottom ten rows held the composer. 0.157.1 paints a short session from the
+// top, and the bottom rows are blank, so a fixed bottom window recorded ten
+// blank rows plus the footer and left the composer out of the resize frames.
 function structuralStableFrame(
   session: LiveSession,
   frame: StableTerminalFrame,
-  end = frame.rows.length,
+  end = stableFrameContentEnd(frame),
 ): Record<string, unknown> {
   const start = Math.max(0, end - 10)
   return {
@@ -1049,6 +1187,22 @@ async function hashRolloutCorpus(codexHome: string): Promise<string> {
   const hash = createHash('sha256')
   for (const file of files) hash.update(await readFile(file))
   return hash.digest('hex')
+}
+
+// Exact recorded versions only: the Normal-to-Insert start changed somewhere
+// between 0.149.1 and 0.157.1, and no intermediate release was recorded.
+function cliStartsVimInInsert(version: string): boolean {
+  return /\b0\.157\.1\b/.test(version)
+}
+
+// Also the version gate for the 0.156+ recording adjustments in startSession.
+// `--no-daemon` first appears in codex --help at 0.156 (checked against the
+// installed 0.150.1–0.157.1 standalone releases: absent through 0.155.1, present from 0.156.0).
+function cliSupportsNoDaemon(version: string): boolean {
+  const match = /(\d+)\.(\d+)\.(\d+)/.exec(version)
+  if (!match) return false
+  const [major, minor] = [Number(match[1]), Number(match[2])]
+  return major > 0 || minor >= 156
 }
 
 async function binaryVersion(): Promise<string> {

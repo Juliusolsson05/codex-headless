@@ -97,6 +97,8 @@ import {
   isCodexUserPromptLine, isCodexStatusLine, isCodexIntermediateChromeLine,
   detectCodexApproval, isApprovalOverlayVisible,
   detectCodexTrustDialog, CODEX_TRUST_DIALOG_ACCEPT_KEYS,
+  CODEX_TRUST_DIALOG_DECLINE_KEYS, CODEX_TRUST_DIALOG_FOLDER_ACCESS_ACCEPT_KEYS,
+  CODEX_TRUST_DIALOG_FOLDER_ACCESS_DECLINE_KEYS,
   diffLines,
   // Transcript
   isCodexConversationEntry, isCodexResponseItem, isCodexEventMsg,
@@ -220,7 +222,7 @@ shared verbatim with `claude-code-headless` (see the header comment in
 | Transcript | `~/.claude/projects/<sanitized-cwd>/<uuid>.jsonl` (per-cwd) | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (date-bucketed globally) |
 | Assistant marker | `⏺` | `•` (or older `◦`) |
 | User marker | `❯` | `›` |
-| Trust prompt | "Accessing workspace" | "Do you trust the contents of this directory" |
+| Trust prompt | "Accessing workspace" | "Do you trust the contents of this directory" (≤ 0.149); "Folder access" / "Trust this folder?" (0.156+) |
 | Proxy | mitmproxy TLS interceptor | plain HTTP server behind `openai_base_url` |
 
 ---
@@ -421,9 +423,13 @@ also carries `ts: number` (epoch ms).
 
 Notes on the `trust_dialog` action callbacks:
 
-- `accept()` writes `CODEX_TRUST_DIALOG_ACCEPT_KEYS` (`'\r'`) —
-  confirms the pre-selected "Yes, continue".
-- `reject()` writes `'2\r'` — selects "No, quit".
+- `accept()` writes the matched layout's `acceptKeys`: `'1'` on the legacy
+  layout (selects "Yes, continue" at once); `'1\r'` on the 0.156+ layout,
+  where `1` only moves the highlight to option 1 and Enter confirms it.
+- `reject()` writes the layout's `declineKeys`, `'2'` in both layouts. It
+  selects option 2 at once, with no trailing Enter to leak into the next
+  screen. On 0.156+ option 2 is "Quit", or "Back to Agent Command Center"
+  when Codex is connected to its background server.
 
 The `event` flat surface only emits a `{ type: 'trust_dialog', … }`
 member when the dialog becomes **visible**; the simple `trust-dialog`
@@ -1138,7 +1144,7 @@ on-screen.
 | Field | Type | Description |
 | --- | --- | --- |
 | `state` | `CodexTrustDialogState` | The parsed trust dialog (§7.3). |
-| `actions` | `ConditionAction[]` | `accept` (Trust folder, writes `'\r'`), `reject` (Quit, writes `'2\r'`). |
+| `actions` | `ConditionAction[]` | `accept` and `reject`, writing the state's `acceptKeys` / `declineKeys` (above). Legacy labels are "Trust folder" / "Quit"; 0.156+ labels are the option texts painted on screen. |
 
 **`CodexApprovalCondition`** — `kind: 'codex.approval'`
 
@@ -1301,23 +1307,27 @@ title matching, returns `boolean`.
 detectCodexTrustDialog(screen: string): CodexTrustDialogState
 ```
 
-Detects Codex's first-launch-in-a-new-directory trust dialog. **All**
-required markers must be present (conservative — avoids
-false-positiving on assistant text that mentions "trust"):
-`Do you trust the contents of this directory`, `Yes, continue`,
-`No, quit`.
+Detects Codex's first-launch trust dialog in either upstream layout, **structurally**: the dialog's key hint must be the last painted row, with the adjacent option pair above it and the dialog's title line above that. A transcript that quotes the dialog, even verbatim, always has the live composer below it and never matches.
+
+- **Legacy (≤ 0.149.1):** `> You are in <path>`, `1. Yes, continue` / `2. No, quit`, then `Press enter to continue`.
+- **0.156+:** `Folder access` and the path, `1. Trust and continue` (or `Open restricted` / `Open existing task`), then `2. Quit` (or `Back to Agent Command Center`), then `enter continue · esc quit|back`. One wrap of the hint is accepted.
 
 `CodexTrustDialogState`:
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `visible` | `boolean` | |
-| `workspace?` | `string` | The directory Codex asks to trust, parsed from a `> You are in <path>` line. |
-| `options?` | `Array<{ key: string; label: string }>` | The two options, hardcoded `{ '1', 'Yes, continue' }` / `{ '2', 'No, quit' }`. |
+| `workspace?` | `string` | The folder the dialog names. Hard-wrapped path rows are joined. |
+| `trustTarget?` | `string` | 0.156+ only: the Git repository root that trust applies to, when Codex is in a subdirectory. |
+| `options?` | `Array<{ key: string; label: string }>` | The two options, labels as painted. |
+| `layout?` | `'you-are-in' \| 'folder-access'` | Which layout matched. |
+| `acceptKeys?` / `declineKeys?` | `string` | The bytes that choose option 1 / option 2 on that layout. |
 
-`CODEX_TRUST_DIALOG_ACCEPT_KEYS` = `'\r'` — confirms the pre-selected
-"Yes, continue". (Reject is `'2\r'`, not exported as a constant —
-see the trust-dialog condition's `reject` action.)
+Constants:
+- `CODEX_TRUST_DIALOG_ACCEPT_KEYS` = `'1'` and `CODEX_TRUST_DIALOG_DECLINE_KEYS` = `'2'` (legacy layout).
+- `CODEX_TRUST_DIALOG_FOLDER_ACCESS_ACCEPT_KEYS` = `'1\r'` and `CODEX_TRUST_DIALOG_FOLDER_ACCESS_DECLINE_KEYS` = `'2'` (0.156+).
+
+Prefer the state's `acceptKeys` / `declineKeys` over the constants.
 
 ### 7.4 Line diff — `LineDiff.ts`
 
@@ -1601,7 +1611,7 @@ static ResponsesProxy.create(options?: {
 | --- | --- | --- | --- |
 | `authMode` | `CodexAuthMode` (`'apikey' \| 'chatgpt'`) | auto-detected | Which auth path Codex uses. Auto-detection reads `~/.codex/auth.json`; absent → `'apikey'`. |
 | `upstreamBaseUrl` | `string` | derived from `authMode` | The real upstream. Defaults: `apikey` → `https://api.openai.com/v1`, `chatgpt` → `https://chatgpt.com/backend-api/codex`. |
-| `eventsFile` | `string` | unset | If set, every emitted `event` is also written as a JSON line to this file (forensic mirror; `Buffer` payloads are inlined as `{ _buffer_b64 }`. Dumps written before agent-code#372's fix hold `{"type":"Buffer","data":[…]}` byte arrays instead, so a reader of older files must accept both). Written asynchronously through one ordered stream, never on the emitting call. When a line would push the total unwritten bytes (across the live and any rotated-out file) past 16 MiB, it is dropped and counted. A `{kind:'mirror-dropped', droppedEvents, droppedBytes}` line precedes the next written line, or is written at `stop()` if no line follows. Markers obey the same bounds: with a queue cap smaller than one marker (only ever a test setting), the marker is not written and the drops stay counted in the mirror's stats. Call `flushMirror()` to wait for the queue; `stop()` flushes and closes it. |
+| `eventsFile` | `string` | unset | If set, every emitted `event` is also written as a JSON line to this file (forensic mirror; `Buffer` payloads are inlined as `{ _buffer_b64 }`. Dumps written before agent-code#372's fix hold `{"type":"Buffer","data":[…]}` byte arrays instead, so a reader of older files must accept both). Written asynchronously through one ordered stream, never on the emitting call. When a line would push the total unwritten bytes (across the live and any rotated-out file) past 16 MiB, it is dropped and counted. A `{kind:'mirror-dropped', droppedEvents, droppedBytes}` line precedes the next written line, or is written at `stop()` if no line follows. Markers obey the same bounds: with a queue cap smaller than one marker (only ever a test setting), the marker is not written and the drops stay counted in the mirror's stats. Also keeps the newest main-turn `responses*` request body in `latest-request-body.json` beside the file: one line, `{kind:'request-body-latest', requestId, endpoint, body_b64}` (raw on-wire bytes, zstd on current Codex), the name and kind of the Claude addon's sidecar. Requests with an output schema (`request_shape.has_output_schema`, e.g. title generation), subagent requests (`x-openai-subagent` other than `compact`), and bodiless requests never replace it. A newer body removes the old file at once. A write superseded by a newer body never lands, and a body over 16 MiB leaves no file, so the file is never an older prompt. Writes are asynchronous, encoded in 768 KiB slices, and keep at most one pending body. Call `flushMirror()` to wait for the queue and the sidecar; `stop()` flushes and closes them. |
 | `eventsFileMaxBytes` | `number` | 64 MiB | When the next line would pass this size, the file is renamed to `<name>.1.jsonl` (replacing any earlier one) and a fresh file starts with `{kind:'mirror-rotated', rotatedBytes, rotations, droppedEvents, droppedBytes}`. Every file stays within the cap, markers included, so a run holds at most two files of this size. A line that cannot fit even in a fresh file is dropped and counted. A restart that appends to a file already at the cap rotates on its first event. |
 
 `create()` starts listening before resolving. The resolved instance

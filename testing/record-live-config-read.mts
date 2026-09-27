@@ -16,10 +16,13 @@ const INITIALIZE_ID = 'agent-code-config-initialize'
 const CONFIG_READ_ID = 'agent-code-config-read'
 const binary = process.env.CODEX_BINARY ?? 'codex'
 const cwd = process.env.CODEX_INPUT_RECORD_CWD ?? process.cwd()
-const sourceEvidencePath = fileURLToPath(new URL(
-  './fixtures/prompt-input/codex-01491-config-source.json',
-  import.meta.url,
-))
+// WHY a table of exact recorded versions (#63): the upstream commit is not
+// derivable from the binary, and the source evidence is a per-tag audit of the
+// config precedence code. A version with no row here has no audited source.
+const RECORDED_UPSTREAM: Record<string, { commit: string; sourceEvidence: string }> = {
+  '0.149.1': { commit: 'ff29a44391deccde0aba0f8390337d7f3c319ea4', sourceEvidence: 'codex-01491-config-source.json' },
+  '0.157.1': { commit: '36650394c5b38c2990ccf2a3457165ca3e9d9726', sourceEvidence: 'codex-01571-config-source.json' },
+}
 
 // WHY this recorder projects only key routing, version, and layer types. A
 // config/read response may contain private paths, MCP declarations, and future
@@ -27,13 +30,19 @@ const sourceEvidencePath = fileURLToPath(new URL(
 // fixture into a secret/configuration archive. The production attestor must
 // likewise inspect in memory and return only a capability or a generic refusal.
 const projection = await recordProjection()
+const upstream = RECORDED_UPSTREAM[projection.cliVersion]
+if (!upstream) throw new Error(`no audited upstream source for Codex ${projection.cliVersion}`)
+const sourceEvidencePath = fileURLToPath(new URL(
+  `./fixtures/prompt-input/${upstream.sourceEvidence}`,
+  import.meta.url,
+))
 process.stdout.write(`${JSON.stringify({
   schemaVersion: 1,
   provider: {
     cliVersion: projection.cliVersion,
     binarySha256: sha256File(binary),
-    upstreamTag: 'rust-v0.149.1',
-    upstreamCommitSha: 'ff29a44391deccde0aba0f8390337d7f3c319ea4',
+    upstreamTag: `rust-v${projection.cliVersion}`,
+    upstreamCommitSha: upstream.commit,
   },
   protocol: {
     transport: 'app-server-stdio-jsonl',

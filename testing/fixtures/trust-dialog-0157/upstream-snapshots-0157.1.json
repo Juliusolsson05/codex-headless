@@ -1,0 +1,50 @@
+{
+ "evidence": "Upstream insta snapshots of TrustDirectoryWidget at tag rust-v0.157.1 (commit 36650394c5b3), copied verbatim from openai/codex (Apache-2.0). They are upstream TEST OUTPUT, not local recordings: they cover the layout variants a single local folder cannot produce (Git subdirectory, saved-untrusted, existing task, trust-write error, 40-column truncation).",
+ "snapshots": [
+  {
+   "name": "existing_untrusted_task",
+   "source": "openai/codex rust-v0.157.1 codex-rs/tui/src/onboarding/snapshots/codex_tui__onboarding__trust_directory__tests__existing_untrusted_task.snap",
+   "frame": "\n  Folder access\n  /workspace/project                                                \n\n  This existing task may retain settings and history, including\n  project configuration or hooks loaded while it was trusted. To use\n  restricted settings, start a new task. The folder's trust setting\n  will not change.\n\n› 1. Open existing task                                               \n  2. Back to Agent Command Center\n\n  enter continue · esc back"
+  },
+  {
+   "name": "folder_picker_restricted_40x24",
+   "source": "openai/codex rust-v0.157.1 codex-rs/tui/src/onboarding/snapshots/codex_tui__onboarding__trust_directory__tests__folder_picker_restricted_40x24.snap",
+   "frame": "\n  Folder access\n  /workspace/project/long-nested-folde\n  r                                   \n\n  Config, hooks, and exec policies\n  from untrusted folders stay\n  disabled. Trusted project folders\n  can still contribute settings.\n  Skills still load, and tools follow\n  your permission settings. Opening\n  will not change saved trust.\n\n› 1. Open restricted                    \n  2. Back to Agent Command Center\n\n  enter continue · esc back"
+  },
+  {
+   "name": "long_checkout_40x13",
+   "source": "openai/codex rust-v0.157.1 codex-rs/tui/src/onboarding/snapshots/codex_tui__onboarding__trust_directory__tests__long_checkout_40x13.snap",
+   "frame": "  Folder access\n  workspace/…/repository              \n  Trust this folder? Codex can read,\n  edit, and run files here, subject to\n  your permission settings. Folder\n  settings can run code automatically,\n  even without a model request.\n  Continue only if you trust these\n  files. Your trust decision will be\n  saved.\n› 1. Trust and continue                 \n  2. Quit\n  enter continue · esc quit"
+  },
+  {
+   "name": "long_repository_root_40x17",
+   "source": "openai/codex rust-v0.157.1 codex-rs/tui/src/onboarding/snapshots/codex_tui__onboarding__trust_directory__tests__long_repository_root_40x17.snap",
+   "frame": "  Folder access\n  workspace/…/repository/checkout     \n  Note: You’re in a subdirectory of a \n  Git project. Trusting will apply to \n  the repository root:                \n  workspace/…/repository              \n  Trust this folder? Codex can read,\n  edit, and run files here, subject to\n  your permission settings. Folder\n  settings can run code automatically,\n  even without a model request.\n  Continue only if you trust these\n  files. Your trust decision will be\n  saved.\n› 1. Trust and continue                 \n  2. Quit\n  enter continue · esc quit"
+  },
+  {
+   "name": "only_repository_root_fits_40x16",
+   "source": "openai/codex rust-v0.157.1 codex-rs/tui/src/onboarding/snapshots/codex_tui__onboarding__trust_directory__tests__only_repository_root_fits_40x16.snap",
+   "frame": "  Folder access\n  Note: You’re in a subdirectory of a \n  Git project. Trusting will apply to \n  the repository root:                \n  workspace/…/repository              \n  Trust this folder? Codex can read,\n  edit, and run files here, subject to\n  your permission settings. Folder\n  settings can run code automatically,\n  even without a model request.\n  Continue only if you trust these\n  files. Your trust decision will be\n  saved.\n› 1. Trust and continue                 \n  2. Quit\n  enter continue · esc quit"
+  },
+  {
+   "name": "renders_restricted_folder",
+   "source": "openai/codex rust-v0.157.1 codex-rs/tui/src/onboarding/snapshots/codex_tui__onboarding__trust_directory__tests__renders_restricted_folder.snap",
+   "frame": "\n  Folder access\n  /workspace/project                                                \n\n  Config, hooks, and exec policies from untrusted folders stay\n  disabled. Trusted project folders can still contribute settings.\n  Skills still load, and tools follow your permission settings.\n  Opening will not change saved trust.\n\n› 1. Open restricted                                                  \n  2. Back to Agent Command Center\n\n  enter continue · esc back"
+  },
+  {
+   "name": "renders_snapshot_for_git_repo",
+   "source": "openai/codex rust-v0.157.1 codex-rs/tui/src/onboarding/snapshots/codex_tui__onboarding__trust_directory__tests__renders_snapshot_for_git_repo.snap",
+   "frame": "\n  Folder access\n  /workspace/project                                                \n\n  Trust this folder? Codex can read, edit, and run files here,\n  subject to your permission settings. Folder settings can run code\n  automatically, even without a model request. Continue only if you\n  trust these files. Your trust decision will be saved.\n\n› 1. Trust and continue                                               \n  2. Quit\n\n  enter continue and create sandbox · esc quit"
+  },
+  {
+   "name": "renders_snapshot_for_remote_git_subdirectory",
+   "source": "openai/codex rust-v0.157.1 codex-rs/tui/src/onboarding/snapshots/codex_tui__onboarding__trust_directory__tests__renders_snapshot_for_remote_git_subdirectory.snap",
+   "frame": "\n  Folder access\n  /srv/remote/project/nested\n\n  Note: You’re in a subdirectory of a Git project. Trusting will\n  apply to the repository root:\n  /srv/remote/project\n\n  Trust this folder? Codex can read, edit, and run files here,\n  subject to your permission settings. Folder settings can run code\n  automatically, even without a model request. Continue only if you\n  trust these files. Your trust decision will be saved.\n\n› 1. Trust and continue\n  2. Back to Agent Command Center\n\n  enter continue · esc back"
+  },
+  {
+   "name": "renders_snapshot_for_trust_error",
+   "source": "openai/codex rust-v0.157.1 codex-rs/tui/src/onboarding/snapshots/codex_tui__onboarding__trust_directory__tests__renders_snapshot_for_trust_error.snap",
+   "frame": "\n  Folder access\n  /workspace/project                                                \n\n  Trust this folder? Codex can read, edit, and run files here,\n  subject to your permission settings. Folder settings can run code\n  automatically, even without a model request. Continue only if you\n  trust these files. Your trust decision will be saved.\n\n› 1. Trust and continue                                               \n  2. Quit\n\n  Failed to set trust for /workspace/project: config/batchWrite     \n  failed in TUI: Invalid configuration: features.fast_mode=true is  \n  not supported; allowed set [fast_mode=false]                      \n\n  enter continue · esc quit"
+  }
+ ]
+}

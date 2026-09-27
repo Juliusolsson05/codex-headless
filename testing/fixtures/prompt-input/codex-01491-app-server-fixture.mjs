@@ -4,8 +4,11 @@ import { readFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 
+// WHY the recording is selectable (#63): each recorded Codex version has its
+// own config/read projection, and the profile tests replay each one through
+// this same protocol shell. The default stays the original 0.149.1 file.
 const recorded = JSON.parse(readFileSync(fileURLToPath(new URL(
-  './codex-01491-config-read-recorded.json',
+  process.env.CODEX_PROFILE_FIXTURE_RECORDING ?? './codex-01491-config-read-recorded.json',
   import.meta.url,
 )), 'utf8'))
 const mode = process.env.CODEX_PROFILE_FIXTURE_MODE ?? 'recorded-safe'
