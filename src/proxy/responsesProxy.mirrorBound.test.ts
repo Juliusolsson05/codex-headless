@@ -203,6 +203,23 @@ it('keeps the close-time drop marker within the queue bound', async () => {
   expect(linesOf(file).map(line => line.kind === 'response-chunk' ? line.requestId : line.kind)).toEqual(['req-1', 'mirror-dropped'])
 })
 
+// Steering q62: a queue cap smaller than a marker line. Nothing may exceed it,
+// markers included: the event is dropped, the marker cannot be written, and
+// the drop is still counted.
+it('never exceeds a queue cap smaller than a marker', async () => {
+  const file = tempFile()
+  const mirror = new EventsMirror(file, { maxQueuedBytes: 1 })
+  const internals = mirror as unknown as { queuedBytes: number; put(sink: unknown, text: string): void }
+  let peak = 0
+  const put = internals.put.bind(mirror)
+  internals.put = (sink, text) => { put(sink, text); peak = Math.max(peak, internals.queuedBytes) }
+  mirror.write(event(1))
+  await mirror.close()
+  expect(peak).toBeLessThanOrEqual(1)
+  expect(mirror.stats()).toMatchObject({ droppedEvents: 1, droppedBytes: LINE_BYTES })
+  expect(linesOf(file)).toEqual([])
+})
+
 // #56 review A2: the queue bound is on everything unwritten, across a
 // rotation. Before, the fresh stream had an empty queue of its own and took
 // more while the old one still held its lines.

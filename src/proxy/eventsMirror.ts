@@ -175,10 +175,14 @@ export class EventsMirror {
       rotate = true
     }
     // The marker counts against the queue too (#56 round-2 review A2). A
-    // line bigger than the whole queue budget is dropped here as well.
+    // line bigger than the whole queue budget is dropped here as well. No
+    // exception for a marker-only write (steering q62): close() drains first,
+    // so a marker that still does not fit is bigger than the whole queue
+    // budget (a cap under ~100 bytes, only ever configured in tests). It is
+    // then not written; the drops stay counted in stats(). The bound wins.
     const total = Buffer.byteLength(prefix) + bytes
-    if (bytes > 0 && this.queuedBytes + total > this.maxQueuedBytes) {
-      this.drop(bytes)
+    if (total > 0 && this.queuedBytes + total > this.maxQueuedBytes) {
+      if (bytes > 0) this.drop(bytes)
       return
     }
     if (rotate && this.rotate() === null) return
