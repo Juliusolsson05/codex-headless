@@ -1,4 +1,4 @@
-import { createWriteStream, renameSync, statSync, type WriteStream } from 'fs'
+import { createWriteStream, fstatSync, openSync, renameSync, type WriteStream } from 'fs'
 
 // The on-disk JSONL mirror of every proxy event (agent-code#372).
 //
@@ -59,11 +59,17 @@ export function rotatedMirrorPath(path: string): string {
   return path.endsWith('.jsonl') ? `${path.slice(0, -'.jsonl'.length)}.1.jsonl` : `${path}.1`
 }
 
+// One file's stream plus what is still unwritten on it. Accounting is per
+// stream because a rotated-out stream can still be flushing, or fail, while
+// the next one takes writes (#56 review A1: a shared counter zeroed by an old
+// stream's error went negative and hung flush() and stop() forever).
+type Sink = { stream: WriteStream; pendingWrites: number; queuedBytes: number; dead: boolean }
+
 export class EventsMirror {
   private readonly path: string
   private readonly maxFileBytes: number
   private readonly maxQueuedBytes: number
-  private stream: WriteStream | null = null
+  private sink: Sink | null = null
   private fileBytes = 0
   private disabled = false
   private droppedEvents = 0
@@ -72,11 +78,13 @@ export class EventsMirror {
   // new gap rather than before every line.
   private reportedDrops = 0
   private rotations = 0
-  // Writes handed to a stream whose callback has not fired yet, across the
-  // current and any rotated-out stream. flush() waits for this to reach 0.
-  private inFlight = 0
+  // Totals over every live sink, current and rotated-out. The queue bound is
+  // on the TOTAL (#56 review A2): a slow disk with a rotation in between
+  // must not hold one queue per generation.
+  private pendingWrites = 0
+  private queuedBytes = 0
   private idleWaiters: Array<() => void> = []
-  private closes: Promise<void>[] = []
+  private readonly closes = new Set<Promise<void>>()
 
   constructor(path: string, options: EventsMirrorOptions = {}) {
     this.path = path
@@ -94,90 +102,124 @@ export class EventsMirror {
       // the old catch too. It is not a disk-pressure drop, so not counted.
       return
     }
-    const bytes = Buffer.byteLength(line)
-    const stream = this.open()
-    if (!stream) return
-
-    // WHY `writableLength > 0` in the condition: a single line bigger than
-    // the whole queue budget (a 2 MiB request body under a tiny test budget)
-    // is still written when nothing else is waiting, so the bound is "the
-    // queue never holds more than one oversized line", never "this event can
-    // never be mirrored".
-    if (stream.writableLength > 0 && stream.writableLength + bytes > this.maxQueuedBytes) {
-      this.droppedEvents += 1
-      this.droppedBytes += bytes
-      return
-    }
-
-    // WHY `!stream.pending`: until the stream has opened its fd, renaming
-    // the path would move the file out from under a stream that has not
-    // opened it yet, and the stream would then create a NEW file at the old
-    // name, interleaving with the fresh one. Deferring the rotation to a
-    // later write lets the file overshoot the cap by what arrives during one
-    // open (milliseconds), which keeps the bound in practice.
-    if (this.fileBytes > 0 && this.fileBytes + bytes > this.maxFileBytes && !stream.pending) {
-      if (!this.rotate()) return
-    }
-
-    const current = this.stream!
-    if (this.droppedEvents > this.reportedDrops) {
-      this.put(current, JSON.stringify({
-        kind: 'mirror-dropped',
-        droppedEvents: this.droppedEvents,
-        droppedBytes: this.droppedBytes,
-      }) + '\n')
-      this.reportedDrops = this.droppedEvents
-    }
-    this.put(current, line)
+    this.append(line)
   }
 
   /** Resolves once every accepted line has reached the OS. */
   flush(): Promise<void> {
-    if (this.inFlight === 0) return Promise.resolve()
+    if (this.pendingWrites === 0) return Promise.resolve()
     return new Promise(resolve => this.idleWaiters.push(resolve))
   }
 
-  /** Flushes, closes every stream, and refuses later writes. */
+  /** Marks any unreported drops, flushes, closes every stream, and refuses
+   *  later writes. */
   async close(): Promise<void> {
-    if (this.disabled && !this.stream) {
-      await Promise.all(this.closes)
-      return
+    if (!this.disabled) {
+      // #56 review B1: drops at the very end of a run have no "next line" to
+      // carry their marker, so without this the file would look complete.
+      if (this.droppedEvents > this.reportedDrops) this.append('')
+      await this.flush()
+      this.disabled = true
+      const sink = this.sink
+      this.sink = null
+      if (sink) this.retire(sink)
     }
-    await this.flush()
-    this.disabled = true
-    const stream = this.stream
-    this.stream = null
-    if (stream) this.closes.push(endStream(stream))
-    await Promise.all(this.closes)
+    await Promise.all([...this.closes])
   }
 
   stats(): EventsMirrorStats {
     return { droppedEvents: this.droppedEvents, droppedBytes: this.droppedBytes, rotations: this.rotations }
   }
 
-  private open(): WriteStream | null {
-    if (this.stream) return this.stream
+  /**
+   * Writes `line` (possibly empty, to write only a pending drop marker) so
+   * that EVERY file stays within `maxFileBytes`, markers included, and the
+   * unwritten total stays within `maxQueuedBytes`. Anything that cannot fit
+   * is dropped and counted; there is no "overshoot a little" exception
+   * (#56 reviews A3, A4, B2 each found one, and each made the advertised
+   * bound false).
+   */
+  private append(line: string): void {
+    const bytes = Buffer.byteLength(line)
+    if (bytes > 0 && (bytes > this.maxQueuedBytes || this.queuedBytes + bytes > this.maxQueuedBytes)) {
+      this.drop(bytes)
+      return
+    }
+    const sink = this.open()
+    if (!sink) return
+    let prefix = this.dropMarker()
+    let target = sink
+    if (this.fileBytes + Buffer.byteLength(prefix) + bytes > this.maxFileBytes && this.fileBytes > 0) {
+      const rotatedBytes = this.rotate()
+      if (rotatedBytes === null) return
+      target = this.sink!
+      prefix = JSON.stringify({
+        kind: 'mirror-rotated',
+        rotatedBytes,
+        rotations: this.rotations,
+        droppedEvents: this.droppedEvents,
+        droppedBytes: this.droppedBytes,
+      }) + '\n'
+    }
+    // Even a fresh file cannot hold it (a line near the cap, or a cap so
+    // small the marker alone fills it): drop the line, keep the marker if it
+    // fits so the file still says what happened.
+    if (this.fileBytes + Buffer.byteLength(prefix) + bytes > this.maxFileBytes) {
+      if (bytes > 0) this.drop(bytes)
+      if (prefix && this.fileBytes + Buffer.byteLength(prefix) <= this.maxFileBytes) this.put(target, prefix)
+      return
+    }
+    if (prefix) this.reportedDrops = this.droppedEvents
+    if (prefix || line) this.put(target, prefix + line)
+  }
+
+  private dropMarker(): string {
+    if (this.droppedEvents <= this.reportedDrops) return ''
+    return JSON.stringify({
+      kind: 'mirror-dropped',
+      droppedEvents: this.droppedEvents,
+      droppedBytes: this.droppedBytes,
+    }) + '\n'
+  }
+
+  private drop(bytes: number): void {
+    this.droppedEvents += 1
+    this.droppedBytes += bytes
+  }
+
+  private open(): Sink | null {
+    if (this.sink) return this.sink
     try {
-      // The size survives a restart that appends to the same run file, so
-      // the cap counts what is already there.
-      try { this.fileBytes = statSync(this.path).size } catch { this.fileBytes = 0 }
-      const stream = createWriteStream(this.path, { flags: 'a' })
-      // WITHOUT this listener an open or write failure (missing directory,
-      // disk full, permissions) is an unhandled 'error' and crashes the main
-      // process. With it, the mirror turns itself off and the proxy carries on.
-      stream.on('error', () => this.disable(stream))
-      this.stream = stream
-      return stream
+      // WHY a synchronous open (one syscall per file, so once per 64 MiB):
+      // with the stream's own async open, the stream is "pending" for a
+      // while, and a rename in that window moves a file the stream has not
+      // opened yet, so it would create a second file under the old name.
+      // The first version deferred rotation until the open finished, which
+      // let a startup burst, or a restart onto a file already at its cap,
+      // leave the file over its cap (#56 review A3). With the fd in hand the
+      // stream is never pending, and the size comes from that same fd.
+      const fd = openSync(this.path, 'a')
+      this.fileBytes = fstatSync(fd).size
+      const stream = createWriteStream(this.path, { fd })
+      const sink: Sink = { stream, pendingWrites: 0, queuedBytes: 0, dead: false }
+      // WITHOUT this listener an open or write failure (disk full,
+      // permissions) is an unhandled 'error' and crashes the main process.
+      stream.on('error', () => this.fail(sink))
+      this.sink = sink
+      return sink
     } catch {
       this.disabled = true
       return null
     }
   }
 
-  private rotate(): boolean {
-    const old = this.stream!
-    this.stream = null
-    this.closes.push(endStream(old))
+  /** Renames the current file to `.1` and opens a fresh one. Returns the
+   *  rotated file's size, or null when the mirror had to turn itself off. */
+  private rotate(): number | null {
+    const old = this.sink!
+    this.sink = null
+    const rotatedBytes = this.fileBytes
+    this.retire(old)
     try {
       // The old stream keeps its fd, so lines still queued on it land in
       // the renamed file, which is where they belong. POSIX renames an open
@@ -188,42 +230,57 @@ export class EventsMirror {
       // Cannot rotate, so the file could only grow past its cap. Stop
       // mirroring rather than break the bound.
       this.disabled = true
-      return false
+      return null
     }
-    const rotatedBytes = this.fileBytes
     this.rotations += 1
-    const fresh = this.open()
-    if (!fresh) return false
-    // The marker carries the cumulative drops, so it also reports any gap
-    // not yet marked.
-    this.put(fresh, JSON.stringify({
-      kind: 'mirror-rotated',
-      rotatedBytes,
-      rotations: this.rotations,
-      droppedEvents: this.droppedEvents,
-      droppedBytes: this.droppedBytes,
-    }) + '\n')
-    this.reportedDrops = this.droppedEvents
-    return true
+    return this.open() ? rotatedBytes : null
   }
 
-  private put(stream: WriteStream, text: string): void {
-    this.fileBytes += Buffer.byteLength(text)
-    this.inFlight += 1
-    stream.write(text, () => {
-      this.inFlight -= 1
-      if (this.inFlight === 0) for (const resolve of this.idleWaiters.splice(0)) resolve()
+  private put(sink: Sink, text: string): void {
+    const bytes = Buffer.byteLength(text)
+    this.fileBytes += bytes
+    sink.pendingWrites += 1
+    sink.queuedBytes += bytes
+    this.pendingWrites += 1
+    this.queuedBytes += bytes
+    sink.stream.write(text, () => {
+      // A failed sink already gave back everything it held (fail()).
+      if (sink.dead) return
+      sink.pendingWrites -= 1
+      sink.queuedBytes -= bytes
+      this.pendingWrites -= 1
+      this.queuedBytes -= bytes
+      this.wakeIfIdle()
     })
   }
 
-  private disable(stream: WriteStream): void {
-    this.disabled = true
-    if (this.stream === stream) this.stream = null
-    // A failed stream never calls its pending write callbacks, so release
-    // anyone waiting on flush(); there is nothing left to wait for.
-    this.inFlight = 0
-    for (const resolve of this.idleWaiters.splice(0)) resolve()
-    try { stream.destroy() } catch { /* already gone */ }
+  private retire(sink: Sink): void {
+    const closed = endStream(sink.stream).finally(() => this.closes.delete(closed))
+    this.closes.add(closed)
+  }
+
+  private fail(sink: Sink): void {
+    if (sink.dead) return
+    sink.dead = true
+    // Its remaining writes will never complete; give their share back so
+    // flush() can settle. Only THIS sink's share: another sink's writes are
+    // still real (#56 review A1).
+    this.pendingWrites -= sink.pendingWrites
+    this.queuedBytes -= sink.queuedBytes
+    sink.pendingWrites = 0
+    sink.queuedBytes = 0
+    // Only the current file failing turns the mirror off. A rotated-out one
+    // failing loses its own tail, but the live file is still healthy.
+    if (this.sink === sink) {
+      this.disabled = true
+      this.sink = null
+    }
+    try { sink.stream.destroy() } catch { /* already gone */ }
+    this.wakeIfIdle()
+  }
+
+  private wakeIfIdle(): void {
+    if (this.pendingWrites === 0) for (const resolve of this.idleWaiters.splice(0)) resolve()
   }
 }
 
