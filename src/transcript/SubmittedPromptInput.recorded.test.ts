@@ -370,6 +370,7 @@ function defineRecordedCorpusSuite(spec: RecordedCorpusSpec): void {
       if (!preparation.ok) throw new Error('recorded config/read profile fixture was refused')
       // The issued profile must name the version whose recording issued it.
       expect(preparation.profile.cliVersion).toBe(spec.provider.cliVersion.replace(/^codex-cli /, ''))
+      expect(preparation.profile.upstreamTag).toBe(spec.provider.upstreamTag)
       recordedIssuedProfile = preparation.profile
     })
 

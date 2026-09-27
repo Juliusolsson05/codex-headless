@@ -76,3 +76,22 @@ describe('Codex 0.149.1 prompt-input launch profile', () => {
     await expect(prepare(mode)).resolves.toEqual({ ok: false, reason })
   })
 })
+
+// Review c of codex-headless#69 (F3): the safety property "a table of exact
+// recorded versions, never a range" was enforced only by review; widening the
+// table kept every test green. Pin it to exactly the versions that have a
+// recorded corpus, each mapped to its own upstream tag.
+describe('recorded prompt-input versions', () => {
+  it('issues profiles for exactly the recorded versions', async () => {
+    const { RECORDED_PROMPT_INPUT_VERSIONS } = await import('./CodexPromptInputProfile.js')
+    expect(RECORDED_PROMPT_INPUT_VERSIONS).toEqual({
+      '0.149.1': 'rust-v0.149.1',
+      '0.157.1': 'rust-v0.157.1',
+    })
+    const { existsSync } = await import('node:fs')
+    const { fileURLToPath } = await import('node:url')
+    for (const corpus of ['codex-01491-recorded.json', 'codex-01571-recorded.json', 'codex-01571-fullscreen-recorded.json']) {
+      expect(existsSync(fileURLToPath(new URL(`../../../testing/fixtures/prompt-input/${corpus}`, import.meta.url)))).toBe(true)
+    }
+  })
+})

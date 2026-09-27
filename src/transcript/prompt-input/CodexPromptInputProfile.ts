@@ -25,7 +25,7 @@ const CODEX_01491_PROMPT_INPUT_ARGS = Object.freeze(
 // composer opening in Insert rather than Normal, sits outside the profile,
 // which forces Vim off. A version that is not in this table has not been
 // recorded, and it gets `unsupported-cli`.
-const RECORDED_PROMPT_INPUT_VERSIONS = Object.freeze({
+export const RECORDED_PROMPT_INPUT_VERSIONS = Object.freeze({
   '0.149.1': 'rust-v0.149.1',
   '0.157.1': 'rust-v0.157.1',
 } as const)

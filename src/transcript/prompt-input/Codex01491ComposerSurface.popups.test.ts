@@ -49,4 +49,31 @@ describe('Codex 0.157 popups above the composer', () => {
     expect(classifyCodex01491ComposerSurface(frame([`› ${draft}`, '', '  model · high · fast'])))
       .toEqual({ kind: 'completion-popup' })
   })
+  // Review c of #69 (F2): the hint-row layer was only ever exercised with a
+  // draft the draft rule catches too, so deleting it kept every test green.
+  // Here the draft (`/` has been accepted into a plain word) matches no
+  // sigil, and only the painted "enter insert · esc close" row proves the
+  // popup still owns Enter.
+  it('declines a composer under a painted completion hint even when the draft has no sigil', () => {
+    expect(classifyCodex01491ComposerSurface(frame([
+      '  README.md',
+      '  enter insert · esc close',
+      '',
+      '› look at the readme',
+      '',
+      '  model · high · fast',
+    ]))).toEqual({ kind: 'completion-popup' })
+  })
+
+  // Review c of #69 (F3): the fullscreen pair accepts only the two exact
+  // instructional rows under the status line. Any other second row is an
+  // unrecorded bottom pane and must not read as a composer.
+  it('does not accept an unrecorded second footer row under the status line', () => {
+    expect(classifyCodex01491ComposerSurface(frame([
+      '› explain the memory settings',
+      '',
+      '  model · high · fast',
+      '  press enter to approve',
+    ]))).toEqual({ kind: 'unknown' })
+  })
 })

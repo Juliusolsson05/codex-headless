@@ -229,6 +229,10 @@ function isKnownNonComposerModal(text: string): boolean {
 // that starts with `/`, or mentions `$HOME` or `a@b`, becomes a safe miss
 // (ownership falls back to the proxy path) rather than risking a false
 // prompt, which could claim a sibling rollout.
+//
+// The draft rule, not the hint rows, is the primary guard (review c of #69): a
+// popup can be open with ZERO rendered rows (a short pane, an empty query), so
+// no row-shape check could ever be the only guard.
 function draftMayOpenPopup(draft: string): boolean {
   if (draft.trimStart().startsWith('/')) return true
   // Any token that STARTS with the sigil, including the bare sigil itself: the
