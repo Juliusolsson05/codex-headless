@@ -1,6 +1,8 @@
 import {
   CODEX_TRUST_DIALOG_ACCEPT_KEYS,
   CODEX_TRUST_DIALOG_DECLINE_KEYS,
+  CODEX_TRUST_DIALOG_FOLDER_ACCESS_ACCEPT_KEYS,
+  CODEX_TRUST_DIALOG_FOLDER_ACCESS_DECLINE_KEYS,
   type CodexTrustDialogState,
 } from '../parsers/TrustDialogParser.js'
 import { defineModule } from './core/contract.js'
@@ -49,6 +51,28 @@ const TRUST_DIALOG_ACTIONS: readonly ConditionAction[] = [
   { kind: 'pty', id: 'reject', label: 'Quit', data: CODEX_TRUST_DIALOG_DECLINE_KEYS },
 ]
 
+// #65: the template above is the LEGACY layout's actions, and it is only the
+// fallback now. Codex 0.156+ paints a different dialog whose keystrokes differ
+// (`1` merely moves the highlight there, so accept is `1` + Enter) and whose
+// option labels vary: option 2 is "Back to Agent Command Center" when Codex
+// is connected to its background server, and option 1 is "Open restricted" for
+// a folder saved as untrusted. The parser reports both per frame, so the
+// actions follow the screen that is actually up. A fixed "Quit" button that
+// in fact returned to the overview, or a fixed "Trust folder" that in fact
+// opened the folder restricted, would tell the user something false.
+//
+// The action ids stay `accept` / `reject`: those are what the app and the
+// phone key on. Only `label` and `data` follow the state.
+function trustDialogActions(state: CodexTrustDialogState): ConditionAction[] {
+  if (state.layout !== 'folder-access') return TRUST_DIALOG_ACTIONS.map((a) => ({ ...a }))
+  const label = (key: string, fallback: string) =>
+    state.options?.find((option) => option.key === key)?.label ?? fallback
+  return [
+    { kind: 'pty', id: 'accept', label: label('1', 'Trust and continue'), data: state.acceptKeys ?? CODEX_TRUST_DIALOG_FOLDER_ACCESS_ACCEPT_KEYS },
+    { kind: 'pty', id: 'reject', label: label('2', 'Quit'), data: state.declineKeys ?? CODEX_TRUST_DIALOG_FOLDER_ACCESS_DECLINE_KEYS },
+  ]
+}
+
 // trustDialogModule — the headless-module form of the trust-dialog condition.
 //
 // `detect` takes the WHOLE input bundle and reaches into `inputs.trustDialog`,
@@ -71,7 +95,9 @@ export const trustDialogModule = defineModule<
   // isolation contract requires a mutated snapshot not to poison later ones.
   // `{ ...a }` is a sufficient clone because ConditionAction fields are all
   // primitives (no nested objects to share).
-  actions: () => TRUST_DIALOG_ACTIONS.map((a) => ({ ...a })),
+  // Each call builds new objects (see trustDialogActions), so the isolation
+  // contract above still holds.
+  actions: (state) => trustDialogActions(state),
 })
 
 // Legacy builder, re-implemented on top of the module so any external importer

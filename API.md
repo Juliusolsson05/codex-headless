@@ -97,6 +97,8 @@ import {
   isCodexUserPromptLine, isCodexStatusLine, isCodexIntermediateChromeLine,
   detectCodexApproval, isApprovalOverlayVisible,
   detectCodexTrustDialog, CODEX_TRUST_DIALOG_ACCEPT_KEYS,
+  CODEX_TRUST_DIALOG_DECLINE_KEYS, CODEX_TRUST_DIALOG_FOLDER_ACCESS_ACCEPT_KEYS,
+  CODEX_TRUST_DIALOG_FOLDER_ACCESS_DECLINE_KEYS,
   diffLines,
   // Transcript
   isCodexConversationEntry, isCodexResponseItem, isCodexEventMsg,
@@ -220,7 +222,7 @@ shared verbatim with `claude-code-headless` (see the header comment in
 | Transcript | `~/.claude/projects/<sanitized-cwd>/<uuid>.jsonl` (per-cwd) | `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (date-bucketed globally) |
 | Assistant marker | `⏺` | `•` (or older `◦`) |
 | User marker | `❯` | `›` |
-| Trust prompt | "Accessing workspace" | "Do you trust the contents of this directory" |
+| Trust prompt | "Accessing workspace" | "Do you trust the contents of this directory" (≤ 0.149); "Folder access" / "Trust this folder?" (0.156+) |
 | Proxy | mitmproxy TLS interceptor | plain HTTP server behind `openai_base_url` |
 
 ---
@@ -421,9 +423,13 @@ also carries `ts: number` (epoch ms).
 
 Notes on the `trust_dialog` action callbacks:
 
-- `accept()` writes `CODEX_TRUST_DIALOG_ACCEPT_KEYS` (`'\r'`) —
-  confirms the pre-selected "Yes, continue".
-- `reject()` writes `'2\r'` — selects "No, quit".
+- `accept()` writes the matched layout's `acceptKeys`: `'1'` on the legacy
+  layout (selects "Yes, continue" at once); `'1\r'` on the 0.156+ layout,
+  where `1` only moves the highlight to option 1 and Enter confirms it.
+- `reject()` writes the layout's `declineKeys`, `'2'` in both layouts. It
+  selects option 2 at once, with no trailing Enter to leak into the next
+  screen. On 0.156+ option 2 is "Quit", or "Back to Agent Command Center"
+  when Codex is connected to its background server.
 
 The `event` flat surface only emits a `{ type: 'trust_dialog', … }`
 member when the dialog becomes **visible**; the simple `trust-dialog`
@@ -1138,7 +1144,7 @@ on-screen.
 | Field | Type | Description |
 | --- | --- | --- |
 | `state` | `CodexTrustDialogState` | The parsed trust dialog (§7.3). |
-| `actions` | `ConditionAction[]` | `accept` (Trust folder, writes `'\r'`), `reject` (Quit, writes `'2\r'`). |
+| `actions` | `ConditionAction[]` | `accept` and `reject`, writing the state's `acceptKeys` / `declineKeys` (above). Legacy labels are "Trust folder" / "Quit"; 0.156+ labels are the option texts painted on screen. |
 
 **`CodexApprovalCondition`** — `kind: 'codex.approval'`
 
@@ -1301,23 +1307,27 @@ title matching, returns `boolean`.
 detectCodexTrustDialog(screen: string): CodexTrustDialogState
 ```
 
-Detects Codex's first-launch-in-a-new-directory trust dialog. **All**
-required markers must be present (conservative — avoids
-false-positiving on assistant text that mentions "trust"):
-`Do you trust the contents of this directory`, `Yes, continue`,
-`No, quit`.
+Detects Codex's first-launch trust dialog in either upstream layout, **structurally**: the dialog's key hint must be the last painted row, with the adjacent option pair above it and the dialog's title line above that. A transcript that quotes the dialog, even verbatim, always has the live composer below it and never matches.
+
+- **Legacy (≤ 0.149.1):** `> You are in <path>`, `1. Yes, continue` / `2. No, quit`, then `Press enter to continue`.
+- **0.156+:** `Folder access` and the path, `1. Trust and continue` (or `Open restricted` / `Open existing task`), then `2. Quit` (or `Back to Agent Command Center`), then `enter continue · esc quit|back`. One wrap of the hint is accepted.
 
 `CodexTrustDialogState`:
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `visible` | `boolean` | |
-| `workspace?` | `string` | The directory Codex asks to trust, parsed from a `> You are in <path>` line. |
-| `options?` | `Array<{ key: string; label: string }>` | The two options, hardcoded `{ '1', 'Yes, continue' }` / `{ '2', 'No, quit' }`. |
+| `workspace?` | `string` | The folder the dialog names. Hard-wrapped path rows are joined. |
+| `trustTarget?` | `string` | 0.156+ only: the Git repository root that trust applies to, when Codex is in a subdirectory. |
+| `options?` | `Array<{ key: string; label: string }>` | The two options, labels as painted. |
+| `layout?` | `'you-are-in' \| 'folder-access'` | Which layout matched. |
+| `acceptKeys?` / `declineKeys?` | `string` | The bytes that choose option 1 / option 2 on that layout. |
 
-`CODEX_TRUST_DIALOG_ACCEPT_KEYS` = `'\r'` — confirms the pre-selected
-"Yes, continue". (Reject is `'2\r'`, not exported as a constant —
-see the trust-dialog condition's `reject` action.)
+Constants:
+- `CODEX_TRUST_DIALOG_ACCEPT_KEYS` = `'1'` and `CODEX_TRUST_DIALOG_DECLINE_KEYS` = `'2'` (legacy layout).
+- `CODEX_TRUST_DIALOG_FOLDER_ACCESS_ACCEPT_KEYS` = `'1\r'` and `CODEX_TRUST_DIALOG_FOLDER_ACCESS_DECLINE_KEYS` = `'2'` (0.156+).
+
+Prefer the state's `acceptKeys` / `declineKeys` over the constants.
 
 ### 7.4 Line diff — `LineDiff.ts`
 

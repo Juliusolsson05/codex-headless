@@ -170,21 +170,22 @@ export function isCodexIntermediateChromeLine(line: string): boolean {
   return false
 }
 
-// --- Trust dialog detection (inlined) ---
-
-const TRUST_DIALOG_MARKERS = [
-  'Do you trust the contents of this directory',
-  'Yes, continue',
-  'No, quit',
-]
-
+// --- Trust dialog detection ---
+//
+// Delegates to the structural detector. This used to be an inlined copy that
+// asked whether three legacy phrases appeared ANYWHERE on screen, which (a)
+// blanked the streaming text whenever an assistant merely quoted the dialog,
+// the false positive TrustDialogParser was rewritten to stop, and (b) never
+// matched the 0.156+ `Folder access` layout, whose phrases are all different
+// (#65). One detector means one answer to "is the dialog up".
 function isTrustDialogVisible(screen: string): boolean {
-  return TRUST_DIALOG_MARKERS.every(m => screen.includes(m))
+  return detectCodexTrustDialog(screen).visible
 }
 
 // Approval detection lives in ApprovalParser.ts — import for the
 // streaming text suppression check.
 import { isApprovalOverlayVisible } from './ApprovalParser.js'
+import { detectCodexTrustDialog } from './TrustDialogParser.js'
 
 // --- Resume picker detection ---
 
