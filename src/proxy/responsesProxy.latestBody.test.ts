@@ -124,3 +124,49 @@ it('records a compaction request, which also carries the conversation', async ()
 
   expect(sidecarLine(sidecar)).toMatchObject({ endpoint: 'responses/compact' })
 })
+
+// #70 review b: Codex tags every non-main Responses call with
+// x-openai-subagent (codex-api requests/headers.rs). A spawned worker's task
+// must not replace the top-level prompt; a compaction must still be kept.
+function sendWithSubagent(proxy: ResponsesProxy, path: string, body: Buffer, subagent: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const client = httpRequest(`${proxy.info.proxyBaseUrl}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-openai-subagent': subagent },
+    }, res => {
+      res.resume()
+      res.on('end', () => resolve())
+    })
+    client.on('error', reject)
+    client.end(body)
+  })
+}
+
+it('keeps the main prompt when a spawned subagent sends its own request', async () => {
+  const { proxy, sidecar } = await startProxy()
+  const prompt = Buffer.from(JSON.stringify({ input: [{ role: 'user', content: 'the main prompt' }] }))
+  await send(proxy, '/responses', 'POST', prompt)
+  await sendWithSubagent(proxy, '/responses', Buffer.from('{"input":"worker task"}'), 'thread_spawn')
+  await sendWithSubagent(proxy, '/responses', Buffer.from('{"input":"review task"}'), 'review')
+  await proxy.flushMirror()
+
+  expect(Buffer.from(sidecarLine(sidecar).body_b64 as string, 'base64').equals(prompt)).toBe(true)
+})
+
+it('still records a compaction tagged as the compact subagent', async () => {
+  const { proxy, sidecar } = await startProxy()
+  await send(proxy, '/responses', 'POST', Buffer.from('{"input":"the main prompt"}'))
+  await sendWithSubagent(proxy, '/responses', Buffer.from('{"input":"compact me"}'), 'compact')
+  await proxy.flushMirror()
+
+  expect(Buffer.from(sidecarLine(sidecar).body_b64 as string, 'base64').toString()).toBe('{"input":"compact me"}')
+})
+
+it('keeps a body of exactly the cap', async () => {
+  const { proxy, sidecar } = await startProxy()
+  const body = Buffer.alloc(LATEST_REQUEST_BODY_CAP, 0x20)
+  await send(proxy, '/responses', 'POST', body)
+  await proxy.flushMirror()
+
+  expect(Buffer.from(sidecarLine(sidecar).body_b64 as string, 'base64').length).toBe(LATEST_REQUEST_BODY_CAP)
+})

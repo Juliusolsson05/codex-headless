@@ -35,7 +35,9 @@ import { basename, dirname, join } from 'path'
 // title generation (tui `thread_title.rs`) runs an ephemeral thread whose
 // request carries an output schema (`text.format`, name
 // `codex_output_schema`); ordinary TUI turns never do. Letting it in replaced
-// the main prompt with a 960-byte title prompt (#70 review a). A body whose
+// the main prompt with a 960-byte title prompt (#70 review a). Subagent calls
+// (`x-openai-subagent`, except `compact`) are skipped for the same reason
+// (#70 review b). A body whose
 // shape cannot be read (not JSON, or a zstd frame over the decode bound) is
 // still recorded: an unclassified prompt is better evidence than none.
 //

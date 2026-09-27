@@ -719,7 +719,16 @@ export class ResponsesProxy extends EventEmitter {
     // (title generation) are skipped: see latestRequestBody.ts for why, and
     // for why a body whose shape could not be read is still kept (a prompt we
     // cannot classify is better evidence than none).
-    if (body && body.length > 0 && endpoint.startsWith('responses') && requestShape?.has_output_schema !== true) {
+    // Subagent calls are skipped too (#70 review b): Codex tags every
+    // non-main Responses call with `x-openai-subagent` (codex-api
+    // requests/headers.rs: review, compact, thread_spawn,
+    // memory_consolidation, or a custom label). A spawned worker's task has
+    // no output schema, so without this it replaced the top-level prompt in
+    // multi-agent sessions. `compact` is kept: a compaction request carries
+    // the main conversation, and it is what a bundle after compaction needs.
+    const subagent = req.headers['x-openai-subagent']
+    const auxiliary = subagent !== undefined && subagent !== 'compact'
+    if (body && body.length > 0 && endpoint.startsWith('responses') && requestShape?.has_output_schema !== true && !auxiliary) {
       this.latestBody?.record(requestId, endpoint, body)
     }
 

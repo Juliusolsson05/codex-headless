@@ -44,3 +44,9 @@ The app bump carries this to Agent Code. Its reader's WHY comment, which describ
 - **A late async rename restored an older body.** The first round checked the generation, then awaited an async `rename`. A `record(B)` in that gap unlinked the public file, and A's rename then restored A while B was still being written.
 - **Fix: commit in one turn.** The commit is now `renameSync` in the same turn as the check. It is one metadata call; body bytes are still written asynchronously in slices.
 - **Test: `latestRequestBody.commitFence.test.ts`.** It holds every async `fs/promises` rename at a gate and spies `renameSync`. It records B while A's commit is pending, releases A, and reads the public file before B commits: the file is absent or B, never A. It was red on `a54cfe7` (A restored).
+
+## Review b (round 1)
+- **Subagent calls replaced the main prompt.** Codex tags every non-main Responses call with `x-openai-subagent` (codex-api `requests/headers.rs`: `review`, `compact`, `thread_spawn`, `memory_consolidation`, or a label). They are now skipped, except `compact`, which carries the main conversation. There are tests for `thread_spawn` and `review`, and for a kept `compact`.
+- **16 MiB cap untested.** A body of exactly 16 MiB is now kept, so lowering the cap fails a test.
+- **Crash-left temp copies.** They are now listed in `SECURITY.md`.
+- **P1 (the app side), no package change.** Covered by agent-code#1399, plus a bump that follows #1366. This PR is "For", not "Fixes", #1336.
