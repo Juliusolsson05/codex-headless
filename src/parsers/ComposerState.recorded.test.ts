@@ -235,7 +235,13 @@ it('reads a draft on continuation rows, up to the composer bound', () => {
   expect(classifyCodexComposerState([row('›'), row('  real draft'), row(''), ...IDLE_FOOTER])).toBe('drafted')
   const continuation = (count: number) => Array.from({ length: count }, () => row('  more of the draft'))
   expect(classifyCodexComposerState([row('› start'), ...continuation(11), row(''), ...STATUS_ONLY])).toBe('drafted')
-  expect(classifyCodexComposerState([row('› start'), ...continuation(12), row(''), ...STATUS_ONLY])).toBe('unknown')
+  // agent-code#1327: this used to expect `unknown`, which is the bug the
+  // tall-draft recording shows. An unbroken draft past the bound is followed.
+  expect(classifyCodexComposerState([row('› start'), ...continuation(12), row(''), ...STATUS_ONLY])).toBe('drafted')
+  // Within the bound a blank row inside the draft is fine; past it, a blank
+  // row ends the search, so the frame stays unreadable (the residual).
+  expect(classifyCodexComposerState([row('› start'), row(''), ...continuation(4), row(''), ...STATUS_ONLY])).toBe('drafted')
+  expect(classifyCodexComposerState([row('› start'), row(''), ...continuation(12), row(''), ...STATUS_ONLY])).toBe('unknown')
 })
 
 // A transcript user message starts with `›` too, and it is plain text. With
@@ -246,4 +252,63 @@ it('does not read a transcript row, a markerless pane or Vim mode as a composer 
   expect(classifyCodexComposerState([row('  status left'), row(''), ...IDLE_FOOTER])).toBe('unknown')
   expect(classifyCodexComposerState([row('›'), row(''), row('  gpt · ~/p      Vim: Insert')])).toBe('unknown')
   expect(classifyCodexComposerState([row('›'), row(''), row('  gpt · ~/p'), row('  ? for shortcuts      Vim: Normal')])).toBe('unknown')
+})
+
+// agent-code#1327: a raw recording of codex-cli 0.157.1 typing a 20-line
+// draft (Ctrl+J newlines, no Enter). Codex does not scroll its marker away:
+// the composer grows upward, `›` on row 7 and the draft down to row 26. Our
+// 12-row marker search read it `unknown` from 14 rows, which published
+// provider-not-ready, and Agent Code's own Enter then appended to the draft.
+const tall = JSON.parse(readFileSync(
+  new URL('../../testing/fixtures/composer-0157/tall-draft-ctrlc.json', import.meta.url),
+  'utf8',
+)) as Recording
+async function replayTallUntil(label: string, settleMs = 800): Promise<HeadlessTerminal> {
+  const until = tall.events.find(event => event.label === label)!.t + settleMs
+  const listeners = new Set<(data: string) => void>()
+  const pty = {
+    write: () => undefined,
+    resize: () => undefined,
+    onData: (listener: (data: string) => void) => { listeners.add(listener); return { dispose: () => listeners.delete(listener) } },
+    onExit: () => ({ dispose: () => undefined }),
+  } as unknown as IPty
+  const terminal = new HeadlessTerminal({ pty, cols: tall.cols, rows: tall.rows, snapshotIntervalMs: 1 })
+  terminals.push(terminal)
+  terminal.attach()
+  for (const event of tall.events) if (event.dir === 'out' && event.t < until) for (const listener of listeners) listener(event.data!)
+  const deadline = Date.now() + 2000
+  while (terminal.snapshotComposerCells() === null && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5))
+  return terminal
+}
+
+it('reads a recorded draft as drafted at every height up to 20 rows', async () => {
+  for (const [label, rowsShown] of [['type-line-10', 11], ['type-line-14', 15], ['draft-typed', 20]] as const) {
+    const terminal = await replayTallUntil(label)
+    const plain = terminal.snapshotPlain()
+    // The marker is on screen, the whole draft under it.
+    expect(plain).toContain('› long draft line 01 with a few words')
+    expect(plain).toContain(`  long draft line ${String(rowsShown).padStart(2, '0')} with a few words`)
+    expect(classifyCodexComposerState(terminal.snapshotComposerCells())).toBe('drafted')
+  }
+})
+
+it('reads the recorded composer as empty again after Ctrl+C clears the tall draft', async () => {
+  const terminal = await replayTallUntil('ctrl-c-1')
+  expect(classifyCodexComposerState(terminal.snapshotComposerCells())).toBe('empty')
+})
+
+// Negative first (steering q33/q34): past the 12-row bound the search follows
+// only an UNBROKEN block of rows. A `›` further up, across a blank row, is
+// transcript, not composer, and must not turn an unreadable frame into a
+// draft (or a transcript line into occupancy).
+it('does not follow a tall search across a blank row to a transcript marker', () => {
+  const rows = [
+    row('› an old user message in the transcript'),
+    row(''),
+    ...Array.from({ length: 13 }, (_, i) => row(`  continuation ${i}`)),
+    row(''),
+    row('  GPT-6-Sol high fast · ~/p'),
+    row('  ? for shortcuts'),
+  ]
+  expect(classifyCodexComposerState(rows)).toBe('unknown')
 })

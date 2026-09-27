@@ -40,8 +40,10 @@ const QUEUE_ROW = /^ {2}\S+ to queue(?: message)?\b/u
 // A Vim status atom means the key semantics of the composer changed under us.
 const VIM_STATUS_SUFFIX = / {2,}Vim: (?:Insert|Normal)$/u
 const MARKER_ROW = /^›(?: |$)/u
-// How far above the footer the marker may sit: the composer grows with a
-// multi-line draft, but a marker further up is transcript, not composer.
+// How far above the footer the marker may sit with blank rows in between: the
+// composer grows with a multi-line draft, but a marker further up across a
+// blank row is transcript, not composer. Past this, only an unbroken block of
+// rows is followed (see classifyCodexComposerState).
 const MAX_COMPOSER_ROWS = 12
 
 /**
@@ -89,6 +91,21 @@ export function classifyCodexComposerState(rows: ReadonlyArray<ComposerCellRow> 
   let marker = -1
   for (let index = separator - 1; index >= Math.max(0, separator - MAX_COMPOSER_ROWS); index -= 1) {
     if (MARKER_ROW.test(text[index]!)) { marker = index; break }
+  }
+  // WHY the search goes on past the bound, but only through unbroken rows
+  // (agent-code#1327): Codex does not scroll a tall draft's marker away, the
+  // composer grows upward (recorded: 0.157.1, a 20-line draft with `›` on row
+  // 7, testing/fixtures/composer-0157/tall-draft-ctrlc.json). The bound read
+  // every draft over 12 rows as `unknown`, which is not occupancy, so Agent
+  // Code's own Enter appended to it. The bound exists to keep a transcript
+  // `›` from being taken for the composer; a tall composer is one continuous
+  // block of rows, so past the bound a blank row ends the search and the
+  // frame stays `unknown`. A draft with a blank line that far up, or taller
+  // than the viewport, is the unrecorded residual.
+  if (marker < 0) {
+    for (let index = separator - MAX_COMPOSER_ROWS - 1; index >= 0 && !blank(index); index -= 1) {
+      if (MARKER_ROW.test(text[index]!)) { marker = index; break }
+    }
   }
   if (marker < 0) return 'unknown'
 
