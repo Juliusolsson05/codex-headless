@@ -253,6 +253,9 @@ describe('detectCodexTrustDialog on the 0.156+ Folder access layout', () => {
 
   it('rejects an option label upstream cannot paint', () => {
     expect(detectCodexTrustDialog(frame('renders_snapshot_for_git_repo').replace('2. Quit', '2. Delete folder')).visible).toBe(false)
+    // With "esc back" the hint agrees with any non-Quit label, so only the
+    // label whitelist rejects this one (verification a of #67).
+    expect(detectCodexTrustDialog(frame('renders_restricted_folder').replace('2. Back to Agent Command Center', '2. Delete folder')).visible).toBe(false)
   })
 
   it('rejects a hint that contradicts option 2', () => {
