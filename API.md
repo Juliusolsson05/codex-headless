@@ -1593,6 +1593,7 @@ static ResponsesProxy.create(options?: {
   upstreamBaseUrl?: string
   authMode?: CodexAuthMode
   eventsFile?: string
+  eventsFileMaxBytes?: number
 }): Promise<ResponsesProxy>
 ```
 
@@ -1600,7 +1601,8 @@ static ResponsesProxy.create(options?: {
 | --- | --- | --- | --- |
 | `authMode` | `CodexAuthMode` (`'apikey' \| 'chatgpt'`) | auto-detected | Which auth path Codex uses. Auto-detection reads `~/.codex/auth.json`; absent → `'apikey'`. |
 | `upstreamBaseUrl` | `string` | derived from `authMode` | The real upstream. Defaults: `apikey` → `https://api.openai.com/v1`, `chatgpt` → `https://chatgpt.com/backend-api/codex`. |
-| `eventsFile` | `string` | unset | If set, every emitted `event` is also appended as a JSON line to this file (forensic mirror; `Buffer` payloads are inlined as `{ _buffer_b64 }`. Dumps written before agent-code#372's fix hold `{"type":"Buffer","data":[…]}` byte arrays instead, so a reader of older files must accept both). Append-only; rotation is the caller's problem. |
+| `eventsFile` | `string` | unset | If set, every emitted `event` is also written as a JSON line to this file (forensic mirror; `Buffer` payloads are inlined as `{ _buffer_b64 }`. Dumps written before agent-code#372's fix hold `{"type":"Buffer","data":[…]}` byte arrays instead, so a reader of older files must accept both). Written asynchronously through one ordered stream, never on the emitting call. While more than 16 MiB is queued unwritten, lines are dropped and counted, and a `{kind:'mirror-dropped', droppedEvents, droppedBytes}` line precedes the next written line. Call `flushMirror()` to wait for the queue; `stop()` flushes and closes it. |
+| `eventsFileMaxBytes` | `number` | 64 MiB | When the next line would pass this size, the file is renamed to `<name>.1.jsonl` (replacing any earlier one) and a fresh file starts with `{kind:'mirror-rotated', rotatedBytes, rotations, droppedEvents, droppedBytes}`. A run holds at most two files. A burst that arrives before the file is open can overshoot the cap by up to the queue bound. |
 
 `create()` starts listening before resolving. The resolved instance
 exposes:
