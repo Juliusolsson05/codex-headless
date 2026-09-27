@@ -30,7 +30,7 @@ The app bump carries this to Agent Code. Its reader's WHY comment, which describ
 ## Review a (round 1)
 - **Stale "latest"**, after a crash between write and rename, a failed removal, or a read while a newer write was queued. Fixed with three rules (see the module header):
   - `record()` unlinks the real-name file synchronously;
-  - a superseded write never renames;
+  - a superseded write never renames: the generation check and `renameSync` run in one synchronous turn (steering q96: an awaited async rename after the check let `record(B)` unlink the file and A's late rename restore it);
   - only the newest pending body is kept.
   If the directory refuses the unlink, nothing can make the file current; that stays unreported, like every mirror failure.
 - **Title generation replaced the main prompt.** Codex 0.157 title turns carry an output schema (`text.format`, `codex_output_schema`). `request_shape` gains `has_output_schema`, and such requests are skipped. A body whose shape cannot be read is still kept.
@@ -39,3 +39,8 @@ The app bump carries this to Agent Code. Its reader's WHY comment, which describ
 - **Fresh sessions never reach the file (P1).** This is an app-side selection bug, not a package bug: the bundle asks for `resume-<providerSessionId>` while a fresh run lives under `shell-<paneId>`. It is fixed in the app PR that bumps this package, where it is reachable and testable.
 - **Tests:** compaction is recorded, the title turn is skipped, a newer record removes the file at once, a superseded write cannot resurrect an older body, and a multi-slice body round-trips.
   - Mutations killed: the endpoint narrowing, the schema check, the generation check and the unlink.
+
+## Steering q96
+- **A late async rename restored an older body.** The first round checked the generation, then awaited an async `rename`. A `record(B)` in that gap unlinked the public file, and A's rename then restored A while B was still being written.
+- **Fix: commit in one turn.** The commit is now `renameSync` in the same turn as the check. It is one metadata call; body bytes are still written asynchronously in slices.
+- **Test: `latestRequestBody.commitFence.test.ts`.** It holds every async `fs/promises` rename at a gate and spies `renameSync`. It records B while A's commit is pending, releases A, and reads the public file before B commits: the file is absent or B, never A. It was red on `a54cfe7` (A restored).

@@ -1,5 +1,5 @@
-import { createWriteStream, unlinkSync } from 'fs'
-import { readdir, rename, rm } from 'fs/promises'
+import { createWriteStream, renameSync, unlinkSync } from 'fs'
+import { readdir, rm } from 'fs/promises'
 import { basename, dirname, join } from 'path'
 
 // The newest main-turn Responses request body, kept in a sidecar next to the
@@ -46,14 +46,18 @@ import { basename, dirname, join } from 'path'
 //     on a reader sees either nothing or the newer body, including after a
 //     crash anywhere in the write.
 //  2. A write that has been superseded by a newer record never renames: it
-//     checks its generation right before `rename` and discards its temp file.
+//     checks its generation and publishes with `renameSync` in the same
+//     synchronous turn, so no record() can slip between check and commit
+//     (steering q96), and a superseded write discards its temp file.
 //  3. Only the newest pending body is kept. Older pending bodies are dropped
 //     unwritten, so memory holds at most one body in flight and one pending.
 // If the directory refuses the unlink (permissions), nothing here can make the
 // file current; that failure is not reported, as for every mirror failure.
 //
 // MAIN-PROCESS COST (#70 review a): the proxy runs on Agent Code's main
-// process. A 16 MiB body is 21.3 MiB of base64, measured at up to 376 ms when
+// process. The only synchronous calls are two metadata operations (the
+// unlink in record, the rename at commit); every data byte is written
+// asynchronously. A 16 MiB body is 21.3 MiB of base64, measured at up to 376 ms when
 // encoded in one call. It is encoded in slices of ENCODE_SLICE_BYTES, each in
 // its own turn after the stream drains, so no single turn does more than a
 // slice.
@@ -119,12 +123,19 @@ export class LatestRequestBodySidecar {
     const temp = `${this.path}.${process.pid}.${entry.generation}.tmp`
     try {
       await writeEncoded(temp, entry)
-      // Rule 2.
+      // Rule 2, enforced AT the commit (steering q96). The generation check
+      // and the publish run in ONE synchronous turn, so no `record()` can run
+      // between them. The first version checked, then awaited an async
+      // `rename`: a `record(B)` in that gap unlinked the public file, and A's
+      // rename then landed and restored A as "latest" while B was still being
+      // written. `renameSync` is one metadata call (like the `unlinkSync` in
+      // record), not a data write; the body itself is still written
+      // asynchronously in slices above, so a large body never blocks a turn.
       if (entry.generation !== this.generation) {
         await rm(temp, { force: true })
         return
       }
-      await rename(temp, this.path)
+      renameSync(temp, this.path)
     } catch {
       await rm(temp, { force: true }).catch(() => {})
       await this.removeTempFiles()
