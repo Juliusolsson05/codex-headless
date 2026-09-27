@@ -14,8 +14,39 @@ export type Codex01491ComposerSurface =
 const PLACEHOLDER = 'Ask Codex to do anything'
 const HISTORY_FOOTER = /^\s{2}reverse-i-search:/i
 const COMPLETION_FOOTER = /^\s{2}Press enter to insert or esc to close\s*$/i
+// WHY a two-row footer shape (#63). In 0.157.1's fullscreen mode, the default
+// and how Agent Code launches Codex, the bottom pane has room for BOTH the
+// status line and footer.rs's instructional row under it: "? for shortcuts"
+// while idle, "tab to queue message" (or, when narrow, "tab to queue") when
+// Tab would queue the draft. Both are recorded in
+// codex-01571-fullscreen-recorded.json. Only these exact instructional rows
+// are accepted (an optional right-aligned context percentage allowed).
+// footer.rs has more variants (agent hints, the collaboration-mode indicator,
+// the cycle hint), and any of those makes the pane `unknown`, which declines
+// evidence rather than guessing.
+const FULLSCREEN_SHORTCUTS_HINT = /^  \? for shortcuts(?: {2,}\d+% context left)?$/u
+const FULLSCREEN_QUEUE_HINT = /^  tab to queue(?: message)?(?: {2,}\d+% context left)?$/u
+
+// WHY a second popup shape (#63): 0.157.1 moved the skill/mention popup ABOVE
+// the composer (skill_popup.rs at rust-v0.157.1; recorded in the 0.157.1
+// corpus) and dropped the 0.149.1 footer string entirely: the popup's hint
+// row, then a blank row, then the composer. Below the composer the pane
+// then looks exactly like an idle composer with a draft, so without this check
+// Enter in the popup (which INSERTS a completion) would be recorded as
+// submitting the draft, the plausible wrong prompt this parser exists to
+// refuse. A transcript line that happens to read like the hint just above the
+// composer only makes us decline, which is the safe direction.
+const COMPLETION_HINT_ABOVE_COMPOSER = /^\s{2}enter insert · esc close\s*$/i
 const QUEUE_FOOTER = /^  tab to queue(?: message)?\s+\d+% context left\s*$/i
 const IDLE_FOOTER = /^  \S.*\s·\s.+$/u
+// The 0.156+ trust dialog's key hint (#63, codex-headless#65). Codex paints it
+// as the dialog's LAST row, where a composer paints its status footer, and it
+// also has the IDLE_FOOTER shape ("  enter continue · esc quit"). Without this
+// check the dialog was read as a composer whose "draft" is
+// "1. Trust and continue". It is matched on the bottom row only (one wrap
+// allowed: the Windows "… and create sandbox ·" hint wraps below 46 columns),
+// so the same words typed into a draft are never mistaken for it.
+const TRUST_HINT_FOOTER = /^\s*enter continue(?: and create sandbox)?\s*·\s*esc (?:quit|back)\s*$/i
 // Codex 0.149.1 renders Vim mode as a distinct right-hand status atom, with a
 // run of layout padding before the atom and no content after it. A cwd ending
 // in `/Vim: Insert` is part of the left status value and has neither boundary.
@@ -43,8 +74,17 @@ export function classifyCodex01491ComposerSurface(
   const bottom = rows[lastNonBlank] ?? ''
   if (HISTORY_FOOTER.test(bottom)) return { kind: 'history-search' }
   if (COMPLETION_FOOTER.test(bottom)) return { kind: 'completion-popup' }
+  const aboveBottom = rows[lastNonBlank - 1] ?? ''
+  if (TRUST_HINT_FOOTER.test(bottom) ||
+    (aboveBottom.trim() !== '' && TRUST_HINT_FOOTER.test(`${aboveBottom.trim()} ${bottom.trim()}`))) {
+    return { kind: 'non-composer-modal' }
+  }
 
   const composerRow = findComposerRow(rows, lastNonBlank)
+  if (composerRow >= 2 && (rows[composerRow - 1] ?? '').trim() === '' &&
+    COMPLETION_HINT_ABOVE_COMPOSER.test(rows[composerRow - 2] ?? '')) {
+    return { kind: 'completion-popup' }
+  }
   if (composerRow >= 0) {
     const separatorRow = rows.findIndex((row, index) =>
       index > composerRow && row.trim() === '',
@@ -59,9 +99,17 @@ export function classifyCodex01491ComposerSurface(
       // owns them. A primary composer has exactly one anchored provider footer;
       // genuine trust/approval overlays have option rows plus their own footer
       // and therefore fall through to modal classification below.
-      if (footerRows.length === 1 &&
-        (IDLE_FOOTER.test(bottom) || QUEUE_FOOTER.test(bottom))) {
-        if (VIM_STATUS_SUFFIX.test(bottom)) {
+      // One footer row (0.149.1, and 0.157.1 inline), or the 0.157.1
+      // fullscreen pair: status line, then an exact instructional row.
+      const footer = footerRows.length === 1 &&
+        (IDLE_FOOTER.test(bottom) || QUEUE_FOOTER.test(bottom))
+        ? { status: bottom, queueWithTab: QUEUE_FOOTER.test(bottom) }
+        : footerRows.length === 2 && IDLE_FOOTER.test(footerRows[0]!) &&
+            (FULLSCREEN_SHORTCUTS_HINT.test(footerRows[1]!) || FULLSCREEN_QUEUE_HINT.test(footerRows[1]!))
+          ? { status: footerRows[0]!, queueWithTab: FULLSCREEN_QUEUE_HINT.test(footerRows[1]!) }
+          : null
+      if (footer) {
+        if (VIM_STATUS_SUFFIX.test(footer.status)) {
           // WHY `/vim` can change the live editor after launch even though the
           // issued profile forces a non-Vim startup. Only the provider's
           // right-separated footer atom proves that drift; the same words in a
@@ -76,7 +124,7 @@ export function classifyCodex01491ComposerSurface(
         return {
           kind: 'primary-composer',
           draftText,
-          queueWithTab: QUEUE_FOOTER.test(bottom),
+          queueWithTab: footer.queueWithTab,
         }
       }
     }
@@ -154,6 +202,8 @@ function findPreviousNonBlank(rows: readonly string[], from: number): number {
 }
 
 function isKnownNonComposerModal(text: string): boolean {
+  // The 0.156+ trust dialog is recognised structurally by TRUST_HINT_FOOTER
+  // before this point, since its hint is always the pane's last row.
   return /Do you trust the contents of this directory/i.test(text) ||
     /Press enter to continue/i.test(text) ||
     /Would you like to run the following command/i.test(text) ||

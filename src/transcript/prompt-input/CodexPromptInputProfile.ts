@@ -14,6 +14,28 @@ const CODEX_01491_PROMPT_INPUT_ARGS = Object.freeze(
     override,
   ]),
 )
+// WHY a table of EXACT recorded versions, never a range (#63). A profile is
+// a claim that Agent Code can reconstruct what Codex will submit from the keys
+// it forwards. That claim is only as good as the recorded corpus behind it
+// (testing/fixtures/prompt-input): every row here has its own full live
+// recording, taken with record-live-prompt-input.mts, plus a config/read
+// recording and a per-tag audit of the upstream config precedence code.
+// 0.157.1 was re-recorded against the same 16 cases on 2026-09-27. It agrees with
+// 0.149.1 on every issued-profile case; the one difference, a Vim-default
+// composer opening in Insert rather than Normal, sits outside the profile,
+// which forces Vim off. A version that is not in this table has not been
+// recorded, and it gets `unsupported-cli`.
+const RECORDED_PROMPT_INPUT_VERSIONS = Object.freeze({
+  '0.149.1': 'rust-v0.149.1',
+  '0.157.1': 'rust-v0.157.1',
+} as const)
+type RecordedPromptInputVersion = keyof typeof RECORDED_PROMPT_INPUT_VERSIONS
+
+function isRecordedPromptInputVersion(value: unknown): value is RecordedPromptInputVersion {
+  return typeof value === 'string' &&
+    Object.prototype.hasOwnProperty.call(RECORDED_PROMPT_INPUT_VERSIONS, value)
+}
+
 const PROBE_CLIENT_NAME = 'agent_code_prompt_profile_probe'
 const INITIALIZE_ID = 'agent-code-prompt-profile-initialize'
 const CONFIG_READ_ID = 'agent-code-prompt-profile-config-read'
@@ -24,8 +46,8 @@ declare const CODEX_PROMPT_INPUT_PROFILE: unique symbol
 export type CodexPromptInputProfile = Readonly<{
   profileVersion: 1
   provider: 'codex'
-  cliVersion: '0.149.1'
-  upstreamTag: 'rust-v0.149.1'
+  cliVersion: RecordedPromptInputVersion
+  upstreamTag: (typeof RECORDED_PROMPT_INPUT_VERSIONS)[RecordedPromptInputVersion]
   submitKey: 'enter'
   queueKey: 'tab'
   vimMode: false
@@ -67,7 +89,10 @@ export type CodexPromptInputProfilePreparation =
  * source of truth. `config/read` executes the same binary, cwd, environment,
  * and already-assembled global arguments as the imminent PTY launch. We inspect
  * its response only in memory and issue nothing unless every effective binding
- * is exactly the recorded 0.149.1 contract.
+ * is exactly the recorded contract (identical for every recorded version; see
+ * RECORDED_PROMPT_INPUT_VERSIONS). The `01491` in the name is historical: it
+ * is a public export that Agent Code imports, and it now issues a profile for
+ * each recorded version.
  */
 export async function prepareCodex01491PromptInputProfile(
   options: Codex01491PromptInputProfileOptions,
@@ -83,6 +108,7 @@ export async function prepareCodex01491PromptInputProfile(
     return { ok: false, reason: 'effective-config-unverified' }
   }
   if (!attestation.ok) return attestation
+  const cliVersion = attestation.cliVersion
 
   const configOverrides = Object.freeze([
     ...CODEX_01491_PROMPT_INPUT_OVERRIDES,
@@ -91,8 +117,8 @@ export async function prepareCodex01491PromptInputProfile(
   const profile = Object.freeze({
     profileVersion: 1 as const,
     provider: 'codex' as const,
-    cliVersion: '0.149.1' as const,
-    upstreamTag: 'rust-v0.149.1' as const,
+    cliVersion,
+    upstreamTag: RECORDED_PROMPT_INPUT_VERSIONS[cliVersion],
     submitKey: 'enter' as const,
     queueKey: 'tab' as const,
     vimMode: false as const,
@@ -113,8 +139,8 @@ export function isIssuedCodexPromptInputProfile(
   const profile = value as CodexPromptInputProfile
   return profile.profileVersion === 1 &&
     profile.provider === 'codex' &&
-    profile.cliVersion === '0.149.1' &&
-    profile.upstreamTag === 'rust-v0.149.1' &&
+    isRecordedPromptInputVersion(profile.cliVersion) &&
+    profile.upstreamTag === RECORDED_PROMPT_INPUT_VERSIONS[profile.cliVersion] &&
     profile.submitKey === 'enter' &&
     profile.queueKey === 'tab' &&
     profile.vimMode === false &&
@@ -139,7 +165,7 @@ export function assertIssuedCodexPromptInputProfile(
 }
 
 type AttestationResult =
-  | { ok: true }
+  | { ok: true; cliVersion: RecordedPromptInputVersion }
   | Extract<CodexPromptInputProfilePreparation, { ok: false }>
 
 async function readEffectiveInputAttestation(
@@ -159,7 +185,7 @@ async function readEffectiveInputAttestation(
   return await new Promise(resolve => {
     let settled = false
     let stdout = ''
-    let initializedVersion: string | null = null
+    let initializedVersion: RecordedPromptInputVersion | null = null
     const child = spawn(options.binary, args, {
       cwd: options.cwd,
       env: options.env,
@@ -226,7 +252,7 @@ async function readEffectiveInputAttestation(
             ? new RegExp(`^${PROBE_CLIENT_NAME}/(\\d+\\.\\d+\\.\\d+)(?:\\s|$)`)
               .exec(userAgent)?.[1] ?? null
             : null
-          if (version !== '0.149.1') {
+          if (!isRecordedPromptInputVersion(version)) {
             finish({ ok: false, reason: 'unsupported-cli' })
             return
           }
@@ -245,12 +271,12 @@ async function readEffectiveInputAttestation(
 
         if (message.id !== CONFIG_READ_ID) continue
         if (!isSuccessfulResponse(message, CONFIG_READ_ID) ||
-          initializedVersion !== '0.149.1' ||
+          initializedVersion === null ||
           !effectiveInputIsRecordedContract(message.result)) {
           refuse()
           return
         }
-        finish({ ok: true })
+        finish({ ok: true, cliVersion: initializedVersion })
         return
       }
     })

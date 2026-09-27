@@ -17,8 +17,33 @@
 - `CODEX_INPUT_RECORD_ALT_SCREEN=1` records with the app's launch shape (no `--no-alt-screen`).
 - **The trust case handles both dialogs.** On the 0.156+ dialog it writes `1`, then asserts after 1 s that the dialog is STILL up, then writes Enter. This live-verifies (in the isolated home) the keystroke contract that #65 took from upstream source.
 
-## Next (after the recording)
-- Commit the sanitized 0.157.1 projection, recorded inline and fullscreen.
-- Make the recorded-catalog test run per recorded version.
-- Issue the profile for exactly the recorded versions: the `cliVersion`/`upstreamTag` pair comes from a table, never a range. Re-record `config/read` for 0.157.1.
-- Anything the 0.157.1 corpus shows to differ from 0.149.1 is fixed in the composer-surface classifier from the recorded frames, or the profile stays refused for that version with the reason stated.
+## Result (recorded 2026-09-27)
+- **Corpus.** All 16 cases were recorded against codex-cli 0.157.1, inline and fullscreen. Rollout and request agree in every case. The only provider semantic that differs from 0.149.1 is the Vim-default composer opening in Insert (`vim-normal-default` submits `iabc`), and the issued profile forces Vim off anyway.
+- **`config/read`.** The projection is identical to 0.149.1's. The per-tag audit of the config precedence code is in `codex-01571-config-source.json`: all nine claims hold at new coordinates. New in 0.157: thread config layers, which use the same precedence table.
+
+### Recorder fixes the recording needed
+Each is gated to 0.156+ and explained where it is made:
+- `--no-daemon` (SUN_LEN, #66).
+- A seen model migration.
+- Skill frontmatter.
+- The trust case: `1` then Enter, asserting `1` alone leaves the dialog up. This is live verification for #65.
+- Title side requests (`thread_title.rs`) are answered unheld and unrecorded. My first diagnosis called them retries; that was wrong, and the comment says so.
+- The request that carries the prompt is matched, not the newest one (0.157 does re-send a held request).
+- Frames and screens are windowed on the last painted row (0.157 paints short sessions from the top).
+- The resize redraw is taken when the rows actually change. Fullscreen repaints on a frame timer after a quiet gap.
+- The popup wait uses the popup's own hint.
+
+### Classifier fixes: real 0.157 surfaces the 0.149.1 classifier misread
+Each is pinned by the recorded corpora:
+- **The trust dialog's hint row has the idle-footer shape.** The dialog read as a composer drafting "1. Trust and continue". It is now matched as a bottom-row structural modal check, shared byte-for-byte with #67.
+- **The skill popup moved above the composer**, with the hint `enter insert · esc close`. Read as an idle composer, Enter-to-insert would have produced evidence for a prompt Codex never sent. It is now `completion-popup`.
+- **Fullscreen paints a two-row footer:** the status line, then `? for shortcuts` or `tab to queue message`. Only those exact rows are accepted; anything else is `unknown`.
+
+### Profile
+Issued for a table of exact recorded versions (0.149.1, 0.157.1), never a range. Unrecorded versions still get `unsupported-cli`.
+
+### Fail-first
+Against origin/main, both 0.157.1 suites fail at profile issuance. With only the classifier reverted, 6 tests fail.
+
+### Found and filed, not fixed here
+- **#68:** 0.157.1 drops a `?` from a single-chunk typed draft in about 1 of 5 runs. That is the `sendPrompt` single-line path. The committed corpus is from intact runs, and the catalog says so.

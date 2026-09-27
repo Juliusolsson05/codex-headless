@@ -1,0 +1,1040 @@
+{
+  "schemaVersion": 1,
+  "sanitizerVersion": 1,
+  "provider": {
+    "cliVersion": "codex-cli 0.157.1",
+    "binarySha256": "27ceb5f9b957b43a519efe4eaa3816a0bffb0a531a2c89af18840c0a3c016a7d",
+    "upstreamTag": "rust-v0.157.1"
+  },
+  "terminal": {
+    "cols": 140,
+    "rows": 42
+  },
+  "source": {
+    "kind": "real-codex-tui-local-canned-responses",
+    "fixtureSseSha256": "66658b7a1d9b0e3b234de932f552b946b8a005520888f24e001a024fb9a29e5b"
+  },
+  "cases": [
+    {
+      "id": "trust-action-then-submit",
+      "sourceLabel": "recorded-source-16447e7ed1ed1b48",
+      "rawPtySha256": "16447e7ed1ed1b48f5110349105cb39c7493d60c90c4bfab154214b09e67dc68",
+      "rolloutSha256": "481a6ea4a05d61f786f5c2d8ba1c7051b35534a035998ab89ee81ac58dc60e87",
+      "rawRequestSha256": "c934cb239a917ea0bce759e756c3c08d849f511b60cfc51f630c38ee56905bbd",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "RECORDED_TRUST_PROMPT",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "RECORDED_TRUST_PROMPT",
+      "requestUserText": "RECORDED_TRUST_PROMPT",
+      "screenBeforeFinalWrite": [
+        "╰──────────────────────────────────────────────────────────╯",
+        "",
+        "  Tip: New Build faster with the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true",
+        " ",
+        " ",
+        "› RECORDED_TRUST_PROMPT",
+        " ",
+        "  GPT-5.6-Sol low · <private-path>"
+      ],
+      "nonComposerWrites": [
+        "1",
+        "\r"
+      ],
+      "modal": [
+        "",
+        "  Folder access",
+        "  <private-path>                                                   ",
+        "",
+        "  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings can run code",
+        "  automatically, even without a model request. Continue only if you trust these files. Your trust decision will be saved.",
+        "",
+        "› 1. Trust and continue                                                                                                                     ",
+        "  2. Quit",
+        "",
+        "  enter continue · esc quit"
+      ]
+    },
+    {
+      "id": "combining-grapheme-backspace",
+      "sourceLabel": "recorded-source-088b7d7737a7ffb0",
+      "rawPtySha256": "088b7d7737a7ffb0268eb1f40ef91966d2a15bb223a60f5251623a41341fcc1a",
+      "rolloutSha256": "6a369bfb84078c61a285a627f6fcceaf20dc277dfe61e263151ee6a632050baa",
+      "rawRequestSha256": "ec87978c9d822b14e22cf57b6e91123fe3bd145e0952f7db6f8a4ea77e2a73be",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "A é",
+        "",
+        "X",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "A X",
+      "requestUserText": "A X",
+      "screenBeforeFinalWrite": [
+        "╰──────────────────────────────────────────────────────────╯",
+        "",
+        "  Tip: New Build faster with the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true",
+        " ",
+        " ",
+        "› A X",
+        " ",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "mixed-cjk-ctrl-w",
+      "sourceLabel": "recorded-source-ccf5f053b4c05c5f",
+      "rawPtySha256": "ccf5f053b4c05c5f5f4254aa1fb19d7292f2f33976e6db82ee61afcc70e2f9e7",
+      "rolloutSha256": "0585d9ce6de08b4c7b266fbcf42a48cf2f59db60445aea49e198bace1af9392e",
+      "rawRequestSha256": "9cdd9d5bbd8ba8664cd3a4d0a03f37de227723568ce2c78932bca92737efd9e4",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "abc 世界def",
+        "\u0017",
+        "X",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "abc 世界X",
+      "requestUserText": "abc 世界X",
+      "screenBeforeFinalWrite": [
+        "╰──────────────────────────────────────────────────────────╯",
+        "",
+        "  Tip: New Build faster with the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true",
+        " ",
+        " ",
+        "› abc 世界X",
+        " ",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "repeated-line-boundaries",
+      "sourceLabel": "recorded-source-92ae9305ceadb675",
+      "rawPtySha256": "92ae9305ceadb67516671ed0bd8431dc5aca58da4a6c045e7b6e2f9bb6332681",
+      "rolloutSha256": "4748004ea2b79c6fd72b56108289c0147060f8366fc33044c192cad41fe5d7ad",
+      "rawRequestSha256": "c607d93dadd4630ee17019218da81eb452aea74eb62d9e8e0048b577a0bdc7b3",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "\u001b[200~one\ntwo\u001b[201~",
+        "\u0001",
+        "\u0001",
+        "X",
+        "\u0005",
+        "\u0005",
+        "Y",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "Xone\ntwoY",
+      "requestUserText": "Xone\ntwoY",
+      "screenBeforeFinalWrite": [
+        "",
+        "  Tip: New Build faster with the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true",
+        " ",
+        " ",
+        "› Xone",
+        "  twoY",
+        " ",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "remapped-kill-line-start",
+      "sourceLabel": "recorded-source-3902d12010017039",
+      "rawPtySha256": "3902d120100170394bd7e2ae62b63a3822505888988ced4a308ef28e95dd2a34",
+      "rolloutSha256": "0f4ac5fa1c63027d985cecab533f32f32387d47d0527c869362e5713f22c47aa",
+      "rawRequestSha256": "1bfe48bb0a4f88fdbe5fa634b322eeb1b30cd485e93a4c141787f825d8c15a0c",
+      "configClass": "explicit-cli-override",
+      "lowerLayerConfig": [],
+      "configOverrides": [
+        "tui.keymap.editor.kill_line_start=\"alt-u\""
+      ],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "abc def",
+        "\u0015",
+        "X",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "abc defX",
+      "requestUserText": "abc defX",
+      "screenBeforeFinalWrite": [
+        "╰──────────────────────────────────────────────────────────╯",
+        "",
+        "  Tip: New Build faster with the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true",
+        " ",
+        " ",
+        "› abc defX",
+        " ",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "vim-normal-default",
+      "sourceLabel": "recorded-source-f5048d789baa1010",
+      "rawPtySha256": "f5048d789baa1010f1667aa8c0d9d6fd6d3045605a0ec2441370644d5f857941",
+      "rolloutSha256": "9c09d19571f3bd8517a31273551a3875ddea4048cb32fc1fdc34dd127b274265",
+      "rawRequestSha256": "0768c1aa152fc16f2457c2cb4f3c7f1c6f75d247c0d124689c04321c50140a66",
+      "configClass": "explicit-cli-override",
+      "lowerLayerConfig": [],
+      "configOverrides": [
+        "tui.vim_mode_default=true"
+      ],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "i",
+        "abc",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "iabc",
+      "requestUserText": "iabc",
+      "screenBeforeFinalWrite": [
+        "╰──────────────────────────────────────────────────────────╯",
+        "",
+        "  Tip: New Build faster with the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true",
+        " ",
+        " ",
+        "› iabc",
+        " ",
+        "  GPT-5.6-Sol low · <private-path>                      Vim: Insert"
+      ]
+    },
+    {
+      "id": "unbound-submit-enter",
+      "sourceLabel": "recorded-source-ad20d8ab4662f729",
+      "rawPtySha256": "ad20d8ab4662f729bf6164163e33bdfa243e7ba58ddd86d9155fc1092ff26b8f",
+      "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawRequestSha256": null,
+      "configClass": "explicit-cli-override",
+      "lowerLayerConfig": [],
+      "configOverrides": [
+        "tui.keymap.composer.submit=[]"
+      ],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "UNBOUND_SUBMIT",
+        "\r"
+      ],
+      "expectedSubmission": false,
+      "durableUserText": null,
+      "requestUserText": null,
+      "screenBeforeFinalWrite": [
+        "╰──────────────────────────────────────────────────────────╯",
+        "",
+        "  Tip: New Build faster with the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true",
+        " ",
+        " ",
+        "› UNBOUND_SUBMIT",
+        " ",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "modal-ctrl-c-preserves-draft",
+      "sourceLabel": "recorded-source-bb72dad5a2dce339",
+      "rawPtySha256": "bb72dad5a2dce33949c8fd510ece1d9885f2fa0b36837e4dfc6bf2a2aa9b9121",
+      "rolloutSha256": "43434ac095173bbd72bb175daf0c7f09657bf4ffa4a360e8b33e17540259cf81",
+      "rawRequestSha256": "50c2f82126e112e55d2b3e06030e4202b33421b2bb0d4bae4fdc09d0ab8c5aa8",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "recorded prefix ",
+        "\u0012",
+        "\u0003",
+        "suffix",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "recorded prefix suffix",
+      "requestUserText": "recorded prefix suffix",
+      "screenBeforeFinalWrite": [
+        "╰──────────────────────────────────────────────────────────╯",
+        "",
+        "  Tip: New Build faster with the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true",
+        " ",
+        " ",
+        "› recorded prefix suffix",
+        " ",
+        "  GPT-5.6-Sol low · <private-path>"
+      ],
+      "popup": [
+        "╰──────────────────────────────────────────────────────────╯",
+        "",
+        "  Tip: New Build faster with the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true",
+        " ",
+        " ",
+        "› recorded prefix",
+        " ",
+        "  reverse-i-search: "
+      ]
+    },
+    {
+      "id": "tab-footer-spoof-skill-popup",
+      "sourceLabel": "recorded-source-7cb517775398d450",
+      "rawPtySha256": "7cb517775398d450b99bf5efc769d489a01ea205fa025b096744f7db6d698ce0",
+      "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawRequestSha256": null,
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "literal tab to queue $recorded_evi",
+        "\t"
+      ],
+      "expectedSubmission": false,
+      "durableUserText": null,
+      "requestUserText": null,
+      "screenBeforeFinalWrite": [
+        " ",
+        "no matches",
+        " ",
+        "  enter insert · esc close",
+        " ",
+        "› literal tab to queue $recorded_evi",
+        " ",
+        "  GPT-5.6-Sol low · <private-path>"
+      ],
+      "popup": [
+        " ",
+        "no matches",
+        " ",
+        "  enter insert · esc close",
+        " ",
+        "› literal tab to queue $recorded_evi",
+        " ",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "active-footer-tab-queue",
+      "sourceLabel": "recorded-source-65b80aed381d0691",
+      "rawPtySha256": "65b80aed381d0691b3d4f1e3c07f84ebede23ade68ea7d046fa5cdc9c79302fe",
+      "rolloutSha256": "4d1c777bb5c6b38d0747a5b6cc7740ccf089d976ac46199b4a720c1d5fc12b21",
+      "rawRequestSha256": "9ce7d43dcb043c4355aa9e56a3287833a409e851f85edd2a7c2792af0dfa61d4",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "RECORDED_QUEUED_PROMPT",
+        "\t"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "RECORDED_QUEUED_PROMPT",
+      "requestUserText": "RECORDED_QUEUED_PROMPT",
+      "screenBeforeFinalWrite": [
+        "",
+        " ",
+        "<activity> Working (<elapsed> • esc to interrupt)",
+        " ",
+        " ",
+        "› RECORDED_QUEUED_PROMPT",
+        " ",
+        "  tab to queue message                                                                                                   100% context left"
+      ],
+      "activeTurnFooter": [
+        "",
+        " ",
+        "<activity> Working (<elapsed> • esc to interrupt)",
+        " ",
+        " ",
+        "› Ask Codex to do anything",
+        " ",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "narrow-soft-wrap-resize-redraw",
+      "sourceLabel": "recorded-source-d1a20fd1536404bb",
+      "rawPtySha256": "d1a20fd1536404bb2b53b414f0cf87f1295a2bb2ad72444df3743cdeabded255",
+      "rolloutSha256": "b4e692470c70af9aa39f2d90ff1fd648ddf67b624dd09fde27011aeb1e7c3643",
+      "rawRequestSha256": "236f566deb6247a5eac946105a67e2bc05506839da8870994a015d774441bfb4",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 52,
+        "rows": 24
+      },
+      "inputChunks": [
+        "RECORDED_NARROW_WRAP alpha beta gamma delta epsilon zeta eta theta iota kappa omega",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "RECORDED_NARROW_WRAP alpha beta gamma delta epsilon zeta eta theta iota kappa omega",
+      "requestUserText": "RECORDED_NARROW_WRAP alpha beta gamma delta epsilon zeta eta theta iota kappa omega",
+      "screenBeforeFinalWrite": [
+        "",
+        "  Tip: New Build faster with the Desktop app. Run 'codex app' or visit",
+        "  https://chatgpt.com/codex?app-landing-page=true",
+        " ",
+        " ",
+        "› RECORDED_NARROW_WRAP alpha beta gamma delta epsilon zeta eta theta iota kappa omega",
+        " ",
+        "  GPT-5.6-Sol low · <recorded-workspace>"
+      ],
+      "beforeTypingFrame": {
+        "generation": 31,
+        "cols": 52,
+        "cursor": {
+          "x": 2,
+          "y": 12
+        },
+        "rows": [
+          {
+            "viewportRow": 5,
+            "text": "╰──────────────────────────────────────────────────╯",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 6,
+            "text": "",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 7,
+            "text": "  Tip: New Build faster with the Desktop app. Run",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 8,
+            "text": "  'codex app' or visit",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 9,
+            "text": "  https://chatgpt.com/codex?app-landing-page=true",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 10,
+            "text": " ",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 11,
+            "text": " ",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 12,
+            "text": "› Ask Codex to do anything",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 13,
+            "text": " ",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 14,
+            "text": "  GPT-5.6-Sol low · <private-path>",
+            "isWrapped": false
+          }
+        ]
+      },
+      "resizeTrace": {
+        "requested": {
+          "cols": 92,
+          "rows": 24
+        },
+        "rawChunkCountBeforeResize": 32,
+        "rawChunkCountBeforeProviderRedraw": 32,
+        "rawChunkCountAfterProviderRedraw": 41,
+        "preRedrawGenerationUnchanged": true,
+        "postRedrawGenerationAdvanced": true,
+        "narrow": {
+          "generation": 32,
+          "cols": 52,
+          "cursor": {
+            "x": 41,
+            "y": 13
+          },
+          "rows": [
+            {
+              "viewportRow": 6,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 7,
+              "text": "  Tip: New Build faster with the Desktop app. Run",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 8,
+              "text": "  'codex app' or visit",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 9,
+              "text": "  https://chatgpt.com/codex?app-landing-page=true",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 10,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 11,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 12,
+              "text": "› RECORDED_NARROW_WRAP alpha beta gamma delta",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 13,
+              "text": "  epsilon zeta eta theta iota kappa omega",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 14,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 15,
+              "text": "  GPT-5.6-Sol low · <private-path>",
+              "isWrapped": false
+            }
+          ]
+        },
+        "beforeProviderRedraw": {
+          "generation": 32,
+          "cols": 92,
+          "cursor": {
+            "x": 41,
+            "y": 13
+          },
+          "rows": [
+            {
+              "viewportRow": 6,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 7,
+              "text": "  Tip: New Build faster with the Desktop app. Run",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 8,
+              "text": "  'codex app' or visit",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 9,
+              "text": "  https://chatgpt.com/codex?app-landing-page=true",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 10,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 11,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 12,
+              "text": "› RECORDED_NARROW_WRAP alpha beta gamma delta",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 13,
+              "text": "  epsilon zeta eta theta iota kappa omega",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 14,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 15,
+              "text": "  GPT-5.6-Sol low · <private-path>",
+              "isWrapped": false
+            }
+          ]
+        },
+        "afterProviderRedraw": {
+          "generation": 41,
+          "cols": 92,
+          "cursor": {
+            "x": 85,
+            "y": 11
+          },
+          "rows": [
+            {
+              "viewportRow": 4,
+              "text": "│ directory: <recorded-workspace> │",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 5,
+              "text": "╰──────────────────────────────────────────────────────────╯",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 6,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 7,
+              "text": "  Tip: New Build faster with the Desktop app. Run 'codex app' or visit",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 8,
+              "text": "  https://chatgpt.com/codex?app-landing-page=true",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 9,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 10,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 11,
+              "text": "› RECORDED_NARROW_WRAP alpha beta gamma delta epsilon zeta eta theta iota kappa omega",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 12,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 13,
+              "text": "  GPT-5.6-Sol low · <recorded-workspace>",
+              "isWrapped": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "unchanged-redraw-after-edit",
+      "sourceLabel": "recorded-source-f23377916fd7de21",
+      "rawPtySha256": "f23377916fd7de21b6ce8465ceb73cb59decce48bd03fc0bfede6730299fe351",
+      "rolloutSha256": "28918b990ee57f9768034f05838586d0b08138bc6681012932a844257517d7a3",
+      "rawRequestSha256": "1c79552a3d45858bb4b3e7a4b0a06404bee7965441a7c295dd0e8d86914ddeea",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "RECORDED_UNCHANGED_BASE_EDIT",
+      "requestUserText": "RECORDED_UNCHANGED_BASE_EDIT",
+      "screenBeforeFinalWrite": [
+        "",
+        "",
+        "  00:22",
+        " ",
+        " ",
+        "› RECORDED_UNCHANGED_BASE_EDIT",
+        " ",
+        "  GPT-5.6-Sol low · <private-path>"
+      ],
+      "editAcknowledgementTrace": {
+        "baseDraft": "RECORDED_UNCHANGED_BASE",
+        "edit": "_EDIT",
+        "setupDurableUserText": "RECORDED_SLOW_TURN",
+        "setupRequestUserText": "RECORDED_SLOW_TURN",
+        "rawChunkCountBeforeEdit": 46,
+        "rawChunkCountAtUnchangedRedraw": 47,
+        "schedulingControl": "SIGSTOP_AFTER_EDIT_WRITE_BEFORE_PROVIDER_PARSE",
+        "beforeEdit": {
+          "generation": 46,
+          "cols": 140,
+          "cursor": {
+            "x": 25,
+            "y": 16
+          },
+          "rows": [
+            {
+              "viewportRow": 9,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 10,
+              "text": "› RECORDED_SLOW_TURN",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 11,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 12,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 13,
+              "text": "<activity> Working (<elapsed> • esc to interrupt)",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 14,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 15,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 16,
+              "text": "› RECORDED_UNCHANGED_BASE",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 17,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 18,
+              "text": "  tab to queue message                                                                                                   100% context left",
+              "isWrapped": false
+            }
+          ]
+        },
+        "unchangedAfterEdit": {
+          "generation": 47,
+          "cols": 140,
+          "cursor": {
+            "x": 25,
+            "y": 16
+          },
+          "rows": [
+            {
+              "viewportRow": 9,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 10,
+              "text": "› RECORDED_SLOW_TURN",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 11,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 12,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 13,
+              "text": "<activity> Working (<elapsed> • esc to interrupt)",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 14,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 15,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 16,
+              "text": "› RECORDED_UNCHANGED_BASE",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 17,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 18,
+              "text": "  tab to queue message                                                                                                   100% context left",
+              "isWrapped": false
+            }
+          ]
+        },
+        "paintedEdit": {
+          "generation": 50,
+          "cols": 140,
+          "cursor": {
+            "x": 30,
+            "y": 16
+          },
+          "rows": [
+            {
+              "viewportRow": 9,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 10,
+              "text": "› RECORDED_SLOW_TURN",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 11,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 12,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 13,
+              "text": "<activity> Working (<elapsed> • esc to interrupt)",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 14,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 15,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 16,
+              "text": "› RECORDED_UNCHANGED_BASE_EDIT",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 17,
+              "text": " ",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 18,
+              "text": "  tab to queue message                                                                                                   100% context left",
+              "isWrapped": false
+            }
+          ]
+        },
+        "unchangedGenerationAdvanced": true,
+        "unchangedComposerRevision": true,
+        "paintedGenerationAdvanced": true
+      }
+    },
+    {
+      "id": "ordinary-modal-sentinel-draft",
+      "sourceLabel": "recorded-source-af5e704d80a97c3f",
+      "rawPtySha256": "af5e704d80a97c3fac5831439af598a3f93e5436680780e94696583855371b01",
+      "rolloutSha256": "2d47e322bffa28f662506c86ce06431ce98533d3517c8ea255c756b6b980b70f",
+      "rawRequestSha256": "b206f5a31dcbf3ccf6ca78df56d8c6d8b651119d063b15cd068dbd33cacc5612",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "ORDINARY_DRAFT Do you trust the contents of this directory? Press enter to continue END",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "ORDINARY_DRAFT Do you trust the contents of this directory? Press enter to continue END",
+      "requestUserText": "ORDINARY_DRAFT Do you trust the contents of this directory? Press enter to continue END",
+      "screenBeforeFinalWrite": [
+        "│ >_ OpenAI Codex (v0.157.1)                               │",
+        "│                                                          │",
+        "│ model:     GPT-5.6-Sol low   /model to change            │",
+        "│ directory: <recorded-workspace> │",
+        "╰──────────────────────────────────────────────────────────╯",
+        "",
+        "  Tip: New Build faster with the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true",
+        " ",
+        " ",
+        "› ORDINARY_DRAFT Do you trust the contents of this directory? Press enter to continue END",
+        " ",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "ordinary-vim-sentinel-cwd",
+      "sourceLabel": "recorded-source-69108cdaabb8b2b8",
+      "rawPtySha256": "69108cdaabb8b2b81c6039dc0ecdf90f4b22d8983a88798575892233b1ed00db",
+      "rolloutSha256": "6644e9657a77dbb76cbbb65b2b64c451f0811cadb0a2c0d842bd277a7985f9fb",
+      "rawRequestSha256": "58d626c47a89e260a838811c6cf60ef192087e4f51a96f1c9da4e00d3cffff6f",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "ORDINARY_VIM_SENTINEL_CWD",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "ORDINARY_VIM_SENTINEL_CWD",
+      "requestUserText": "ORDINARY_VIM_SENTINEL_CWD",
+      "screenBeforeFinalWrite": [
+        "╰──────────────────────────────────────────────────╯",
+        "",
+        "  Tip: When worktree support is available, use /worktree to start or continue a conversation in a separate Git worktree.",
+        " ",
+        " ",
+        "› ORDINARY_VIM_SENTINEL_CWD",
+        " ",
+        "  GPT-5.6-Sol low · <recorded-workspace>/Vim: Insert"
+      ]
+    },
+    {
+      "id": "lower-layer-keymap-valid-control",
+      "sourceLabel": "recorded-source-65562af741f6ff82",
+      "rawPtySha256": "65562af741f6ff822c9c2f5900464ac56d3c08360eed371bfe67841ea16ee109",
+      "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawRequestSha256": null,
+      "configClass": "lower-layer-config",
+      "lowerLayerConfig": [
+        "[tui.keymap.composer]",
+        "queue = []",
+        "toggle_shortcuts = \"tab\""
+      ],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [],
+      "expectedSubmission": false,
+      "durableUserText": null,
+      "requestUserText": null,
+      "requestCountDelta": 0,
+      "startupOutcome": "composer-ready",
+      "exitOutcome": null,
+      "startupScreen": [
+        "╰──────────────────────────────────────────────────────────╯",
+        "",
+        "  Tip: New Build faster with the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true",
+        " ",
+        " ",
+        "› Ask Codex to do anything",
+        " ",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "lower-layer-keymap-issued-profile-conflict",
+      "sourceLabel": "recorded-source-7671e97cacea97b1",
+      "rawPtySha256": "7671e97cacea97b17c5d26a33e4f3492dcb8147b924cc333df00b880efe5fe59",
+      "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawRequestSha256": null,
+      "configClass": "lower-layer-plus-issued-cli-override",
+      "lowerLayerConfig": [
+        "[tui.keymap.composer]",
+        "queue = []",
+        "toggle_shortcuts = \"tab\""
+      ],
+      "configOverrides": [
+        "tui.keymap.composer.submit=\"enter\"",
+        "tui.keymap.composer.queue=\"tab\"",
+        "tui.vim_mode_default=false",
+        "tui.keymap.global.toggle_vim_mode=[]"
+      ],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [],
+      "expectedSubmission": false,
+      "durableUserText": null,
+      "requestUserText": null,
+      "requestCountDelta": 0,
+      "startupOutcome": "rejected-before-composer",
+      "exitOutcome": {
+        "exitCode": 1,
+        "signal": 0
+      },
+      "startupScreen": [
+        "Error: Ambiguous `tui.keymap.app` bindings: `composer.queue` and `composer.toggle_shortcuts` use the same key. Set unique keys in `~/.codex/",
+        "config.toml` and retry. See the Codex keymap documentation for supported actions and examples."
+      ]
+    }
+  ]
+}
