@@ -47,3 +47,14 @@ Against origin/main, both 0.157.1 suites fail at profile issuance. With only the
 
 ### Found and filed, not fixed here
 - **#68:** 0.157.1 drops a `?` from a single-chunk typed draft in about 1 of 5 runs. That is the `sendPrompt` single-line path. The committed corpus is from intact runs, and the catalog says so.
+
+## Review round (a, b): popups above the composer
+Both reviewers found the same critical gap.
+- **What 0.157.1 paints.** It paints EVERY popup above the composer (`chat_composer.rs`, `popup_state.rs`). The slash-command and file popups have no hint row, the unified-mention popup has `enter/tab insert · esc close · …`, and a short skill popup omits its hint.
+- **The failure.** A frame with a popup open read as an idle composer holding the draft, so Enter, which selects the popup item, produced evidence for a prompt Codex never sent. Reviewer b reproduced it with upstream's `slash_popup_footer_wide` snapshot: `/m` over `/memories`, giving false evidence of `/m`.
+- **The fix is fail-closed on the draft.** Codex opens these popups from the draft itself (a leading `/`; an `@` or `$` token), so such a draft never yields prompt evidence. A real prompt starting with `/` or mentioning `$HOME` becomes a safe miss (proxy fallback), never a false prompt. The unified-mention hint is also recognised structurally.
+- **Evidence.**
+  - Two new recorded cases on 0.156+: `slash-popup-enter-selects-command` (`/stat` + Enter dispatches `/status`) and `file-popup-enter-inserts-mention` (`@READ` + Enter inserts `README.md`). Neither submitted anything, and both corpora (inline and fullscreen) were re-recorded with them.
+  - Upstream's snapshot is a unit test.
+  - Removing the draft rule fails the slash cases in both corpora, and the snapshot test.
+- **Also from review a.** The fullscreen `? for shortcuts` row is now asserted. The claim that the `config/read` projection is identical covers `effectiveInputProjection` only; the 0.149.1 fixture's extra `layerShapeEvidence` has no 0.157.1 counterpart.

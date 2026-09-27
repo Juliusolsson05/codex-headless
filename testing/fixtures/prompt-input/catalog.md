@@ -104,6 +104,8 @@ The composer-surface classifier recognises the last two. Every issued-profile ca
 | `ordinary-vim-sentinel-cwd` | A literal `Vim: Insert` cwd suffix is ordinary footer text, not evidence that Vim mode is active. |
 | `lower-layer-keymap-valid-control` | The lower-layer `queue=[]` plus `toggle_shortcuts="tab"` map reaches a composer with no request or rollout user item. |
 | `lower-layer-keymap-issued-profile-conflict` | Adding the exact four package-issued CLI overrides makes the otherwise-valid lower map exit 1 before the composer, request, or rollout user item. |
+| `slash-popup-enter-selects-command` | 0.156+ only: Enter while the slash-command popup (painted above the composer, no hint row) owns it dispatches the command and submits nothing. |
+| `file-popup-enter-inserts-mention` | 0.156+ only: Enter while the file/mention popup owns it inserts the item and submits nothing. |
 | `capability-6244eac-recorded` | The built pre-repair package is constructible by deep import and exposes/retains raw state. |
 
 ## Source boundary

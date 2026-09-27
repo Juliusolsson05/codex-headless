@@ -36,7 +36,7 @@ const FULLSCREEN_QUEUE_HINT = /^  tab to queue(?: message)?(?: {2,}\d+% context 
 // submitting the draft, the plausible wrong prompt this parser exists to
 // refuse. A transcript line that happens to read like the hint just above the
 // composer only makes us decline, which is the safe direction.
-const COMPLETION_HINT_ABOVE_COMPOSER = /^\s{2}enter insert · esc close\s*$/i
+const COMPLETION_HINT_ABOVE_COMPOSER = /^\s{2}enter(?:\/tab)? insert · esc close(?: · .*)?$/i
 const QUEUE_FOOTER = /^  tab to queue(?: message)?\s+\d+% context left\s*$/i
 const IDLE_FOOTER = /^  \S.*\s·\s.+$/u
 // The 0.156+ trust dialog's key hint (#63, codex-headless#65). Codex paints it
@@ -120,6 +120,7 @@ export function classifyCodex01491ComposerSurface(
         const draftRows = frame.rows.slice(composerRow, separatorRow)
         const draftText = extractDraftText(draftRows, frame.cols)
         if (draftText === null) return { kind: 'unknown' }
+        if (draftMayOpenPopup(draftText)) return { kind: 'completion-popup' }
 
         return {
           kind: 'primary-composer',
@@ -209,4 +210,26 @@ function isKnownNonComposerModal(text: string): boolean {
     /Would you like to run the following command/i.test(text) ||
     /Yes, and don't ask again/i.test(text) ||
     /customize shortcuts with \/keymap/i.test(text)
+}
+
+// WHY decline on the DRAFT, not only on a visible popup (review a of
+// codex-headless#69). Codex 0.157.1 paints every popup above the composer:
+// the slash-command and file popups carry no hint row at all, and a short
+// skill popup omits its hint. A frame with a popup open is therefore
+// indistinguishable, from the pane alone, from an idle composer holding the
+// same draft. Enter there selects or inserts the popup item (dispatches
+// `/status`, inserts a file path) and submits nothing. Recorded in
+// codex-01571-*recorded.json: `slash-popup-enter-selects-command` and
+// `file-popup-enter-inserts-mention`.
+//
+// Codex opens these popups from the draft itself: a leading `/` for
+// commands, and an `@` or `$` token for file, mention and skill search
+// (chat_composer.rs, rust-v0.157.1). So a draft that could have one open never
+// yields prompt evidence. This is deliberately fail-closed. A real prompt
+// that starts with `/`, or mentions `$HOME` or `a@b`, becomes a safe miss
+// (ownership falls back to the proxy path) rather than risking a false
+// prompt, which could claim a sibling rollout.
+function draftMayOpenPopup(draft: string): boolean {
+  if (draft.trimStart().startsWith('/')) return true
+  return /(?:^|\s)[@$]\S/u.test(draft)
 }

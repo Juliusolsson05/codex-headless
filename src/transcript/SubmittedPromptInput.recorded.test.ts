@@ -144,7 +144,17 @@ type RecordedCorpusSpec = {
   provider: { cliVersion: string; binarySha256: string; upstreamTag: string }
   upstreamCommitSha: string
   configSourceFiles: Array<[string, string]>
+  /** The two popup-Enter cases exist only in corpora recorded on 0.156+. */
+  recordsPopupEnterCases: boolean
 }
+
+// Recorded only on 0.156+ (review a of codex-headless#69): Enter while a popup
+// that paints ABOVE the composer owns it. The 0.149.1 corpus predates them, and
+// that binary can no longer be re-recorded here.
+const POPUP_ENTER_CASE_IDS = [
+  'slash-popup-enter-selects-command',
+  'file-popup-enter-inserts-mention',
+] as const
 
 function defineRecordedCorpusSuite(spec: RecordedCorpusSpec): void {
   const fixturePath = fileURLToPath(new URL(
@@ -289,7 +299,7 @@ function defineRecordedCorpusSuite(spec: RecordedCorpusSpec): void {
     return submitted
   }
 
-  function caseById(id: typeof recordedCaseIds[number]): RecordedPromptInputCase {
+  function caseById(id: typeof recordedCaseIds[number] | typeof POPUP_ENTER_CASE_IDS[number]): RecordedPromptInputCase {
     const recordedCase = corpus.cases.find(value => value.id === id)
     if (!recordedCase) throw new Error(`missing recorded case ${id}`)
     return recordedCase
@@ -372,8 +382,10 @@ function defineRecordedCorpusSuite(spec: RecordedCorpusSpec): void {
       // WHY fixture files and catalog prose can drift independently. This turns
       // the inventory into an executable boundary: adding, omitting, or merely
       // documenting a case cannot inflate coverage without a replayed assertion.
-      expect(fixtureIds).toEqual(recordedCaseIds)
-      expect(catalogIds).toEqual(recordedCaseIds)
+      expect(fixtureIds).toEqual(spec.recordsPopupEnterCases
+        ? [...recordedCaseIds, ...POPUP_ENTER_CASE_IDS]
+        : recordedCaseIds)
+      expect(catalogIds).toEqual([...recordedCaseIds, ...POPUP_ENTER_CASE_IDS])
       expect(corpus).toMatchObject({
         schemaVersion: 1,
         sanitizerVersion: 1,
@@ -668,6 +680,32 @@ function defineRecordedCorpusSuite(spec: RecordedCorpusSpec): void {
         .toEqual({ kind: 'completion-popup' })
     })
 
+    it.runIf(spec.recordsPopupEnterCases).each(POPUP_ENTER_CASE_IDS)('never counts Enter in the recorded %s frame as a submission', caseId => {
+      // Review a of codex-headless#69: these popups paint above the composer
+      // with no reliable hint row, and Enter selects the popup item. Codex
+      // submitted nothing (the recording asserts no rollout user item and no
+      // request), so the issued evidence must emit nothing either.
+      const recordedCase = caseById(caseId)
+      if (!recordedCase.screenBeforeFinalWrite) throw new Error(`missing recorded frame for ${caseId}`)
+      expect(recordedCase.expectedSubmission).toBe(false)
+      expect(classifyCodex01491ComposerSurface(frameFromRows(recordedCase.screenBeforeFinalWrite)))
+        .toEqual({ kind: 'completion-popup' })
+      const evidence = issuedEvidence()
+      evidence.consume(recordedCase.inputChunks[0]!, { frame: null })
+      expect(evidence.consume('\r', { frame: frameFromRows(recordedCase.screenBeforeFinalWrite) })).toEqual([])
+    })
+
+    it('reads the recorded idle footer rows as a composer that does not queue with Tab', () => {
+      // Review a: the fullscreen `? for shortcuts` instructional row was never
+      // asserted. The active-turn frame of the queue case shows it (fullscreen)
+      // or the one-row footer (inline); either way it is a composer, and only
+      // `tab to queue` rows make Tab queue.
+      const frame = caseById('active-footer-tab-queue').activeTurnFooter
+      if (!frame) throw new Error('missing recorded active-turn footer')
+      expect(classifyCodex01491ComposerSurface(frameFromRows(frame)))
+        .toMatchObject({ kind: 'primary-composer', queueWithTab: false })
+    })
+
     it('CH-05 refuses profile issuance for the recorded lower-layer conflict', async () => {
       const control = caseById('lower-layer-keymap-valid-control')
       const conflict = caseById('lower-layer-keymap-issued-profile-conflict')
@@ -700,6 +738,7 @@ defineRecordedCorpusSuite({
     upstreamTag: 'rust-v0.149.1',
   },
   upstreamCommitSha: 'ff29a44391deccde0aba0f8390337d7f3c319ea4',
+  recordsPopupEnterCases: false,
   configSourceFiles: [
     ['codex-rs/config/src/config_layer_source.rs', '6816bf7bd44b1f2799aae30331b77a7e8231ccacdc4cd3d44d6485f9e1118364'],
     ['codex-rs/config/src/loader/mod.rs', '53d66dce1cd81de3d86610ff2a75aed7f9049609cbefcd3694590c0acfc7c404'],
@@ -726,6 +765,7 @@ for (const [layout, corpusFile] of [
       upstreamTag: 'rust-v0.157.1',
     },
     upstreamCommitSha: '36650394c5b38c2990ccf2a3457165ca3e9d9726',
+    recordsPopupEnterCases: true,
     configSourceFiles: [
       ['codex-rs/config/src/config_layer_source.rs', '6816bf7bd44b1f2799aae30331b77a7e8231ccacdc4cd3d44d6485f9e1118364'],
       ['codex-rs/config/src/loader/mod.rs', '0e3131c8186b391ecb425620bee2a8649d10364d062eee21a15d1cbe48dbbb0d'],

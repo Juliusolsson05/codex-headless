@@ -30,6 +30,10 @@ type InputCase = {
   waitBeforeFinal?: RegExp
   setup?: (session: LiveSession) => Promise<Record<string, unknown>>
   afterDraft?: (session: LiveSession) => Promise<Record<string, unknown>>
+  /** Files created in the workspace before launch (e.g. for `@` file search). */
+  workspaceFiles?: Record<string, string>
+  /** Record only on CLIs that support the 0.156+ adjustments (see cliSupportsNoDaemon). */
+  only0156Plus?: boolean
 }
 
 type CapturedRequest = {
@@ -299,13 +303,36 @@ const allCases: InputCase[] = [
     startupOnly: true,
     expectedStartupFailure: /composer\.queue.*composer\.toggle_shortcuts|composer\.toggle_shortcuts.*composer\.queue/i,
   },
+  // WHY these two (review a of codex-headless#69): 0.157.1 paints EVERY popup
+  // above the composer, and the slash-command and file popups carry no hint
+  // row. A frame with a popup open therefore looks like an idle composer with
+  // a draft, and Enter, which selects the popup's item, must not count as a
+  // submission of the draft. Enter is the key the skill-popup case never
+  // pressed (it pressed Tab). Recorded on 0.156+ only: the 0.149.1 corpus
+  // cannot be re-recorded, because that binary is no longer installed.
+  {
+    id: 'slash-popup-enter-selects-command',
+    only0156Plus: true,
+    inputChunks: ['/stat', '\r'],
+    expectedSubmission: false,
+    waitBeforeFinal: /\/status/,
+  },
+  {
+    id: 'file-popup-enter-inserts-mention',
+    only0156Plus: true,
+    workspaceFiles: { 'README.md': '# recorded fixture\n' },
+    inputChunks: ['@READ', '\r'],
+    expectedSubmission: false,
+    waitBeforeFinal: /README\.md/,
+  },
 ]
 const requestedCases = new Set(
   (process.env.CODEX_INPUT_RECORD_CASES ?? '').split(',').filter(Boolean),
 )
+const versionCases = allCases.filter(inputCase => !inputCase.only0156Plus || cliSupportsNoDaemon(cliVersion))
 const cases = requestedCases.size === 0
-  ? allCases
-  : allCases.filter(inputCase => requestedCases.has(inputCase.id))
+  ? versionCases
+  : versionCases.filter(inputCase => requestedCases.has(inputCase.id))
 
 const output: Record<string, unknown>[] = []
 try {
@@ -583,6 +610,9 @@ async function startSession(inputCase: InputCase): Promise<LiveSession> {
     ? join(workspaceRoot, inputCase.workspaceSuffix)
     : workspaceRoot
   if (inputCase.workspaceSuffix) await mkdir(workspace, { recursive: true })
+  for (const [name, content] of Object.entries(inputCase.workspaceFiles ?? {})) {
+    await writeFile(join(workspace, name), content)
+  }
   await mkdir(join(codexHome, 'skills', 'recorded-evidence'), { recursive: true })
   await writeFile(
     join(codexHome, 'skills', 'recorded-evidence', 'SKILL.md'),

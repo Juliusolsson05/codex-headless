@@ -17,10 +17,10 @@
   "cases": [
     {
       "id": "trust-action-then-submit",
-      "sourceLabel": "recorded-source-16447e7ed1ed1b48",
-      "rawPtySha256": "16447e7ed1ed1b48f5110349105cb39c7493d60c90c4bfab154214b09e67dc68",
-      "rolloutSha256": "481a6ea4a05d61f786f5c2d8ba1c7051b35534a035998ab89ee81ac58dc60e87",
-      "rawRequestSha256": "c934cb239a917ea0bce759e756c3c08d849f511b60cfc51f630c38ee56905bbd",
+      "sourceLabel": "recorded-source-bb6fcdefc3edc4e6",
+      "rawPtySha256": "bb6fcdefc3edc4e636b6082e070903744dbace4491b8253bccc4632b762824d6",
+      "rolloutSha256": "bd63699b0d2dfd66ca6c46ac3c863d0557af1e9be5fc69b308a996787e930589",
+      "rawRequestSha256": "ce82e2129feec9d52e26ba5939386a3b2dfefdc5a4fd07b6bec79a11ce8ccd72",
       "configClass": "recorded-default-01491",
       "lowerLayerConfig": [],
       "configOverrides": [],
@@ -65,10 +65,10 @@
     },
     {
       "id": "combining-grapheme-backspace",
-      "sourceLabel": "recorded-source-088b7d7737a7ffb0",
-      "rawPtySha256": "088b7d7737a7ffb0268eb1f40ef91966d2a15bb223a60f5251623a41341fcc1a",
-      "rolloutSha256": "6a369bfb84078c61a285a627f6fcceaf20dc277dfe61e263151ee6a632050baa",
-      "rawRequestSha256": "ec87978c9d822b14e22cf57b6e91123fe3bd145e0952f7db6f8a4ea77e2a73be",
+      "sourceLabel": "recorded-source-57671a2aa17a9638",
+      "rawPtySha256": "57671a2aa17a9638da28a9bc84dd93e38a6127f19d5f36bf82e32fee29990555",
+      "rolloutSha256": "3756c060bf4b56489fb70438c4ae5cf5ad9673e5bd6f8671a050d5fcc6df910a",
+      "rawRequestSha256": "80d28b79c2c2ebd61f762ea52adbdf95771d2a7de24cf4042f8af25f64287a6d",
       "configClass": "recorded-default-01491",
       "lowerLayerConfig": [],
       "configOverrides": [],
@@ -98,10 +98,10 @@
     },
     {
       "id": "mixed-cjk-ctrl-w",
-      "sourceLabel": "recorded-source-ccf5f053b4c05c5f",
-      "rawPtySha256": "ccf5f053b4c05c5f5f4254aa1fb19d7292f2f33976e6db82ee61afcc70e2f9e7",
-      "rolloutSha256": "0585d9ce6de08b4c7b266fbcf42a48cf2f59db60445aea49e198bace1af9392e",
-      "rawRequestSha256": "9cdd9d5bbd8ba8664cd3a4d0a03f37de227723568ce2c78932bca92737efd9e4",
+      "sourceLabel": "recorded-source-e32aecee00f41bad",
+      "rawPtySha256": "e32aecee00f41bad3a9b9299891b3c966d554c0436f131735db16425cce19cd7",
+      "rolloutSha256": "838eb2bc211e5f5c9a17144935eab64ca95d06a6d17c90d5a634fff02b15b749",
+      "rawRequestSha256": "1d21d268b6ac4243bcd778f7a865b7d3ffc5521a3219eac8ff9df95015bfa1c0",
       "configClass": "recorded-default-01491",
       "lowerLayerConfig": [],
       "configOverrides": [],
@@ -131,10 +131,10 @@
     },
     {
       "id": "repeated-line-boundaries",
-      "sourceLabel": "recorded-source-92ae9305ceadb675",
-      "rawPtySha256": "92ae9305ceadb67516671ed0bd8431dc5aca58da4a6c045e7b6e2f9bb6332681",
-      "rolloutSha256": "4748004ea2b79c6fd72b56108289c0147060f8366fc33044c192cad41fe5d7ad",
-      "rawRequestSha256": "c607d93dadd4630ee17019218da81eb452aea74eb62d9e8e0048b577a0bdc7b3",
+      "sourceLabel": "recorded-source-0da2d21741620169",
+      "rawPtySha256": "0da2d21741620169d57b13a45af7bcf7866bdff2e74bc7d0c088b981fb2b4943",
+      "rolloutSha256": "46651882ebbffc9c422d9f3b5b5b5852c57a5920eada29f80bfe90820b6897eb",
+      "rawRequestSha256": "a7d87d3fe5caea3c2b4c774cff5b7dc657b7a5c0eb527f991ae103bd28b41605",
       "configClass": "recorded-default-01491",
       "lowerLayerConfig": [],
       "configOverrides": [],
@@ -168,10 +168,10 @@
     },
     {
       "id": "remapped-kill-line-start",
-      "sourceLabel": "recorded-source-3902d12010017039",
-      "rawPtySha256": "3902d120100170394bd7e2ae62b63a3822505888988ced4a308ef28e95dd2a34",
-      "rolloutSha256": "0f4ac5fa1c63027d985cecab533f32f32387d47d0527c869362e5713f22c47aa",
-      "rawRequestSha256": "1bfe48bb0a4f88fdbe5fa634b322eeb1b30cd485e93a4c141787f825d8c15a0c",
+      "sourceLabel": "recorded-source-929cc1f4f95842ea",
+      "rawPtySha256": "929cc1f4f95842ea1eea1797aaa8b46110aad80c121d14da4b662eb8af2315ad",
+      "rolloutSha256": "24ff98b8ea08c903e580d3dee98477dcf57e2b4b8081fde24bfbc76f8ce5dd68",
+      "rawRequestSha256": "cd504d26c0d82c2fcd743d4fa065ecdd48517b8bafd2391ab91fcdab33d25a21",
       "configClass": "explicit-cli-override",
       "lowerLayerConfig": [],
       "configOverrides": [
@@ -203,10 +203,10 @@
     },
     {
       "id": "vim-normal-default",
-      "sourceLabel": "recorded-source-f5048d789baa1010",
-      "rawPtySha256": "f5048d789baa1010f1667aa8c0d9d6fd6d3045605a0ec2441370644d5f857941",
-      "rolloutSha256": "9c09d19571f3bd8517a31273551a3875ddea4048cb32fc1fdc34dd127b274265",
-      "rawRequestSha256": "0768c1aa152fc16f2457c2cb4f3c7f1c6f75d247c0d124689c04321c50140a66",
+      "sourceLabel": "recorded-source-c3cbd1a723c869d0",
+      "rawPtySha256": "c3cbd1a723c869d096c22c9792cec2d2d497df39aae83d89efd930dd83ecaf49",
+      "rolloutSha256": "34a1cff8942fdf1caa1485a0f917aed8a8a5e95f6ec8e1ead1a5a91f3bf50140",
+      "rawRequestSha256": "b587dccede9b7932a524f97116cfc47b1b0f8cb73d48291743563bc4eb348eff",
       "configClass": "explicit-cli-override",
       "lowerLayerConfig": [],
       "configOverrides": [
@@ -237,8 +237,8 @@
     },
     {
       "id": "unbound-submit-enter",
-      "sourceLabel": "recorded-source-ad20d8ab4662f729",
-      "rawPtySha256": "ad20d8ab4662f729bf6164163e33bdfa243e7ba58ddd86d9155fc1092ff26b8f",
+      "sourceLabel": "recorded-source-8c539d37df20c818",
+      "rawPtySha256": "8c539d37df20c8185fbdd79f234d8b22a498b349fa68e3392926a38bd29413a2",
       "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "rawRequestSha256": null,
       "configClass": "explicit-cli-override",
@@ -260,7 +260,7 @@
       "screenBeforeFinalWrite": [
         "╰──────────────────────────────────────────────────────────╯",
         "",
-        "  Tip: New Build faster with the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true",
+        "  Tip: Use /hooks to view and manage lifecycle hooks.",
         " ",
         " ",
         "› UNBOUND_SUBMIT",
@@ -270,10 +270,10 @@
     },
     {
       "id": "modal-ctrl-c-preserves-draft",
-      "sourceLabel": "recorded-source-bb72dad5a2dce339",
-      "rawPtySha256": "bb72dad5a2dce33949c8fd510ece1d9885f2fa0b36837e4dfc6bf2a2aa9b9121",
-      "rolloutSha256": "43434ac095173bbd72bb175daf0c7f09657bf4ffa4a360e8b33e17540259cf81",
-      "rawRequestSha256": "50c2f82126e112e55d2b3e06030e4202b33421b2bb0d4bae4fdc09d0ab8c5aa8",
+      "sourceLabel": "recorded-source-0b6766e35802cf98",
+      "rawPtySha256": "0b6766e35802cf9805ce223db7856c5ddf3cc1be18fd3d0744c63f08dce6fff6",
+      "rolloutSha256": "b4fca4dba1d766971f56761ef661bf22ef1acbb6d333087fb0f49c07262940ae",
+      "rawRequestSha256": "eaf4896051e4152b43e160b5263a1db2330b64d6b676622502b130814015d3ae",
       "configClass": "recorded-default-01491",
       "lowerLayerConfig": [],
       "configOverrides": [],
@@ -314,8 +314,8 @@
     },
     {
       "id": "tab-footer-spoof-skill-popup",
-      "sourceLabel": "recorded-source-7cb517775398d450",
-      "rawPtySha256": "7cb517775398d450b99bf5efc769d489a01ea205fa025b096744f7db6d698ce0",
+      "sourceLabel": "recorded-source-60e4b6a07edddcb2",
+      "rawPtySha256": "60e4b6a07edddcb2d52f4e536b1d5d88b7f6deeea5ed4c2adb6e8c5ddc385691",
       "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "rawRequestSha256": null,
       "configClass": "recorded-default-01491",
@@ -355,10 +355,10 @@
     },
     {
       "id": "active-footer-tab-queue",
-      "sourceLabel": "recorded-source-65b80aed381d0691",
-      "rawPtySha256": "65b80aed381d0691b3d4f1e3c07f84ebede23ade68ea7d046fa5cdc9c79302fe",
-      "rolloutSha256": "4d1c777bb5c6b38d0747a5b6cc7740ccf089d976ac46199b4a720c1d5fc12b21",
-      "rawRequestSha256": "9ce7d43dcb043c4355aa9e56a3287833a409e851f85edd2a7c2792af0dfa61d4",
+      "sourceLabel": "recorded-source-31af2a8155d082a8",
+      "rawPtySha256": "31af2a8155d082a849a54f3bc9db001ebc8cee98f2f047e2165423640141cb84",
+      "rolloutSha256": "08aada9e8a184ebf7fcca9175bedfc3769a054cd1446b1c7ccb2662b2bb908e8",
+      "rawRequestSha256": "95feeff62c62b03acba64e4f7bfa4d9043419581ce3203798c20cf87263732a4",
       "configClass": "recorded-default-01491",
       "lowerLayerConfig": [],
       "configOverrides": [],
@@ -396,10 +396,10 @@
     },
     {
       "id": "narrow-soft-wrap-resize-redraw",
-      "sourceLabel": "recorded-source-d1a20fd1536404bb",
-      "rawPtySha256": "d1a20fd1536404bb2b53b414f0cf87f1295a2bb2ad72444df3743cdeabded255",
-      "rolloutSha256": "b4e692470c70af9aa39f2d90ff1fd648ddf67b624dd09fde27011aeb1e7c3643",
-      "rawRequestSha256": "236f566deb6247a5eac946105a67e2bc05506839da8870994a015d774441bfb4",
+      "sourceLabel": "recorded-source-fa5da550e6e40faf",
+      "rawPtySha256": "fa5da550e6e40faf04144e1c4e2bd0ddc3825220b3196ace083a1edbb200f577",
+      "rolloutSha256": "708e13c9b804e79cb9c17487f61e5ba1f21b777e064d369bb0367c4b537408fb",
+      "rawRequestSha256": "644c05a6e1abecd6f7b50a70b77dbed62d60c492353de8ee8a79479c2cf32d26",
       "configClass": "recorded-default-01491",
       "lowerLayerConfig": [],
       "configOverrides": [],
@@ -425,7 +425,7 @@
         "  GPT-5.6-Sol low · <recorded-workspace>"
       ],
       "beforeTypingFrame": {
-        "generation": 31,
+        "generation": 32,
         "cols": 52,
         "cursor": {
           "x": 2,
@@ -489,13 +489,13 @@
           "cols": 92,
           "rows": 24
         },
-        "rawChunkCountBeforeResize": 32,
-        "rawChunkCountBeforeProviderRedraw": 32,
-        "rawChunkCountAfterProviderRedraw": 41,
+        "rawChunkCountBeforeResize": 33,
+        "rawChunkCountBeforeProviderRedraw": 33,
+        "rawChunkCountAfterProviderRedraw": 38,
         "preRedrawGenerationUnchanged": true,
         "postRedrawGenerationAdvanced": true,
         "narrow": {
-          "generation": 32,
+          "generation": 33,
           "cols": 52,
           "cursor": {
             "x": 41,
@@ -555,7 +555,7 @@
           ]
         },
         "beforeProviderRedraw": {
-          "generation": 32,
+          "generation": 33,
           "cols": 92,
           "cursor": {
             "x": 41,
@@ -615,7 +615,7 @@
           ]
         },
         "afterProviderRedraw": {
-          "generation": 41,
+          "generation": 38,
           "cols": 92,
           "cursor": {
             "x": 85,
@@ -678,10 +678,10 @@
     },
     {
       "id": "unchanged-redraw-after-edit",
-      "sourceLabel": "recorded-source-f23377916fd7de21",
-      "rawPtySha256": "f23377916fd7de21b6ce8465ceb73cb59decce48bd03fc0bfede6730299fe351",
-      "rolloutSha256": "28918b990ee57f9768034f05838586d0b08138bc6681012932a844257517d7a3",
-      "rawRequestSha256": "1c79552a3d45858bb4b3e7a4b0a06404bee7965441a7c295dd0e8d86914ddeea",
+      "sourceLabel": "recorded-source-eb8b434b3854c8cd",
+      "rawPtySha256": "eb8b434b3854c8cd1acb7064f1922c70a62f1458abf9ab9953e2dffda9b562c6",
+      "rolloutSha256": "9c057ab816c22dbf1576aee52cbbfa1ff5793536ea123a38adf221c39158e974",
+      "rawRequestSha256": "2d1d8e08304f9fc0f28c8ca3b93bb19c4a6769094f53ca21fee16fda780e18c3",
       "configClass": "recorded-default-01491",
       "lowerLayerConfig": [],
       "configOverrides": [],
@@ -698,7 +698,7 @@
       "screenBeforeFinalWrite": [
         "",
         "",
-        "  00:22",
+        "  01:42",
         " ",
         " ",
         "› RECORDED_UNCHANGED_BASE_EDIT",
@@ -710,11 +710,11 @@
         "edit": "_EDIT",
         "setupDurableUserText": "RECORDED_SLOW_TURN",
         "setupRequestUserText": "RECORDED_SLOW_TURN",
-        "rawChunkCountBeforeEdit": 46,
-        "rawChunkCountAtUnchangedRedraw": 47,
+        "rawChunkCountBeforeEdit": 62,
+        "rawChunkCountAtUnchangedRedraw": 63,
         "schedulingControl": "SIGSTOP_AFTER_EDIT_WRITE_BEFORE_PROVIDER_PARSE",
         "beforeEdit": {
-          "generation": 46,
+          "generation": 62,
           "cols": 140,
           "cursor": {
             "x": 25,
@@ -774,7 +774,7 @@
           ]
         },
         "unchangedAfterEdit": {
-          "generation": 47,
+          "generation": 63,
           "cols": 140,
           "cursor": {
             "x": 25,
@@ -834,7 +834,7 @@
           ]
         },
         "paintedEdit": {
-          "generation": 50,
+          "generation": 66,
           "cols": 140,
           "cursor": {
             "x": 30,
@@ -900,10 +900,10 @@
     },
     {
       "id": "ordinary-modal-sentinel-draft",
-      "sourceLabel": "recorded-source-af5e704d80a97c3f",
-      "rawPtySha256": "af5e704d80a97c3fac5831439af598a3f93e5436680780e94696583855371b01",
-      "rolloutSha256": "2d47e322bffa28f662506c86ce06431ce98533d3517c8ea255c756b6b980b70f",
-      "rawRequestSha256": "b206f5a31dcbf3ccf6ca78df56d8c6d8b651119d063b15cd068dbd33cacc5612",
+      "sourceLabel": "recorded-source-d2806a249c852d29",
+      "rawPtySha256": "d2806a249c852d29b0bb0d4a5959b568b7e9ea5e8b38d437ac1f1b7cc0116c53",
+      "rolloutSha256": "0ba9cab7da82bb3aed33c23f43fd3fbd0c439021715f2e862f384f75771f9b09",
+      "rawRequestSha256": "f1fe707287a3c067e0a6f2597e4664d59ba8db6ed873eed8bd45754fcb9ccf82",
       "configClass": "recorded-default-01491",
       "lowerLayerConfig": [],
       "configOverrides": [],
@@ -935,10 +935,10 @@
     },
     {
       "id": "ordinary-vim-sentinel-cwd",
-      "sourceLabel": "recorded-source-69108cdaabb8b2b8",
-      "rawPtySha256": "69108cdaabb8b2b81c6039dc0ecdf90f4b22d8983a88798575892233b1ed00db",
-      "rolloutSha256": "6644e9657a77dbb76cbbb65b2b64c451f0811cadb0a2c0d842bd277a7985f9fb",
-      "rawRequestSha256": "58d626c47a89e260a838811c6cf60ef192087e4f51a96f1c9da4e00d3cffff6f",
+      "sourceLabel": "recorded-source-c8143ea8bbffa37a",
+      "rawPtySha256": "c8143ea8bbffa37ad98e3e682eb848d9f8bf2b4335e92abdc740c4fc230dc90e",
+      "rolloutSha256": "e7b4fdab9667b9bd92b9329b3eca040ff88555ad222ebd73600c443c62f07283",
+      "rawRequestSha256": "1c6391ac1a03f12bb6588d9c62e8a05afd514da8867fb4740f8d11fc41658f69",
       "configClass": "recorded-default-01491",
       "lowerLayerConfig": [],
       "configOverrides": [],
@@ -956,7 +956,7 @@
       "screenBeforeFinalWrite": [
         "╰──────────────────────────────────────────────────╯",
         "",
-        "  Tip: When worktree support is available, use /worktree to start or continue a conversation in a separate Git worktree.",
+        "  Tip: New Build faster with the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true",
         " ",
         " ",
         "› ORDINARY_VIM_SENTINEL_CWD",
@@ -966,8 +966,8 @@
     },
     {
       "id": "lower-layer-keymap-valid-control",
-      "sourceLabel": "recorded-source-65562af741f6ff82",
-      "rawPtySha256": "65562af741f6ff822c9c2f5900464ac56d3c08360eed371bfe67841ea16ee109",
+      "sourceLabel": "recorded-source-f8fb8b7d929ddc0f",
+      "rawPtySha256": "f8fb8b7d929ddc0f2efb828426b803b78822e0a2cb40b48239f895df4f4ba9a8",
       "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "rawRequestSha256": null,
       "configClass": "lower-layer-config",
@@ -1034,6 +1034,68 @@
       "startupScreen": [
         "Error: Ambiguous `tui.keymap.app` bindings: `composer.queue` and `composer.toggle_shortcuts` use the same key. Set unique keys in `~/.codex/",
         "config.toml` and retry. See the Codex keymap documentation for supported actions and examples."
+      ]
+    },
+    {
+      "id": "slash-popup-enter-selects-command",
+      "sourceLabel": "recorded-source-30f3183257dca4bc",
+      "rawPtySha256": "30f3183257dca4bc58607ba9833048e542f5bea18dcebff6eebfd4bb17ac8cb6",
+      "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawRequestSha256": null,
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "/stat",
+        "\r"
+      ],
+      "expectedSubmission": false,
+      "durableUserText": null,
+      "requestUserText": null,
+      "screenBeforeFinalWrite": [
+        "  Tip: New Build faster with the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true",
+        " ",
+        "› /status      show current session configuration and token usage                                                                           ",
+        "  /statusline  configure which items appear in the status line",
+        " ",
+        "› /stat",
+        " ",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "file-popup-enter-inserts-mention",
+      "sourceLabel": "recorded-source-7c017f846c733ea9",
+      "rawPtySha256": "7c017f846c733ea9390ccb673e50cd78a0b7b121d5e76581f5cf5c9a463d5861",
+      "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawRequestSha256": null,
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "@READ",
+        "\r"
+      ],
+      "expectedSubmission": false,
+      "durableUserText": null,
+      "requestUserText": null,
+      "screenBeforeFinalWrite": [
+        " ",
+        " ",
+        " ",
+        "  enter/tab insert · esc close · ↑/↓ select · ←/→ filter",
+        " ",
+        "› @READ",
+        " ",
+        "  GPT-5.6-Sol low · <private-path>"
       ]
     }
   ]
