@@ -267,6 +267,10 @@ export function terminalToMarkdown(
 
 // --- HeadlessTerminal class ---
 
+// DEC private mode 2026 (synchronized output). See `synchronizedUpdateOpen`.
+const SYNCHRONIZED_UPDATE_OPEN = '\x1b[?2026h'
+const SYNCHRONIZED_UPDATE_CLOSE = '\x1b[?2026l'
+
 export class HeadlessTerminal extends EventEmitter {
   private readonly pty: IPty
   private readonly term: TerminalInstance
@@ -277,6 +281,21 @@ export class HeadlessTerminal extends EventEmitter {
   // only schedule a flush once the *latest* write completes, so we
   // don't snapshot a half-parsed buffer. See attach() for the use.
   private pendingWrites = 0
+  // Whether the provider has opened a synchronized update (DEC mode 2026,
+  // `\x1b[?2026h`) that it has not closed yet, as of the last admitted chunk.
+  // WHY we track it ourselves: @xterm/headless 5.5 parses the sequence but
+  // exposes no mode flag, and Codex regularly splits one redraw across chunks
+  // (the 0.157 recording has an open in one chunk and its close in the next).
+  // Between them every byte is parsed, yet the buffer holds half a redraw:
+  // new footer rows over the old composer (codex-headless#55 review A2).
+  // Tracked at admission, not parse: while a chunk is queued `pendingWrites`
+  // already nulls every settled read, so the two only have to agree once the
+  // parser is idle, and then they do.
+  private synchronizedUpdateOpen = false
+  // The last few admitted characters, so an open/close sequence that a PTY
+  // read splits across two chunks is still seen. Missing it would leave the
+  // flag stale in the dangerous direction (closed while the redraw is open).
+  private synchronizedScanTail = ''
   private parsedFrameGeneration = 0
   private layoutEpoch = 0
   private providerLayoutEpoch = 0
@@ -336,11 +355,19 @@ export class HeadlessTerminal extends EventEmitter {
     this.attached = true
 
     this.ptyDataDisposable = this.pty.onData((data: string) => {
-      this.emit('pty-data', data)
       // term.write is async — the callback fires once the bytes have
       // been parsed into the buffer. Schedule the flush from inside
       // the callback so snapshots always reflect already-parsed bytes.
+      //
+      // WHY the counter and the synchronized-update scan come BEFORE the
+      // 'pty-data' emit (codex-headless#55 review A1): a listener runs
+      // synchronously inside emit(). If the chunk were not yet counted, a
+      // listener that asks for a settled frame would get the previous paint
+      // as if it were current, i.e. an empty composer while the human's
+      // first keystrokes are in its hand.
       this.pendingWrites++
+      this.admitSynchronizedUpdateBytes(data)
+      this.emit('pty-data', data)
       // WHY the callback can run after resize even when this chunk arrived
       // before resize. Capturing the epoch at admission prevents those old
       // bytes from blessing xterm's new geometry merely because parsing was
@@ -436,6 +463,69 @@ export class HeadlessTerminal extends EventEmitter {
   }
 
   /**
+   * The plain viewport, or null while PTY bytes are still being parsed
+   * (agent-code#1319 review A2).
+   *
+   * WHY a second plain snapshot beside `snapshotPlain()`: that one reads the
+   * buffer as it stands, so while a chunk is queued in xterm's parser it shows
+   * the PREVIOUS paint. A caller that treats "a bare `›` above the status row"
+   * as proof of an empty composer (the only proof 0.149.1 and narrow 0.157
+   * panes give, because they have no shortcuts hint row) would then consent
+   * on a stale frame while the human's first keystrokes sit unparsed, and
+   * paste into their draft. Polling twice does not help: `pendingWrites` can
+   * stay non-zero for a long time (see the synchronized-output note near the
+   * bottom of this class), so elapsed time proves nothing. A proof of empty
+   * must come from a parsed frame, same rule as `snapshotComposerCells()`.
+   */
+  snapshotSettledPlain(): string | null {
+    if (!this.isParsedFrameSettled()) return null
+    return this.snapshotPlain()
+  }
+
+  /**
+   * Whether the buffer is a frame the provider finished painting, as far as
+   * the terminal can tell. Three conditions, each from a codex-headless#55
+   * review A finding:
+   *
+   * 1. No admitted chunk is still queued in xterm's parser (otherwise the
+   *    buffer is the paint from before those bytes).
+   * 2. No synchronized update is open (otherwise the buffer is half of one
+   *    redraw; see `synchronizedUpdateOpen`).
+   * 3. The provider has painted since the last resize. xterm reflows the old
+   *    rows the moment we resize, but Codex redraws only after SIGWINCH, so
+   *    until a post-resize chunk is parsed the rows are old paint under new
+   *    geometry and prove nothing about the current layout.
+   *
+   * WHAT THIS DOES NOT PROMISE: that the provider has painted every input it
+   * received. A keystroke Codex has read but not yet echoed is invisible to
+   * any terminal, so a caller still needs its own confirmation (agent-code
+   * requires two settled polls 50 ms apart) and must treat null as "not
+   * empty", never fall back to `snapshotPlain()`. Null can last indefinitely
+   * under the synchronized-output stall described near the bottom of this
+   * class; that is the fail-closed direction for a paste decision.
+   */
+  private isParsedFrameSettled(): boolean {
+    return this.pendingWrites === 0 &&
+      !this.synchronizedUpdateOpen &&
+      this.providerLayoutEpoch === this.layoutEpoch
+  }
+
+  /**
+   * Fold one admitted chunk into `synchronizedUpdateOpen`. The LAST open or
+   * close in the chunk wins, because a chunk may carry several complete
+   * redraws followed by the start of the next one.
+   */
+  private admitSynchronizedUpdateBytes(data: string): void {
+    const scanned = this.synchronizedScanTail + data
+    const open = scanned.lastIndexOf(SYNCHRONIZED_UPDATE_OPEN)
+    const close = scanned.lastIndexOf(SYNCHRONIZED_UPDATE_CLOSE)
+    if (open !== close) this.synchronizedUpdateOpen = open > close
+    // One character short of a whole sequence: enough to complete a split
+    // one, never enough to re-count a sequence that was already seen whole.
+    this.synchronizedScanTail = scanned.slice(-(SYNCHRONIZED_UPDATE_OPEN.length - 1))
+  }
+
+  /**
    * The viewport's rows with each non-blank cell's dim flag, read from the
    * LIVE buffer (agent-code#800). Null while PTY bytes are still being parsed,
    * so a caller classifies a whole frame or nothing. Dim is the only
@@ -443,7 +533,10 @@ export class HeadlessTerminal extends EventEmitter {
    * draft plain (see parsers/ComposerState.ts).
    */
   snapshotComposerCells(): ComposerCellRow[] | null {
-    if (this.pendingWrites !== 0) return null
+    // Same settled rule as `snapshotSettledPlain()`: the cells answer the
+    // same question (is the composer empty?) and must not disagree with it
+    // about which frames count.
+    if (!this.isParsedFrameSettled()) return null
     const buffer = this.term.buffer.active
     const rows: ComposerCellRow[] = []
     for (let viewportRow = 0; viewportRow < this.term.rows; viewportRow += 1) {

@@ -1425,8 +1425,25 @@ export class CodexHeadless extends EventEmitter {
     })
   }
 
+  /**
+   * The plain viewport as it stands. It can be the paint from before bytes
+   * xterm has not parsed yet; for a proof that the composer is empty, use
+   * `getSettledScreen()` instead.
+   */
   getScreen(): string {
     return this.terminal.snapshotPlain()
+  }
+
+  /**
+   * The plain screen from a settled frame, or null while PTY bytes are still
+   * being parsed, a synchronized update is open, or a resize has not been
+   * redrawn yet (agent-code#1319, codex-headless#55; see
+   * `HeadlessTerminal.isParsedFrameSettled`). Use this, never `getScreen()`, for
+   * any text-based proof that the composer is empty: `getScreen()` can show
+   * the paint from before the human's latest keystrokes.
+   */
+  getSettledScreen(): string | null {
+    return this.terminal.snapshotSettledPlain()
   }
 
   getScreenMarkdown(): string {
