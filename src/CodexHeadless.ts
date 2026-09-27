@@ -46,6 +46,7 @@ import {
   detectCodexTrustDialog,
   type CodexTrustDialogState,
   CODEX_TRUST_DIALOG_ACCEPT_KEYS,
+  CODEX_TRUST_DIALOG_DECLINE_KEYS,
 } from './parsers/TrustDialogParser.js'
 import {
   makeEvaluator,
@@ -108,7 +109,7 @@ import type {
 //   Transcript: ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
 //               (date-bucketed globally, not per-cwd)
 //   Markers:    • for assistant, › for user (not ⏺ and ❯)
-//   Trust:      "Do you trust the contents" (not "Accessing workspace")
+//   Trust:      "Do you trust the contents" (<=0.149) / "Folder access" (0.156+)
 //
 // The consumer owns the PTY. This class never spawns or kills processes.
 
@@ -1049,8 +1050,12 @@ export class CodexHeadless extends EventEmitter {
             type: 'trust_dialog',
             ts: Date.now(),
             workspace: trust.workspace,
-            accept: () => this.write(CODEX_TRUST_DIALOG_ACCEPT_KEYS),
-            reject: () => this.write('2\r'),
+            // The keystrokes come from the layout the parser matched (#65):
+            // 0.156+ needs `1` + Enter to accept, where `1` alone only moves
+            // the highlight. Reject used to be a hard-coded '2\r', whose Enter
+            // leaked into whatever screen followed the dialog.
+            accept: () => this.write(trust.acceptKeys ?? CODEX_TRUST_DIALOG_ACCEPT_KEYS),
+            reject: () => this.write(trust.declineKeys ?? CODEX_TRUST_DIALOG_DECLINE_KEYS),
           })
         }
       }

@@ -154,7 +154,10 @@ function findPreviousNonBlank(rows: readonly string[], from: number): number {
 }
 
 function isKnownNonComposerModal(text: string): boolean {
+  // The 0.156+ trust dialog has none of the legacy phrases (#65); its key hint
+  // row is the one line of it that always sits in this bottom window.
   return /Do you trust the contents of this directory/i.test(text) ||
+    /enter continue(?: and create sandbox)? · esc (?:quit|back)/i.test(text) ||
     /Press enter to continue/i.test(text) ||
     /Would you like to run the following command/i.test(text) ||
     /Yes, and don't ask again/i.test(text) ||

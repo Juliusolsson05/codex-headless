@@ -1,0 +1,163 @@
+{
+"source": "codex-cli 0.157.1 (standalone ~/.local/bin/codex), spawned through node-pty at its default 80x24 in a fresh untrusted scratch directory on 2026-09-27. No keystroke was sent: the dialog was observed, never answered, and the process was killed after 9 s (the observed marker). Redacted at equal length: the account name, the session uuid and the directory suffix inside the scratch path.",
+"cols": 80,
+"rows": 24,
+"events": [
+{
+"t": 52,
+"dir": "out",
+"data": "\u001b[?2004h\u001b[>4;0m\u001b[>7u\u001b[?1004h"
+},
+{
+"t": 53,
+"dir": "out",
+"data": "\u001b[6n\u001b]10;?\u001b\\\u001b]11;?\u001b\\\u001b[?u\u001b[c"
+},
+{
+"t": 302,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[?25l\u001b[?1049h\u001b[>4;0m\u001b[>7u\u001b[?1007l\u001b[?1000h\u001b[?1002h\u001b[?1006h\u001b[?1003h\u001b[?25l"
+},
+{
+"t": 302,
+"dir": "out",
+"data": "\u001b[1;1H\u001b[J"
+},
+{
+"t": 303,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[?25l\u001b[1;1H\u001b[2m\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\u001b[2;1H\u2502 >_ \u001b[22m\u001b[1mOpenAI Codex\u001b[22m\u001b[2m\u001b[2m (v0.157.1)            \u2502\u001b[3;1H\u2502                                       \u2502\u001b[4;1H\u2502 model:     \u001b[3mloading\u001b[23m   \u001b[22m\u001b[38;2;99;168;248;49m/model\u001b[2m\u001b[39;49m to change \u2502\u001b[5;1H\u2502 directory: \u001b[22mloading\u001b[2m                    \u2502\u001b[6;1H\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f\u001b[21;1H\u001b[22m\u001b[1m\u203a\u001b[21;3H\u001b[22m\u001b[2m\u001b[2mAsk Codex to do anything\u001b[24;3H\u001b[22m\u001b[1m?\u001b[24;5H\u001b[22mfor\u001b[24;9Hshortcuts\u001b[39m\u001b[49m\u001b[0m\u001b[1;1H\u001b[0 q\u001b[1;1H\u001b[2m\u256d\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25h\u001b[?2026l\u001b[?2026l"
+},
+{
+"t": 303,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25h\u001b[?2026l"
+},
+{
+"t": 304,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25h\u001b[?2026l"
+},
+{
+"t": 305,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25h\u001b[?2026l"
+},
+{
+"t": 306,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25h\u001b[?2026l"
+},
+{
+"t": 307,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25h\u001b[?2026l"
+},
+{
+"t": 364,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[?25l\u001b[1;41H\u001b[2m\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\u001b[2;41H                  \u2502\u001b[3;41H                  \u2502\u001b[4;41H                  \u2502\u001b[5;14H\u001b[22m/private/tmp/claude-501/\u2026/rec/untrusted-ABCD\u001b[2m \u2502\u001b[6;41H\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25h"
+},
+{
+"t": 364,
+"dir": "out",
+"data": "\u001b[?2026l"
+},
+{
+"t": 365,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25h\u001b[?2026l"
+},
+{
+"t": 365,
+"dir": "out",
+"data": "\u001b[?1006l\u001b[?1015l\u001b[?1003l\u001b[?1002l\u001b[?1000l\u001b[<1u\u001b[?1007l\u001b[?1049l\u001b[<1u\u001b[>4;0m\u001b[?2004l\u001b[?1004l\u001b[0 q\u001b[?25h"
+},
+{
+"t": 1522,
+"dir": "out",
+"data": "\u001b[?2004h\u001b[>4;0m\u001b[>7u\u001b[?1004h\u001b[?25l\u001b[?1049h\u001b[>4;0m\u001b[>7u\u001b[?1007l\u001b[?1000h\u001b[?1002h\u001b[?1006h\u001b[?1003h\u001b[?25l\u001b[1;1H\u001b[J\u001b[?2026h\u001b[?25l\u001b[1;1H\u001b[2m\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\u001b[2;1H\u2502 >_ \u001b[22m\u001b[1mOpenAI Codex\u001b[22m\u001b[2m\u001b[2m (v0.157.1)                              \u2502\u001b[3;1H\u2502                                                         \u2502\u001b[4;1H\u2502 model:     \u001b[3mloading\u001b[23m   \u001b[22m\u001b[38;2;99;168;248;49m/model\u001b[2m\u001b[39;49m to change                   \u2502\u001b[5;1H\u2502 directory: \u001b[22m/private/tmp/claude-501/\u2026/rec/untrusted-ABCD\u001b[2m \u2502\u001b[6;1H\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f\u001b[21;1H\u001b[22m\u001b[1m\u203a\u001b[21;3H\u001b[22m\u001b[2m\u001b[2mAsk Codex to do anything\u001b[24;3H\u001b[22m\u001b[1m?\u001b[24;5H\u001b[22mfor\u001b[24;9Hshortcuts\u001b[39m\u001b[49m\u001b[0m\u001b[1;1H\u001b[0 q\u001b[1;1H\u001b[2m\u256d\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25"
+},
+{
+"t": 1522,
+"dir": "out",
+"data": "h\u001b[?2026l"
+},
+{
+"t": 1530,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25h\u001b[?2026l"
+},
+{
+"t": 1637,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25h\u001b[?2026l"
+},
+{
+"t": 1691,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25h\u001b[?2026l"
+},
+{
+"t": 1694,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25h\u001b[?2026l"
+},
+{
+"t": 1716,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25h\u001b[?2026l"
+},
+{
+"t": 1742,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25h\u001b[?2026l"
+},
+{
+"t": 1742,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25h\u001b[?2026l"
+},
+{
+"t": 1744,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25h\u001b[?2026l"
+},
+{
+"t": 1745,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25h\u001b[?2026l"
+},
+{
+"t": 1753,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[39m\u001b[49m\u001b[0m\u001b[21;3H\u001b[?25h\u001b[?2026l"
+},
+{
+"t": 1848,
+"dir": "out",
+"data": "\u001b[?2026h\u001b[?25l"
+},
+{
+"t": 1848,
+"dir": "out",
+"data": "\u001b[1;2H\u001b[0m\u001b[49m\u001b[K\u001b[2;16H\u001b[0m\u001b[49m\u001b[K\u001b[5;2H\u001b[0m\u001b[49m\u001b[K\u001b[21;2H\u001b[0m\u001b[49m\u001b[K\u001b[24;2H\u001b[0m\u001b[49m\u001b[K\u001b[1;1H \u001b[2;1H\u001b[1m  Folder access\u001b[3;1H\u001b[22m  \u001b[2m/private/tmp/claude-501/-Users-fixture-user-Desktop-Development-agent-code/d\u001b[4;1H\u001b[22m  \u001b[2m0000000-0000-0000-0000-000000000000/scratchpad/rec/untrusted-ABCD           \u001b[5;1H\u001b[22m \u001b[6;1H  Trust this folder? Codex can read, edit, and run files here,\u001b[6;64Hsubject\u001b[6;72Hto\u001b[6;75Hyour\u001b[7;3Hpermission\u001b[7;14Hsettings.\u001b[7;24HFolder\u001b[7;31Hsettings\u001b[7;40Hcan\u001b[7;44Hrun\u001b[7;48Hcode\u001b[7;53Hautomatically,\u001b[7;68Heven\u001b[8;3Hwithout\u001b[8;11Ha\u001b[8;13Hmodel\u001b[8;19Hrequest.\u001b[8;28HContinue\u001b[8;37Honly\u001b[8;42Hif\u001b[8;45Hyou\u001b[8;49Htrust\u001b[8;55Hthese\u001b[8;61Hfiles.\u001b[8;68HYour\u001b[8;73Htrust\u001b[9;3Hdecision\u001b[9;12Hwill\u001b[9;17Hbe\u001b[9;20Hsaved.\u001b[11;1H\u001b[7m\u001b[1m\u203a 1. Trust and continue                                                         \u001b[12;3H\u001b[27m\u001b[22m2.\u001b[12;6HBack\u001b[12;11Hto\u001b[12;14HAgent\u001b[12;20HCommand\u001b[12;28HCenter\u001b[14;3H\u001b[1menter\u001b[22m\u001b[2m\u001b[2m continue \u00b7 \u001b[22m\u001b[1mesc\u001b[22m\u001b[2m\u001b[2m back\u001b[21;1H\u001b[22m \u001b[39m\u001b[49m\u001b["
+},
+{
+"t": 1848,
+"dir": "out",
+"data": "0m\u001b[?2026l"
+},
+{
+"t": 9010,
+"dir": "in",
+"label": "observed",
+"data": ""
+},
+{
+"t": 9019,
+"dir": "exit",
+"code": 0
+}
+]
+}
