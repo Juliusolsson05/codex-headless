@@ -1,0 +1,1102 @@
+{
+  "schemaVersion": 1,
+  "sanitizerVersion": 1,
+  "provider": {
+    "cliVersion": "codex-cli 0.157.1",
+    "binarySha256": "27ceb5f9b957b43a519efe4eaa3816a0bffb0a531a2c89af18840c0a3c016a7d",
+    "upstreamTag": "rust-v0.157.1"
+  },
+  "terminal": {
+    "cols": 140,
+    "rows": 42
+  },
+  "source": {
+    "kind": "real-codex-tui-local-canned-responses",
+    "fixtureSseSha256": "66658b7a1d9b0e3b234de932f552b946b8a005520888f24e001a024fb9a29e5b"
+  },
+  "cases": [
+    {
+      "id": "trust-action-then-submit",
+      "sourceLabel": "recorded-source-05d5a85ed82f49f0",
+      "rawPtySha256": "05d5a85ed82f49f01d484aa095da5d636870c1785af53c84b28018072545940c",
+      "rolloutSha256": "f0354058eadf00b55b17ec1b179746c2a602bda133d0558b7b3e6b2faea4989b",
+      "rawRequestSha256": "9ccf1eaaa9572e80b4729c7c69e3276d3465e4272e7c04217de8b908cbc6a062",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "RECORDED_TRUST_PROMPT",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "RECORDED_TRUST_PROMPT",
+      "requestUserText": "RECORDED_TRUST_PROMPT",
+      "screenBeforeFinalWrite": [
+        "",
+        "",
+        "",
+        "",
+        "",
+        "› RECORDED_TRUST_PROMPT",
+        "",
+        "  GPT-5.6-Sol low · <private-path>"
+      ],
+      "nonComposerWrites": [
+        "1",
+        "\r"
+      ],
+      "modal": [
+        " ",
+        "  Folder access",
+        "  <private-path>                                                   ",
+        " ",
+        "  Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings can run code",
+        "  automatically, even without a model request. Continue only if you trust these files. Your trust decision will be saved.",
+        "",
+        "› 1. Trust and continue                                                                                                                     ",
+        "  2. Quit",
+        "",
+        "  enter continue · esc quit"
+      ]
+    },
+    {
+      "id": "combining-grapheme-backspace",
+      "sourceLabel": "recorded-source-8940f86a532a74b3",
+      "rawPtySha256": "8940f86a532a74b398818c2bf3392a9dd47a8923373e22a4dd376bdb7bafb431",
+      "rolloutSha256": "8e9ba0dde30b5a0ae7a182c74a2a00b68bcfb7774d7963367ee665d7fd0d76a7",
+      "rawRequestSha256": "36f5c993fcae8cd7bc242c71e2f74139db4e82ed448a3ff2a01dd1e9cc98dba4",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "A é",
+        "",
+        "X",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "A X",
+      "requestUserText": "A X",
+      "screenBeforeFinalWrite": [
+        "",
+        "",
+        "",
+        "",
+        "",
+        "› A X",
+        "",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "mixed-cjk-ctrl-w",
+      "sourceLabel": "recorded-source-5e478fc81de02201",
+      "rawPtySha256": "5e478fc81de02201fcde92703387ecd6d0c983d4f0165e46f5e944198d83a132",
+      "rolloutSha256": "a4dcede6283e58db9535d8027e986e22bc7f7d96998440ce623840d41aad5aff",
+      "rawRequestSha256": "0debb2c8b5c2188537f6df8fd6aaa379ffe0110b40de3624a82f2fa88d83721d",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "abc 世界def",
+        "\u0017",
+        "X",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "abc 世界X",
+      "requestUserText": "abc 世界X",
+      "screenBeforeFinalWrite": [
+        "",
+        "",
+        "",
+        "",
+        "",
+        "› abc 世界X",
+        "",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "repeated-line-boundaries",
+      "sourceLabel": "recorded-source-af95beb7da2bd8fa",
+      "rawPtySha256": "af95beb7da2bd8faa1cf1b17ca3b5a55bac7c6597755c8455a8683fa382db139",
+      "rolloutSha256": "9e317f2cd8a085fecea6c0776129fd26e70cb3784decfb1567ea35606a988830",
+      "rawRequestSha256": "cb785f3c0cf596c8f93f0b0731b81a663a05a5189bc44be799fad50054d75663",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "\u001b[200~one\ntwo\u001b[201~",
+        "\u0001",
+        "\u0001",
+        "X",
+        "\u0005",
+        "\u0005",
+        "Y",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "Xone\ntwoY",
+      "requestUserText": "Xone\ntwoY",
+      "screenBeforeFinalWrite": [
+        "",
+        "",
+        "",
+        "",
+        "› Xone",
+        "  twoY",
+        "",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "remapped-kill-line-start",
+      "sourceLabel": "recorded-source-cb1044728ea6b760",
+      "rawPtySha256": "cb1044728ea6b7602addcfea8e9471dc627ffb71c3f9a727e2eb3632b1cf4f2e",
+      "rolloutSha256": "b881c167e8e02153d810eb7f0f9e23bfebea3e68e231fbb3280c68f2b6a428a4",
+      "rawRequestSha256": "16a1ad248f80269848d085c161bde5b78ba88cec7943932f00f4d1661257fcd2",
+      "configClass": "explicit-cli-override",
+      "lowerLayerConfig": [],
+      "configOverrides": [
+        "tui.keymap.editor.kill_line_start=\"alt-u\""
+      ],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "abc def",
+        "\u0015",
+        "X",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "abc defX",
+      "requestUserText": "abc defX",
+      "screenBeforeFinalWrite": [
+        "",
+        "",
+        "",
+        "",
+        "",
+        "› abc defX",
+        "",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "vim-normal-default",
+      "sourceLabel": "recorded-source-0a537abfb2e6b2f7",
+      "rawPtySha256": "0a537abfb2e6b2f74ba53bc44d8e97b8b101ccaa12237221044ccbf1d8a47cc1",
+      "rolloutSha256": "538be00b39044966ba6a9983e36c190177925cf75d663ec72b9041c23a97bf4d",
+      "rawRequestSha256": "50dfd8190c804db4203b6ab0d4ec1fb37cb47c3154c31228f3bbb0923cb8d2c7",
+      "configClass": "explicit-cli-override",
+      "lowerLayerConfig": [],
+      "configOverrides": [
+        "tui.vim_mode_default=true"
+      ],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "i",
+        "abc",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "iabc",
+      "requestUserText": "iabc",
+      "screenBeforeFinalWrite": [
+        "",
+        "",
+        "",
+        "",
+        "",
+        "› iabc",
+        "",
+        "  GPT-5.6-Sol low · <private-path>                      Vim: Insert"
+      ]
+    },
+    {
+      "id": "unbound-submit-enter",
+      "sourceLabel": "recorded-source-dbaac1bedf6b4e34",
+      "rawPtySha256": "dbaac1bedf6b4e346ad2e8b65203c8ac474edaee52963cab508e9993a96089aa",
+      "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawRequestSha256": null,
+      "configClass": "explicit-cli-override",
+      "lowerLayerConfig": [],
+      "configOverrides": [
+        "tui.keymap.composer.submit=[]"
+      ],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "UNBOUND_SUBMIT",
+        "\r"
+      ],
+      "expectedSubmission": false,
+      "durableUserText": null,
+      "requestUserText": null,
+      "screenBeforeFinalWrite": [
+        "",
+        "",
+        "",
+        "",
+        "",
+        "› UNBOUND_SUBMIT",
+        "",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "modal-ctrl-c-preserves-draft",
+      "sourceLabel": "recorded-source-b83f4484abcbb39a",
+      "rawPtySha256": "b83f4484abcbb39a50c8085b410d5b455e8a4270fc91947594c4e06c95087be9",
+      "rolloutSha256": "114c53d2fba85b387c6adf54e6ba4ea78d00b15d6cf3b8a4eaa24eddbb99526b",
+      "rawRequestSha256": "200c1e58614d8c581deaab5c0db4e850c6057b3b98c0315e8608baef7c5a7d05",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "recorded prefix ",
+        "\u0012",
+        "\u0003",
+        "suffix",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "recorded prefix suffix",
+      "requestUserText": "recorded prefix suffix",
+      "screenBeforeFinalWrite": [
+        "",
+        "",
+        "",
+        "",
+        "",
+        "› recorded prefix suffix",
+        "",
+        "  GPT-5.6-Sol low · <private-path>"
+      ],
+      "popup": [
+        "",
+        "",
+        "",
+        "",
+        "› recorded prefix",
+        "",
+        "  GPT-5.6-Sol low · <private-path>",
+        "  reverse-i-search: "
+      ]
+    },
+    {
+      "id": "tab-footer-spoof-skill-popup",
+      "sourceLabel": "recorded-source-9a9df303391539d4",
+      "rawPtySha256": "9a9df303391539d4261a8bbcc2fd137e0f684dbcb438591a27688defd1b088b9",
+      "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawRequestSha256": null,
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "literal tab to queue $recorded_evi",
+        "\t"
+      ],
+      "expectedSubmission": false,
+      "durableUserText": null,
+      "requestUserText": null,
+      "screenBeforeFinalWrite": [
+        "",
+        "no matches",
+        "",
+        "  enter insert · esc close",
+        "",
+        "› literal tab to queue $recorded_evi",
+        "",
+        "  GPT-5.6-Sol low · <private-path>"
+      ],
+      "popup": [
+        "",
+        "no matches",
+        "",
+        "  enter insert · esc close",
+        "",
+        "› literal tab to queue $recorded_evi",
+        "",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "active-footer-tab-queue",
+      "sourceLabel": "recorded-source-0b3ac219f6cdac4e",
+      "rawPtySha256": "0b3ac219f6cdac4e301170b4a51b058177349879c9d038ad90f2e04cca2b8356",
+      "rolloutSha256": "19d2b19d8c67e40084d2d3d0b8973a4253e2a8d6826d6e976d36bcc48d89ead4",
+      "rawRequestSha256": "ea03a4f90a0df973bae97da8bbba1c8e33d79c192f04bbf10f1d2395f0909df1",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "RECORDED_QUEUED_PROMPT",
+        "\t"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "RECORDED_QUEUED_PROMPT",
+      "requestUserText": "RECORDED_QUEUED_PROMPT",
+      "screenBeforeFinalWrite": [
+        "",
+        "<activity> Working (<elapsed> • esc to interrupt)",
+        "",
+        "",
+        "› RECORDED_QUEUED_PROMPT",
+        "",
+        "  GPT-5.6-Sol low · <private-path>",
+        "  tab to queue message"
+      ],
+      "activeTurnFooter": [
+        "",
+        "<activity> Working (<elapsed> • esc to interrupt)",
+        "",
+        "",
+        "› Ask Codex to do anything",
+        "",
+        "  GPT-5.6-Sol low · <private-path> · ⠇",
+        "  ? for shortcuts"
+      ]
+    },
+    {
+      "id": "narrow-soft-wrap-resize-redraw",
+      "sourceLabel": "recorded-source-357b0d3f57bf3138",
+      "rawPtySha256": "357b0d3f57bf3138f87dc81f9763ea680ec4e86ce473b666e6f33088c86ff98d",
+      "rolloutSha256": "5ec216aa5a253f01eb89ac2444f473c7b31001f151577cd10ee2bf4e601986f7",
+      "rawRequestSha256": "cd561f0fee68e05e7b125ed401ce463787d4aaf929d4f1dfdb28cd10df675913",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 52,
+        "rows": 24
+      },
+      "inputChunks": [
+        "RECORDED_NARROW_WRAP alpha beta gamma delta epsilon zeta eta theta iota kappa omega",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "RECORDED_NARROW_WRAP alpha beta gamma delta epsilon zeta eta theta iota kappa omega",
+      "requestUserText": "RECORDED_NARROW_WRAP alpha beta gamma delta epsilon zeta eta theta iota kappa omega",
+      "screenBeforeFinalWrite": [
+        "",
+        "",
+        "",
+        "",
+        "",
+        "› RECORDED_NARROW_WRAP alpha beta gamma delta epsilon zeta eta theta iota kappa omega",
+        "",
+        "  GPT-5.6-Sol low · <recorded-workspace>"
+      ],
+      "beforeTypingFrame": {
+        "generation": 30,
+        "cols": 52,
+        "cursor": {
+          "x": 2,
+          "y": 20
+        },
+        "rows": [
+          {
+            "viewportRow": 14,
+            "text": "",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 15,
+            "text": "",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 16,
+            "text": "",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 17,
+            "text": "",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 18,
+            "text": "         Tip: Press f3 to search this conversation.",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 19,
+            "text": "",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 20,
+            "text": "› Ask Codex to do anything",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 21,
+            "text": "",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 22,
+            "text": "  GPT-5.6-Sol low · <private-path>",
+            "isWrapped": false
+          },
+          {
+            "viewportRow": 23,
+            "text": "  ? for shortcuts",
+            "isWrapped": false
+          }
+        ]
+      },
+      "resizeTrace": {
+        "requested": {
+          "cols": 92,
+          "rows": 24
+        },
+        "rawChunkCountBeforeResize": 59,
+        "rawChunkCountBeforeProviderRedraw": 59,
+        "rawChunkCountAfterProviderRedraw": 63,
+        "preRedrawGenerationUnchanged": true,
+        "postRedrawGenerationAdvanced": true,
+        "narrow": {
+          "generation": 59,
+          "cols": 52,
+          "cursor": {
+            "x": 41,
+            "y": 20
+          },
+          "rows": [
+            {
+              "viewportRow": 13,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 14,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 15,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 16,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 17,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 18,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 19,
+              "text": "› RECORDED_NARROW_WRAP alpha beta gamma delta",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 20,
+              "text": "  epsilon zeta eta theta iota kappa omega",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 21,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 22,
+              "text": "  GPT-5.6-Sol low · <private-path>",
+              "isWrapped": false
+            }
+          ]
+        },
+        "beforeProviderRedraw": {
+          "generation": 59,
+          "cols": 92,
+          "cursor": {
+            "x": 41,
+            "y": 20
+          },
+          "rows": [
+            {
+              "viewportRow": 13,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 14,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 15,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 16,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 17,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 18,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 19,
+              "text": "› RECORDED_NARROW_WRAP alpha beta gamma delta",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 20,
+              "text": "  epsilon zeta eta theta iota kappa omega",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 21,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 22,
+              "text": "  GPT-5.6-Sol low · <private-path>",
+              "isWrapped": false
+            }
+          ]
+        },
+        "afterProviderRedraw": {
+          "generation": 63,
+          "cols": 92,
+          "cursor": {
+            "x": 85,
+            "y": 20
+          },
+          "rows": [
+            {
+              "viewportRow": 13,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 14,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 15,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 16,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 17,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 18,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 19,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 20,
+              "text": "› RECORDED_NARROW_WRAP alpha beta gamma delta epsilon zeta eta theta iota kappa omega",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 21,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 22,
+              "text": "  GPT-5.6-Sol low · <recorded-workspace>",
+              "isWrapped": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "unchanged-redraw-after-edit",
+      "sourceLabel": "recorded-source-193f0c963269d1dc",
+      "rawPtySha256": "193f0c963269d1dc8cda4a85dc1dd7e401172bda2d08c90a043b594ce2db3887",
+      "rolloutSha256": "5a1293ecbac4bdce1f73b5dc66405ae7080bef8aefc9536b9ffc58afb52b0798",
+      "rawRequestSha256": "2f2694c1f481a85dfc6828f7cb9ed14e8fea5d18284dff44c8cb650a6030e19a",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "RECORDED_UNCHANGED_BASE_EDIT",
+      "requestUserText": "RECORDED_UNCHANGED_BASE_EDIT",
+      "screenBeforeFinalWrite": [
+        "",
+        "",
+        " ",
+        "",
+        "",
+        "› RECORDED_UNCHANGED_BASE_EDIT",
+        "",
+        "  GPT-5.6-Sol low · <private-path>"
+      ],
+      "editAcknowledgementTrace": {
+        "baseDraft": "RECORDED_UNCHANGED_BASE",
+        "edit": "_EDIT",
+        "setupDurableUserText": "RECORDED_SLOW_TURN",
+        "setupRequestUserText": "RECORDED_SLOW_TURN",
+        "rawChunkCountBeforeEdit": 60,
+        "rawChunkCountAtUnchangedRedraw": 61,
+        "schedulingControl": "SIGSTOP_AFTER_EDIT_WRITE_BEFORE_PROVIDER_PARSE",
+        "beforeEdit": {
+          "generation": 60,
+          "cols": 140,
+          "cursor": {
+            "x": 25,
+            "y": 38
+          },
+          "rows": [
+            {
+              "viewportRow": 32,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 33,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 34,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 35,
+              "text": "<activity> Working (<elapsed> • esc to interrupt)",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 36,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 37,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 38,
+              "text": "› RECORDED_UNCHANGED_BASE",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 39,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 40,
+              "text": "  GPT-5.6-Sol low · <private-path> · ⠇",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 41,
+              "text": "  tab to queue message",
+              "isWrapped": false
+            }
+          ]
+        },
+        "unchangedAfterEdit": {
+          "generation": 61,
+          "cols": 140,
+          "cursor": {
+            "x": 25,
+            "y": 38
+          },
+          "rows": [
+            {
+              "viewportRow": 32,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 33,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 34,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 35,
+              "text": "<activity> Working (<elapsed> • esc to interrupt)",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 36,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 37,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 38,
+              "text": "› RECORDED_UNCHANGED_BASE",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 39,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 40,
+              "text": "  GPT-5.6-Sol low · <private-path> · ⠇",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 41,
+              "text": "  tab to queue message",
+              "isWrapped": false
+            }
+          ]
+        },
+        "paintedEdit": {
+          "generation": 69,
+          "cols": 140,
+          "cursor": {
+            "x": 30,
+            "y": 38
+          },
+          "rows": [
+            {
+              "viewportRow": 32,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 33,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 34,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 35,
+              "text": "<activity> Working (<elapsed> • esc to interrupt)",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 36,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 37,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 38,
+              "text": "› RECORDED_UNCHANGED_BASE_EDIT",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 39,
+              "text": "",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 40,
+              "text": "  GPT-5.6-Sol low · <private-path>",
+              "isWrapped": false
+            },
+            {
+              "viewportRow": 41,
+              "text": "  tab to queue message",
+              "isWrapped": false
+            }
+          ]
+        },
+        "unchangedGenerationAdvanced": true,
+        "unchangedComposerRevision": true,
+        "paintedGenerationAdvanced": true
+      }
+    },
+    {
+      "id": "ordinary-modal-sentinel-draft",
+      "sourceLabel": "recorded-source-41631ba2345605f4",
+      "rawPtySha256": "41631ba2345605f47ab3957275756a8c37d6b0c1b83e69b86357fb9a1933c724",
+      "rolloutSha256": "ed82f654e56005e1d15356b9660867d55328a146f41e5b0ba669c00ea240f052",
+      "rawRequestSha256": "ed2197accee6ef0bb8fbd52ed4b7029998d9b61e1e1fc74de74fadf169e2f50e",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "ORDINARY_DRAFT Do you trust the contents of this directory? Press enter to continue END",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "ORDINARY_DRAFT Do you trust the contents of this directory? Press enter to continue END",
+      "requestUserText": "ORDINARY_DRAFT Do you trust the contents of this directory? Press enter to continue END",
+      "screenBeforeFinalWrite": [
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "› ORDINARY_DRAFT Do you trust the contents of this directory? Press enter to continue END",
+        "",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "ordinary-vim-sentinel-cwd",
+      "sourceLabel": "recorded-source-0a0f6c2adc0b1aa8",
+      "rawPtySha256": "0a0f6c2adc0b1aa819253b26ab68f472bdc9d7e4304657af63aac64459726e55",
+      "rolloutSha256": "51da2be25d83796322b22e55d3affdb43398746bc2f1fa868dce0a407fbf4759",
+      "rawRequestSha256": "51c7e1e14f21040b904eed306a50ef41f7ae81b080fc30b72f4d31589bd57292",
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "ORDINARY_VIM_SENTINEL_CWD",
+        "\r"
+      ],
+      "expectedSubmission": true,
+      "durableUserText": "ORDINARY_VIM_SENTINEL_CWD",
+      "requestUserText": "ORDINARY_VIM_SENTINEL_CWD",
+      "screenBeforeFinalWrite": [
+        "",
+        "",
+        "",
+        "",
+        "",
+        "› ORDINARY_VIM_SENTINEL_CWD",
+        "",
+        "  GPT-5.6-Sol default · <recorded-workspace>/Vim: Insert"
+      ]
+    },
+    {
+      "id": "lower-layer-keymap-valid-control",
+      "sourceLabel": "recorded-source-fc609b9307612614",
+      "rawPtySha256": "fc609b9307612614bfca816db79d728bfa5e82359eee49fa335ae6b53c9b258b",
+      "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawRequestSha256": null,
+      "configClass": "lower-layer-config",
+      "lowerLayerConfig": [
+        "[tui.keymap.composer]",
+        "queue = []",
+        "toggle_shortcuts = \"tab\""
+      ],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [],
+      "expectedSubmission": false,
+      "durableUserText": null,
+      "requestUserText": null,
+      "requestCountDelta": 0,
+      "startupOutcome": "composer-ready",
+      "exitOutcome": null,
+      "startupScreen": [
+        "",
+        "",
+        "",
+        "",
+        "› Ask Codex to do anything",
+        "",
+        "",
+        "  tab for shortcuts"
+      ]
+    },
+    {
+      "id": "lower-layer-keymap-issued-profile-conflict",
+      "sourceLabel": "recorded-source-7671e97cacea97b1",
+      "rawPtySha256": "7671e97cacea97b17c5d26a33e4f3492dcb8147b924cc333df00b880efe5fe59",
+      "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawRequestSha256": null,
+      "configClass": "lower-layer-plus-issued-cli-override",
+      "lowerLayerConfig": [
+        "[tui.keymap.composer]",
+        "queue = []",
+        "toggle_shortcuts = \"tab\""
+      ],
+      "configOverrides": [
+        "tui.keymap.composer.submit=\"enter\"",
+        "tui.keymap.composer.queue=\"tab\"",
+        "tui.vim_mode_default=false",
+        "tui.keymap.global.toggle_vim_mode=[]"
+      ],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [],
+      "expectedSubmission": false,
+      "durableUserText": null,
+      "requestUserText": null,
+      "requestCountDelta": 0,
+      "startupOutcome": "rejected-before-composer",
+      "exitOutcome": {
+        "exitCode": 1,
+        "signal": 0
+      },
+      "startupScreen": [
+        "Error: Ambiguous `tui.keymap.app` bindings: `composer.queue` and `composer.toggle_shortcuts` use the same key. Set unique keys in `~/.codex/",
+        "config.toml` and retry. See the Codex keymap documentation for supported actions and examples."
+      ]
+    },
+    {
+      "id": "slash-popup-enter-selects-command",
+      "sourceLabel": "recorded-source-b8630e6656578466",
+      "rawPtySha256": "b8630e6656578466c248584fca14e9eb2cde9f8f88e3f37a4f682d30f5e9080d",
+      "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawRequestSha256": null,
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "/stat",
+        "\r"
+      ],
+      "expectedSubmission": false,
+      "durableUserText": null,
+      "requestUserText": null,
+      "screenBeforeFinalWrite": [
+        "",
+        "",
+        "› /status      show current session configuration and token usage                                                                           ",
+        "  /statusline  configure which items appear in the status line",
+        "",
+        "› /stat",
+        "",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    },
+    {
+      "id": "file-popup-enter-inserts-mention",
+      "sourceLabel": "recorded-source-dd0f4a9d621939bb",
+      "rawPtySha256": "dd0f4a9d621939bb544474eb08d41c8ffd9a1b5ed10dadaad3d8d126b5780605",
+      "rolloutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawRequestSha256": null,
+      "configClass": "recorded-default-01491",
+      "lowerLayerConfig": [],
+      "configOverrides": [],
+      "terminal": {
+        "cols": 140,
+        "rows": 42
+      },
+      "inputChunks": [
+        "@READ",
+        "\r"
+      ],
+      "expectedSubmission": false,
+      "durableUserText": null,
+      "requestUserText": null,
+      "screenBeforeFinalWrite": [
+        "",
+        "",
+        "",
+        "  enter/tab insert · esc close · ↑/↓ select · ←/→ filter",
+        "",
+        "› @READ",
+        "",
+        "  GPT-5.6-Sol low · <private-path>"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "provider": {
+    "cliVersion": "0.157.1",
+    "binarySha256": "27ceb5f9b957b43a519efe4eaa3816a0bffb0a531a2c89af18840c0a3c016a7d",
+    "upstreamTag": "rust-v0.157.1",
+    "upstreamCommitSha": "36650394c5b38c2990ccf2a3457165ca3e9d9726"
+  },
+  "protocol": {
+    "transport": "app-server-stdio-jsonl",
+    "request": "config/read",
+    "includeLayers": true,
+    "clientName": "agent_code_prompt_profile_probe"
+  },
+  "effectiveInputProjection": {
+    "composerSubmit": "enter",
+    "composerQueue": "tab",
+    "globalToggleVimMode": [],
+    "vimModeDefault": false,
+    "otherNonNullKeymapBindings": [],
+    "layerTypes": [
+      "sessionFlags",
+      "user",
+      "system"
+    ],
+    "legacyManagedLayerPresent": false
+  },
+  "sourceEvidenceSha256": "55041ea1fcc77f2240a083cb4795e26424d6ba490ada9a1f26b47eb6766f8576"
+}
