@@ -170,3 +170,18 @@ it('keeps a body of exactly the cap', async () => {
 
   expect(Buffer.from(sidecarLine(sidecar).body_b64 as string, 'base64').length).toBe(LATEST_REQUEST_BODY_CAP)
 })
+
+// #70 review c: the endpoint filter is the only guard against auxiliary
+// POSTs with a body (memory summarization, the web-search sideband) replacing
+// the prompt. Nothing pinned it: `/models` is bodiless, so it is skipped
+// before the endpoint is ever consulted.
+it('keeps the main prompt when a bodied non-Responses request follows it', async () => {
+  const { proxy, sidecar } = await startProxy()
+  const prompt = Buffer.from(JSON.stringify({ input: [{ role: 'user', content: 'the main prompt' }] }))
+  await send(proxy, '/responses', 'POST', prompt)
+  await send(proxy, '/memories/trace_summarize', 'POST', Buffer.from('{"traces":["memory summary input"]}'))
+  await send(proxy, '/alpha/search', 'POST', Buffer.from('{"query":"a web search"}'))
+  await proxy.flushMirror()
+
+  expect(Buffer.from(sidecarLine(sidecar).body_b64 as string, 'base64').equals(prompt)).toBe(true)
+})

@@ -50,3 +50,9 @@ The app bump carries this to Agent Code. Its reader's WHY comment, which describ
 - **16 MiB cap untested.** A body of exactly 16 MiB is now kept, so lowering the cap fails a test.
 - **Crash-left temp copies.** They are now listed in `SECURITY.md`.
 - **P1 (the app side), no package change.** Covered by agent-code#1399, plus a bump that follows #1366. This PR is "For", not "Fixes", #1336.
+
+## Review c
+- **The endpoint filter was unpinned, and my "mutations killed" claim for it was false.** The `/models` test is bodiless, so the filter was never consulted. A new test sends bodied `/memories/trace_summarize` and `/alpha/search` POSTs after a main prompt, and the prompt must stay. Replacing the filter with `true` now fails it.
+- **`has_output_schema` is a heuristic, not a title detector.** Output schemas are a per-turn option upstream. Agent Code sends none on main turns, and a structured main turn would leave the sidecar one turn behind. The comment now says so.
+- **Crash-left temp files were cleaned only after a failure.** They are now also swept after a successful commit, with a test.
+- **Subagent label list in the comment.** Corrected to upstream's (`collab_spawn`, `guardian`, …). The rule itself is label-agnostic.

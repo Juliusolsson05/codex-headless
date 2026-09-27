@@ -216,9 +216,13 @@ export type CodexRequestShape = {
   tools_count: number | null
   has_reasoning: boolean
   /** True when the request asks for structured output (`text.format`, an
-   *  output schema). Codex sets it only on temporary structured turns, such
-   *  as 0.157 title generation (tui `thread_title.rs`); ordinary turns never
-   *  carry one. The latest-request-body sidecar skips these (#70 review a). */
+   *  output schema). In the TUI that Agent Code runs, Codex sets it on
+   *  temporary structured turns such as 0.157 title generation
+   *  (`thread_title.rs`). It is a per-turn option upstream, though (exec,
+   *  app-server `turn_start`), so a main turn COULD carry one; Agent Code
+   *  sends none today. The latest-request-body sidecar skips these (#70
+   *  reviews a, c): a structured main turn would leave the sidecar one turn
+   *  behind, which is the accepted cost of keeping title prompts out. */
   has_output_schema: boolean
   client_metadata: {
     thread_id: string | null
@@ -721,8 +725,9 @@ export class ResponsesProxy extends EventEmitter {
     // cannot classify is better evidence than none).
     // Subagent calls are skipped too (#70 review b): Codex tags every
     // non-main Responses call with `x-openai-subagent` (codex-api
-    // requests/headers.rs: review, compact, thread_spawn,
-    // memory_consolidation, or a custom label). A spawned worker's task has
+    // requests/headers.rs and responses_metadata.rs: review, compact,
+    // collab_spawn, guardian, memory_consolidation, or a custom label; the
+    // rule below is label-agnostic, so the exact list does not matter). A spawned worker's task has
     // no output schema, so without this it replaced the top-level prompt in
     // multi-agent sessions. `compact` is kept: a compaction request carries
     // the main conversation, and it is what a bundle after compaction needs.

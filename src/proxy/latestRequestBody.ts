@@ -138,6 +138,10 @@ export class LatestRequestBodySidecar {
         return
       }
       renameSync(temp, this.path)
+      // Temp files a crash left between write and rename hold full prompt
+      // bodies; sweep them on a successful commit too, not only after a
+      // failure (#70 review c). Not awaited in the commit's turn.
+      await this.removeTempFiles()
     } catch {
       await rm(temp, { force: true }).catch(() => {})
       await this.removeTempFiles()

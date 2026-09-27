@@ -70,3 +70,15 @@ it('does not resurrect an in-flight older body after a newer one was too big to 
 
   expect(existsSync(sidecar.path)).toBe(false)
 })
+
+it('sweeps a crash-left temp file on the next successful commit', async () => {
+  // #70 review c: a crash between writing and renaming leaves a temp file
+  // holding a full prompt. It used to be cleaned only after a failed write.
+  const sidecar = sidecarIn()
+  const { writeFileSync } = await import('node:fs')
+  writeFileSync(`${sidecar.path}.99999.7.tmp`, 'crash-left prompt body')
+  sidecar.record('req-1', 'responses', Buffer.from('prompt'))
+  await sidecar.flush()
+  expect(readdirSync(join(sidecar.path, '..')).filter(name => name.endsWith('.tmp'))).toEqual([])
+  expect(bodyOf(sidecar.path).toString()).toBe('prompt')
+})
