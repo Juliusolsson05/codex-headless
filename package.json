@@ -40,9 +40,9 @@
   "devDependencies": {
     "@types/node": "^20.19.43",
     "@vitest/coverage-v8": "^4.1.11",
-    "tsx": "^4.23.13",
+    "tsx": "^4.23.15",
     "typescript": "^5.5.0",
-    "undici-types": "^6.28.1",
+    "undici-types": "^6.29.0",
     "vitest": "^4.1.10"
   },
   "license": "MIT"
